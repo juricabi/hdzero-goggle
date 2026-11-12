@@ -50,8 +50,10 @@ typedef struct {
     bool connected;            /* audio reader (rtspLive) connected, last poll */
     uint32_t tickDisconnected; /* when the reader went away */
     uint32_t tickRetry;        /* no start attempt before this tick after a failure */
-    uint32_t nbFrames;
+    volatile uint32_t nbFrames; /* counted by the encoder thread */
     uint32_t nbDropped;
+    uint32_t nbFramesSeen;     /* nbFrames at tickFrames ... */
+    uint32_t tickFrames;       /* ... the last poll that saw it grow */
     int64_t offsetUs;          /* [live] audio_offset_ms: added to the audio timestamps */
     LiveClock_t clock;
     LiveTimeline_t timeline;

@@ -11,6 +11,7 @@
 
 #define LIVE_AUDIO_STOP_DELAY_MS  3000 // keep the chain running across DESCRIBE -> SETUP
 #define LIVE_AUDIO_RETRY_MS       5000 // after a failed start
+#define LIVE_AUDIO_STALL_MS       2000 // running, but no frame for that long: restart the chain
 #define LIVE_CLOCK_MAX_LATENCY_US 1000000
 
 #define LIVE_TIMELINE_REANCHOR_US     15000 // more than capture jitter: lost samples, clock step ...
@@ -188,6 +189,8 @@ static bool liveaudio_start(LiveAudio_t *la, char *confFile, bool devInUse) {
     la->offsetUs = (int64_t)conf_loadLiveAudioOffset(confFile) * 1000;
     la->nbFrames = 0;
     la->nbDropped = 0;
+    la->nbFramesSeen = 0;
+    la->tickFrames = liveclock_tickMs();
 
     ret = ai2aenc_prepare(la->aa, &aiParams, &aeParams);
     if (ret == SUCCESS) {
@@ -233,6 +236,19 @@ void liveaudio_run(LiveAudio_t *la, char *confFile, bool devInUse) {
                 LOGD("audio reader connected, but [live] audio is off");
             }
             la->tickRetry = tickNow;
+        }
+
+        if (la->running) {
+            // a chain that stops producing (capture or encoder stuck) is restarted
+            uint32_t nbFrames = la->nbFrames;
+            if (nbFrames != la->nbFramesSeen) {
+                la->nbFramesSeen = nbFrames;
+                la->tickFrames = tickNow;
+            } else if ((uint32_t)(tickNow - la->tickFrames) >= LIVE_AUDIO_STALL_MS) {
+                LOGE("no audio frame for %d ms, restarting the chain", LIVE_AUDIO_STALL_MS);
+                liveaudio_stop(la, devInUse);
+                la->tickRetry = tickNow;
+            }
         }
 
         if (la->enabled && !la->running && ((int32_t)(tickNow - la->tickRetry) >= 0)) {

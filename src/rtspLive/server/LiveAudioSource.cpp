@@ -14,6 +14,8 @@ extern "C"
 #define AUDIO_IDLE_POLL_US  20000       // ring not attached / reader not connected
 #define AUDIO_MAX_AGE_US    1000000     // older frames are a backlog (paused reader): skip them
 #define AUDIO_MAX_SKIP      64          // frames examined per poll
+#define AUDIO_STALL_US      6000000     // waiting longer for a frame: the audio track is re-checked
+                                        // (the record process retries a failed chain every 5 s)
 
 static unsigned const samplingFrequencyTable[16] = {
     96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
@@ -74,6 +76,13 @@ void LiveAudioTrack::noteFrame(AdtsHeader const& hdr) {
     gTrack.hdr = hdr;
 }
 
+void LiveAudioTrack::noteStall(unsigned seconds) {
+    if (gTrack.known) {
+        printf("[MEDIA SERVER]live audio: no audio frame for %u s, the next DESCRIBE checks the audio track again\n", seconds);
+    }
+    gTrack.known = False;
+}
+
 Boolean LiveAudioTrack::format(AdtsHeader& hdr) {
     if (!gTrack.known) {
         return False;
@@ -89,7 +98,8 @@ LiveAudioSource* LiveAudioSource::createNew(UsageEnvironment& env) {
 
 LiveAudioSource::LiveAudioSource(UsageEnvironment& env)
     : FramedSource(env), fBuffer(new unsigned char[AUDIO_BUFFER_SIZE]),
-      fHaveExpectedFormat(False), fNbFrames(0), fNbDropped(0) {
+      fHaveExpectedFormat(False), fNbFrames(0), fNbDropped(0), fWaitStartUs(0), fLastSeenUs(0),
+      fStallNoted(False) {
     memset(&fExpected, 0, sizeof(fExpected));
     printf("[MEDIA SERVER]live audio source opened\n");
     avshare_startMedia(MEDIA_AUDIO);
@@ -110,6 +120,7 @@ void LiveAudioSource::setExpectedFormat(unsigned profile, unsigned sfIndex, unsi
 }
 
 void LiveAudioSource::doGetNextFrame() {
+    fWaitStartUs = liveMonotonicUs();
     deliverFrame();
 }
 
@@ -124,6 +135,14 @@ void LiveAudioSource::deliverFrame() {
     for (unsigned n = 0; n < AUDIO_MAX_SKIP; ++n) {
         uint64_t ts = 0;
         int len = avshare_readMediaFrame(MEDIA_AUDIO, fBuffer, AUDIO_BUFFER_SIZE, &ts);
+        if (len <= 0 && len >= -1) {
+            // nothing: the audio chain may have failed for good (no frame for AUDIO_STALL_US)
+            uint64_t since = (fLastSeenUs > fWaitStartUs) ? fLastSeenUs : fWaitStartUs;
+            if (!fStallNoted && (liveMonotonicUs() - since >= AUDIO_STALL_US)) {
+                fStallNoted = True;
+                LiveAudioTrack::noteStall(AUDIO_STALL_US / 1000000);
+            }
+        }
         if (len == 0) {
             nextTask() = envir().taskScheduler().scheduleDelayedTask(AUDIO_POLL_US, pollAgain, this);
             return;
@@ -146,6 +165,8 @@ void LiveAudioSource::deliverFrame() {
             continue;
         }
         LiveAudioTrack::noteFrame(hdr);
+        fLastSeenUs = liveMonotonicUs();
+        fStallNoted = False;
 
         if (liveMonotonicUs() > ts + AUDIO_MAX_AGE_US) {
             ++fNbDropped;

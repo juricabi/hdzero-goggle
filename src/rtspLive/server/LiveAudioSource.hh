@@ -32,6 +32,9 @@ namespace LiveAudioTrack {
     void noteFrame(AdtsHeader const& hdr);
     // the track's format, if a frame was seen (and the track has not been given up since)
     Boolean format(AdtsHeader& hdr);
+    // a reader waited too long for a frame: forget the format, so the next DESCRIBE checks
+    // again whether audio comes (and leaves the track out if not)
+    void noteStall(unsigned seconds);
 }
 
 class LiveAudioSource: public FramedSource {
@@ -57,4 +60,7 @@ private:
     AdtsHeader fExpected;
     unsigned fNbFrames;
     unsigned fNbDropped;
+    uint64_t fWaitStartUs;  // when the sink asked for the frame being waited for
+    uint64_t fLastSeenUs;   // last frame read from the ring
+    Boolean  fStallNoted;
 };
