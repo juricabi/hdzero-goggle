@@ -2,7 +2,7 @@
 # Mutation check of test/run_tests.sh (host only): each mutant is a copy of the probe kit with
 # one safety property broken; run_tests.sh must FAIL on every one. Also runs the review's
 # mutant of the previous kit (MUT_OLD=<dir with its probe/ copy>), which must fail too.
-# Usage: sh utilities/probe/test/mutants.sh   (~15 minutes; dash only, few kill points)
+# Usage: sh utilities/probe/test/mutants.sh   (~25 minutes; dash only, few kill points)
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 KIT=$(cd "$HERE/.." && pwd)
@@ -57,7 +57,7 @@ if [ -n "${MUT_OLD:-}" ]; then
     mkdir -p "$T/old/test"
     cp "$MUT_OLD"/*.sh "$MUT_OLD"/*.raw "$T/old/"
     cp -r "$HERE/stub" "$T/old/test/"
-    if KIT_DIR=$T/old SHELLS=dash QUICK=1 sh "$HERE/run_tests.sh" > "$T/old.log" 2>&1; then
+    if KIT_DIR=$T/old SHELLS=dash QUICK=1 ONLY="test probe" sh "$HERE/run_tests.sh" > "$T/old.log" 2>&1; then
         echo "SURVIVED the review's mutant ($MUT_OLD)"
         fail=1
     else
