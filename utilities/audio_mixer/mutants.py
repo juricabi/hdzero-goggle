@@ -55,8 +55,13 @@ MUTANTS = [
     ("boot: any change makes the headphones live", M, [
         ("    return field == AUDIO_MIXER_HEADPHONES || field == AUDIO_MIXER_MIC",
          "    return field != AUDIO_MIXER_PHONES_AT_BOOT || field == AUDIO_MIXER_MIC")]),
-    ("load: version 1 keys left behind", M, [
-        ("            ini_puts(AUDIO_MIXER_SECTION, old_keys[i], NULL, SETTING_INI);", "            (void)old_keys[i];")]),
+    ("load: a version 1 or cut-short section left behind", M, [
+        ("            ini_puts(AUDIO_MIXER_SECTION, NULL, NULL, SETTING_INI);", "            (void)key;")]),
+    ("load: [mixer] written at start-up (stock setting.ini)", M, [
+        ("        mixer = defaults;\n", "        mixer = defaults;\n        ini_putl(AUDIO_MIXER_SECTION, \"version\", AUDIO_MIXER_VERSION, SETTING_INI);\n")]),
+    ("save: the version never written", M, [("    if (wrote && !section_written) {", "    if (0) {")]),
+    ("save: the version written first", M, [
+        ("    bool wrote = false;\n", "    bool wrote = false;\n    if (!section_written)\n        ini_putl(AUDIO_MIXER_SECTION, \"version\", AUDIO_MIXER_VERSION, SETTING_INI);\n")]),
     ("switches in table order (off before on)", R, [
         ("        if (sw[i].on)\n            cset(&cb, sw[i].name, 1);", "        cset(&cb, sw[i].name, sw[i].on);"),
         ("        if (!sw[i].on)\n            cset(&cb, sw[i].name, 0);", "        if (0)\n            cset(&cb, sw[i].name, 0);")]),

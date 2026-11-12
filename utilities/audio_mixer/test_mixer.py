@@ -367,23 +367,26 @@ def test_loading(h):
     else:
         ok(f"{h.target} load missing fields")
 
-    # a [mixer] of the unreleased version 1 (As Heard / Custom): taken over like a stock
-    # setting.ini, the old keys removed
+    # a [mixer] of the unreleased version 1 (As Heard / Custom), or one cut short by a power loss
+    # before its version was written: taken over like a stock setting.ini, the section removed (one
+    # write); the next change writes a clean one
     for audio_source in (0, 1, 2):
-        test = f"{h.target} load version 1 [mixer], audio_source={audio_source}"
-        old = ("[record]\naudio_source=%d\n[mixer]\nmic=4\nline_in=3\nav=2\nheadphones=12\ndvr_mode=0\ndvr_mic=1\n"
-               "dvr_line_in=1\ndvr_av=1\ndvr_level=6\nhdmi=7\nversion=1\n" % audio_source)
-        _, queries, _, _, after = h.run(old, ["init"] + [f"get {k}" for k in KEYS])
-        got = {q.split()[1]: int(q.split()[2]) for q in query(queries, "GET ")}
-        want = migration_spec(h.target, audio_source)
-        section = after.split("[mixer]", 1)[-1]
-        written = dict(re.findall(r"^(\w+)=(-?\d+)$", section, re.M))
-        if got != want:
-            fail(test, f"got {got}, want {want}")
-        elif any(k in written for k in OLD_KEYS) or written.get("version") != VERSION:
-            fail(test, f"[mixer] written as {written}")
-        else:
-            ok(test)
+        for name, section_text in (
+                ("version 1", "mic=4\nline_in=3\nav=2\nheadphones=12\ndvr_mode=0\ndvr_mic=1\n"
+                              "dvr_line_in=1\ndvr_av=1\ndvr_level=6\nhdmi=7\nversion=1\n"),
+                ("cut short (no version)", "mic=7\nheadphones=3\n")):
+            test = f"{h.target} load {name} [mixer], audio_source={audio_source}"
+            old = "[record]\naudio_source=%d\n[mixer]\n%s" % (audio_source, section_text)
+            _, queries, _, _, after = h.run(old, ["init"] + [f"get {k}" for k in KEYS] + ["set dvr_level 5", "save"])
+            got = {q.split()[1]: int(q.split()[2]) for q in query(queries, "GET ")}
+            want = migration_spec(h.target, audio_source)
+            written = dict(re.findall(r"^(\w+)=(-?\d+)$", after.split("[mixer]", 1)[-1], re.M)) if "[mixer]" in after else {}
+            if got != want:
+                fail(test, f"got {got}, want {want}")
+            elif written != {"dvr_level": "5", "version": VERSION}:
+                fail(test, f"[mixer] after a change written as {written}")
+            else:
+                ok(test)
 
     # the page's "in the mix" marker: Record What I Hear on and the source's level above 0
     for values, want in ((mix_only(mic=3, line_in=0, av=8), {"rec_mic": 1, "rec_line_in": 0, "rec_av": 1}),
@@ -408,10 +411,26 @@ def test_loading(h):
         if query(queries, "RX ") != [f"RX {want['rx_audio']}"]:
             fail(test, f"receiver audio {query(queries, 'RX ')}")
             continue
-        written = dict(re.findall(r"^(\w+)=(-?\d+)$", after.split("[mixer]", 1)[-1], re.M))
-        if {k: int(written.get(k, -99)) for k in KEYS} != want or written.get("version") != VERSION:
-            fail(test, f"[mixer] written as {written}")
+        # a stock setting.ini is not written at all (no [mixer] until the Audio page changes something)
+        if after != ini:
+            fail(test, f"setting.ini written at start-up: {after!r}")
             continue
+        ok(test)
+
+    # the first change: only the changed fields, then the version; read back as set, the other
+    # fields still from [record] audio_source
+    test = f"{h.target} first change on the Audio page"
+    ini = "[record]\naudio_source=1\n"
+    _, _, _, _, after = h.run(ini, ["init", "set mic 3", "set headphones 20", "save", "save"])
+    lines = [l for l in after.split("[mixer]", 1)[-1].splitlines() if l.strip()] if "[mixer]" in after else []
+    _, queries, _, _, _ = h.run(after, ["init"] + [f"get {k}" for k in KEYS])
+    got = {q.split()[1]: int(q.split()[2]) for q in query(queries, "GET ")}
+    want = dict(migration_spec(h.target, 1), mic=3, headphones=20, phones_at_boot=1)
+    if sorted(lines[:-1]) != ["headphones=20", "mic=3", "phones_at_boot=1"] or lines[-1:] != [f"version={VERSION}"]:
+        fail(test, f"[mixer] written as {lines}")
+    elif got != want:
+        fail(test, f"read back as {got}, want {want}")
+    else:
         ok(test)
 
 

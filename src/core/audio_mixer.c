@@ -71,8 +71,6 @@ static const char *const field_key[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_PHONES_AT_BOOT] = "phones_at_boot",
 };
 
-// keys of version 1 (test builds only), removed when the section is migrated
-static const char *const old_keys[] = {"dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av"};
 
 /*
  * Threads: the UI (page, source switches) changes `mixer` / `context` and asks for an apply;
@@ -97,6 +95,7 @@ static uint64_t recheck_until_ms; // audio_mixer_recheck(): full passes, often, 
 static char last_batch[4096]; // what the codec should have (batch_mutex)
 static bool have_batch;
 static bool batch_failed; // amixer did not run or failed: the codec may not have last_batch
+static bool section_written; // setting.ini has a [mixer] of this version (UI thread)
 static unsigned codec_reads; // controls read by the watcher (host test: the cost of a pass)
 
 static void start_worker(void);
@@ -124,16 +123,18 @@ void audio_mixer_init(void) {
 
     const long version = ini_getl(AUDIO_MIXER_SECTION, "version", 0, SETTING_INI);
     if (version < AUDIO_MIXER_VERSION) {
-        // No [mixer] yet (stock firmware, fresh install), or one of a test build: the stock
-        // behaviour of [record] audio_source, whatever the section had.
+        // No [mixer] yet (stock firmware, fresh install), one of a test build, or one cut short
+        // before its version was written: the stock behaviour of [record] audio_source, whatever
+        // the section had. Nothing is written for a stock setting.ini: the section appears with
+        // the first change on the Audio page (audio_mixer_save()). A section that is there (old
+        // keys of version 1, stale fields) goes, in one write.
         mixer = defaults;
-        for (size_t i = 0; i < sizeof(old_keys) / sizeof(old_keys[0]); i++)
-            ini_puts(AUDIO_MIXER_SECTION, old_keys[i], NULL, SETTING_INI);
-        for (int i = 0; i < AUDIO_MIXER_FIELD_COUNT; i++)
-            ini_putl(AUDIO_MIXER_SECTION, field_key[i], mixer.value[i], SETTING_INI);
-        ini_putl(AUDIO_MIXER_SECTION, "version", AUDIO_MIXER_VERSION, SETTING_INI);
-        LOGI("audio mixer: migrated from record/audio_source=%ld (mixer version %ld)", audio_source, version);
+        char key[32];
+        if (ini_getkey(AUDIO_MIXER_SECTION, 0, key, sizeof(key), SETTING_INI) > 0)
+            ini_puts(AUDIO_MIXER_SECTION, NULL, NULL, SETTING_INI);
+        LOGI("audio mixer: from record/audio_source=%ld (mixer version %ld)", audio_source, version);
     } else {
+        section_written = true;
         for (int i = 0; i < AUDIO_MIXER_FIELD_COUNT; i++) {
             const long value = ini_getl(AUDIO_MIXER_SECTION, field_key[i], defaults.value[i], SETTING_INI);
             mixer.value[i] = clamp_field(i, value);
@@ -181,11 +182,19 @@ void audio_mixer_save(void) {
     const audio_mixer_settings_t current = mixer;
     pthread_mutex_unlock(&mixer_mutex);
 
+    bool wrote = false;
     for (int i = 0; i < AUDIO_MIXER_FIELD_COUNT; i++) {
         if (current.value[i] != saved.value[i]) {
             ini_putl(AUDIO_MIXER_SECTION, field_key[i], current.value[i], SETTING_INI);
             saved.value[i] = current.value[i];
+            wrote = true;
         }
+    }
+    // the first change: the version last, so that a section cut short by a power loss is read
+    // as none (from [record] audio_source again); the fields not written keep coming from there
+    if (wrote && !section_written) {
+        ini_putl(AUDIO_MIXER_SECTION, "version", AUDIO_MIXER_VERSION, SETTING_INI);
+        section_written = true;
     }
 }
 
