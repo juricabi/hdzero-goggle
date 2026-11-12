@@ -716,6 +716,8 @@ void osd_hdzero_update(void) {
     bool showRXOSD = false;
 
 #if defined(HDZGOGGLE)
+    // analog: only for the channel label of a controlled bay module (osd_channel_show() hides it
+    // otherwise, as upstream); Goggle 1 has no analog RSSI, so no RSSI bar
     if (source_is_hdzero || source_is_analog) {
         showRXOSD = g_setting.osd.is_visible;
     }
@@ -762,7 +764,7 @@ void osd_hdzero_update(void) {
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
     osd_analog_rssi_show(showRXOSD && source_is_analog);
 #elif defined(HDZGOGGLE)
-    osd_analog_rssi_show(showRXOSD && source_is_analog);
+
 #endif
 
     if (gif_cnt % 10 == 0) { // delay needed to allow gif to flash
@@ -929,7 +931,7 @@ void osd_update_element_positions() {
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
     osd_analog_rssi_update_location();
 #elif defined(HDZGOGGLE)
-    osd_analog_rssi_update_location();
+
 #endif
 
     if (g_setting.storage.selftest) {
@@ -960,7 +962,7 @@ static void fc_osd_init(uint8_t fhd, uint16_t OFFSET_X, uint16_t OFFSET_Y) {
         }
     }
 
-#if defined(HDZBOXPRO) || defined(HDZGOGGLE2) || defined(HDZGOGGLE)
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
     if (!fhd) {
         osd_analog_rssi_create();
     }
