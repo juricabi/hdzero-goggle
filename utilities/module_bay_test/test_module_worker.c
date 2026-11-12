@@ -72,9 +72,19 @@ static void record(char op, int arg) {
     pthread_mutex_unlock(&ev_lock);
 }
 
-static void rec_init() { record('i', 0); }                          // takes the pins, sends no channel
+static void rec_init() { record('i', 0); } // takes the pins, sends no channel
 static void rec_close() { record('c', 0); }
-static void rec_channel(int ch) { record('h', ch); usleep(170000); } // a True-D burst
+// a True-D burst: 5 packets of ~11 ms (not interruptible), 30 ms apart (abort points)
+static void rec_channel(int ch) {
+    record('h', ch);
+    for (int i = 0; i < 5; i++) {
+        if (i && !module_sleep_ms(30)) {
+            record('a', i); // cut short: pins to be released
+            return;
+        }
+        usleep(11000);
+    }
+}
 static void rec_mode() { record('m', g_setting.module.setting); }
 static char *rec_name(int ch) {
     static char buf[8];
@@ -209,9 +219,13 @@ int main(void) {
     check(find_from('h', t, &e) && e.t < t + SLACK_MS && e.arg == 6, "later channel change sent at once");
 
     t = t_now();
+    analog_channel_set(8); // power-off during a burst
+    usleep(50000);
+    t = t_now();
     check(timed_call_ms(power_off) < 50, "power-off report returns at once");
     sleep_until(t + SLACK_MS);
-    check(find_from('c', t, &e) && e.t < t + SLACK_MS, "pins released after power-off");
+    check(find_from('c', t, &e) && e.t < t + 11 + 50, "pins released after power-off, burst cut short (< 60 ms)");
+    check(find_from('a', t, &e), "  (the burst stopped between packets)");
     analog_channel_set(9);
     t = t_now();
     usleep(200000);
@@ -231,10 +245,12 @@ int main(void) {
     sleep_until(on + 3500 + SLACK_MS); // past the boot resend
     int closes = count('c', 0, 1000000);
     analog_channel_set(4); // a burst is going out when WiFi is switched on
-    usleep(30000);
+    usleep(50000);
     g_setting.wifi.enable = true;
+    t = t_now();
     uint64_t waited = timed_call_ms(wifi_changed);
     check(count('c', 0, 1000000) == closes + 1, "WiFi on during a burst: pins released before returning");
+    check(find_from('a', t - 100, &e) && waited < 11 + 50, "  the burst cut short after its packet (< 60 ms)");
     printf("    (waited %llu ms)\n", (unsigned long long)waited);
     check(module_status() == MODULE_STATUS_WIFI, "status: paused while WiFi is on");
     check(!analog_channel_set(3) && g_setting.module.channel == 4 && !analog_channel_tunable(),

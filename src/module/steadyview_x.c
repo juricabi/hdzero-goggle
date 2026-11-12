@@ -32,7 +32,8 @@ static void send_command(uint8_t *bytes, uint8_t length) {
     // logic analyser show that 2nd or 3rd packet after delay is correct, but let it be 5 for stable result
     for (int i=0; i<5 ; i++) {
         uart_write(uart_fd, bytes, length);
-        usleep(1000);
+        if (!module_sleep_ms(1))
+            break; // pins to be released
     }
 }
 
@@ -64,7 +65,8 @@ static void steadyview_x_init() {
 
     system("insmod /mnt/app/ko/soft_uart.ko");
 
-    usleep(100000);
+    if (!module_sleep_ms(100))
+        return; // pins to be released (close() unloads soft_uart)
     uart_fd = uart_open(4);
 #endif
     steadyview_x_set_mode();

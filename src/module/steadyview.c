@@ -67,11 +67,14 @@ static void steadyview_set_mixmode(steadyview_mix_mode_t mode) {
         LOGW("steadyview: no bay power switch (batch 1), mix mode %d not latched", mode);
         set_mode_pins();
     }
-    usleep(100000);
+    // (abort points: the waits; a release request ends the mode set there)
+    if (!module_sleep_ms(100))
+        return;
 
     softspi_set_pin(SOFTSPI_CLK, 0);
     softspi_set_pin(SOFTSPI_DAT, 1);
-    usleep(505000);
+    if (!module_sleep_ms(505))
+        return;
 
     uint16_t f = frequencyTable[current_channel];
     uint32_t data = ((((f - 479) / 2) / 32) << 7) | (((f - 479) / 2) % 32);
@@ -95,11 +98,13 @@ static void steadyview_set_mode() {
 static void steadyview_init() {
     softspi_init();
 
-    usleep(50000);
+    if (!module_sleep_ms(50))
+        return;
     softspi_set_pin(SOFTSPI_CLK, 0);
     softspi_set_pin(SOFTSPI_CS, 1);
     softspi_set_pin(SOFTSPI_DAT, 1);
-    usleep(100000);
+    if (!module_sleep_ms(100))
+        return;
 
     steadyview_set_mode();
 }

@@ -15,7 +15,12 @@
 #define RF_API_CHANNEL_CMD 'C'
 #define RF_API_MODE_CMD    'D'
 
-static void send_cmd(uint8_t command, uint8_t value);
+#define SPAM_GAP_MS 10 // between the repeats of a command
+#define CMD_GAP_MS  100 // between two commands
+
+// Every wait is an abort point (module_sleep_ms()): a release request stops a
+// transfer after the SPI frame on the wire.
+static bool send_cmd(uint8_t command, uint8_t value);
 
 static void rapidfire_set_channel(int index) {
     // convert standard band index (A B E F R L) to IMRC band index
@@ -23,13 +28,14 @@ static void rapidfire_set_channel(int index) {
     const int band = index / 8;
     if (index < 0 || band >= (int)ARRAY_SIZE(band_map))
         return;
-    send_cmd(RF_API_BAND_CMD, band_map[band]);
-    usleep(100000);
+    if (!send_cmd(RF_API_BAND_CMD, band_map[band]) || !module_sleep_ms(CMD_GAP_MS))
+        return; // pins to be released
     send_cmd(RF_API_CHANNEL_CMD, index % 8 + 1); // IMRC channel is 1-based
 }
 
 static void rapidfire_set_mode() {
-    usleep(100000);
+    if (!module_sleep_ms(CMD_GAP_MS))
+        return;
     send_cmd(RF_API_MODE_CMD, g_setting.module.setting);
     // the worker sends the channel next
 }
@@ -40,11 +46,13 @@ static void rapidfire_init() {
     softspi_set_pin(SOFTSPI_CLK, 1);
     softspi_set_pin(SOFTSPI_CS, 1);
     softspi_set_pin(SOFTSPI_DAT, 1);
-    usleep(200000);
+    if (!module_sleep_ms(200))
+        return;
     softspi_set_pin(SOFTSPI_CLK, 0);
     softspi_set_pin(SOFTSPI_CS, 0);
     softspi_set_pin(SOFTSPI_DAT, 0);
-    usleep(200000);
+    if (!module_sleep_ms(200))
+        return;
     softspi_set_pin(SOFTSPI_CS, 1);
 
     rapidfire_set_mode();
@@ -84,8 +92,9 @@ static void send_spi(uint8_t *buf, uint8_t len) {
     softspi_set_pin(SOFTSPI_CS, 1);
 }
 
-// One command, SPAM_COUNT times (the rapidFIRE sometimes misses a packet).
-static void send_cmd(uint8_t command, uint8_t value) {
+// One command, SPAM_COUNT times (the rapidFIRE sometimes misses a packet).  False
+// when it was cut short because the pins are to be released.
+static bool send_cmd(uint8_t command, uint8_t value) {
     uint8_t cmd[5];
     cmd[0] = command;
     cmd[1] = RF_API_DIR_EQUAL;
@@ -96,8 +105,10 @@ static void send_cmd(uint8_t command, uint8_t value) {
 
     for (int i = 0; i < SPAM_COUNT; i++) {
         send_spi(cmd, 5);
-        usleep(10000);
+        if (!module_sleep_ms(SPAM_GAP_MS))
+            return false;
     }
+    return true;
 }
 
 // 48 channels, A B E F R L: the analog channel setting, its range check at load,
