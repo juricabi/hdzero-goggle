@@ -165,6 +165,50 @@ the DAC starts and `false` before it closes (like playback, so the line out keep
 source), and build with `-DAUDIO_MIXER_HDMI_IN_ROW=1` to show the "HDMI In" level
 on the page (the rows share the same height, 15 rows fit; `MAX_PANELS` is 15).
 
+### Per-source record levels: what the codec allows (evaluated, not implemented)
+
+Asked for: DVR levels per source, independent of the headphone levels, e.g. two
+source groups on the two ADC sides with their own digital volume, averaged to mono
+by the codec (`AIF1OUT0L/R Mux` = `AVE_AIF1AD0L_AIF1AD0R`). Checked against the
+driver (`sun8iw16-codec.c`) and the dumps:
+
+* Separate left/right ADC input mixers, a switch per source and side: yes.
+* An independent digital level per side: yes. `ADC volume` is a double control
+  (`SUNXI_ADC_VOL_CTRL`, left bits 15..8, right 7..0, 0..255, 0.75 dB steps; also
+  `AIF1 ADC timeslot 0 volume`). Above 160 it is digital gain on the ADC output: no
+  headroom is gained and the noise rises with it.
+* The codec summing or averaging the two sides: no, not through the driver. The
+  mux enums list SUM and AVE, but `ac_dapm_routes[]` has routes only for
+  `AIF1_AD0L` / `AIF1_AD0R`. DAPM connects a mux input only when the selected item
+  names it, so with SUM/AVE the mux has no input, is powered down, and its power bit
+  is the slot's channel enable (`SND_SOC_DAPM_MUX("AIF1OUT0L Mux",
+  SUNXI_AIF1_ADCDAT_CTRL, 15 = AIF1_AD0L_ENA, ...)`): that capture channel goes off.
+  The register's average cannot be reached through ALSA, and poking the register
+  behind the driver would be undone by the next DAPM update; not done. There is no
+  digital cross-mix either: `AIF1 AD0L Mixer` has no input from the right ADC. (The
+  codec model reproduces this; the test checks it.)
+
+So, with this driver:
+
+1. As Heard (implemented): per-source levels on the recording, the same as in the
+   headphones.
+2. Custom (implemented): any set of sources summed in the analog ADC input mixer at
+   one shared level (Record Level), plus the mic preamps, which also change the
+   headphones. LINEIN has no gain of its own in front of the ADC.
+3. Split stereo (possible, not implemented): group A on the left ADC, group B on the
+   right, each with its own `ADC volume`. At most two independent levels; a third
+   source must join one side and share its level (analog sum); the file carries
+   different content per channel (e.g. mic left, A/V right), not a mono mix, and
+   players put them on separate ears; the A/V stereo pair folds to the one channel
+   of its side; `ADC input gain control` stays shared; libmedia_mpp's reset (both
+   sides 160, MIC1 on the left ADC) would be undone by the watcher. A migrated unit
+   would keep both sides at 160, i.e. record as before.
+4. A mono mix with independent levels needs either a kernel change, the four missing
+   routes (`{"AIF1OUT0L Mux", "AVE_AIF1AD0L_AIF1AD0R", "AIF1 AD0L Mixer"}`, the same
+   with `AIF1 AD0R Mixer`, and both for `AIF1OUT0R Mux`; then 3 plus AVE gives
+   L = R = (A + B) / 2, each group 6 dB lower; untested on hardware), or mixing the
+   two channels in software in the record daemon before the AAC encoder.
+
 ## Levels and defaults
 
 * 0 dB of a source = gain register 3, the driver default seen in the dump. The

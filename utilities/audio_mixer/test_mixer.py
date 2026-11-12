@@ -518,6 +518,22 @@ def test_driver_routes(path):
         ok(f"model: all {len(cm.ROUTES)} routes are the driver's")
 
 
+def test_model_facts():
+    """What the driver's routes allow for per-side record levels (docs/audio.md)."""
+    state = {"AIF1 AD0L Mixer ADCL Switch": 1, "AIF1 AD0R Mixer ADCR Switch": 1,
+             "LADC input Mixer MIC1 boost Switch": 1, "RADC input Mixer LINEINR Switch": 1}
+    split = cm.evaluate(state)
+    if set(split["record_l"]) != {"mic"} or set(split["record_r"]) != {"av"}:
+        fail("model: split stereo", cm.describe(split))
+    for item in (2, 3):  # SUM / AVE: no route, the mux (and the slot channel) is disconnected
+        result = cm.evaluate(dict(state, **{"AIF1OUT0L Mux": item, "AIF1OUT0R Mux": item}))
+        if result["record_l"] or result["record_r"]:
+            fail("model: SUM/AVE mux", f"item {item} still connects: {cm.describe(result)}")
+    if any(sink == "AIF1 AD0L Mixer" and source == "RADC input Mixer" for sink, _, source in cm.ROUTES):
+        fail("model: cross-mix", "left AIF1 slot can take the right ADC")
+    ok("model: split stereo possible, codec-side SUM/AVE and cross-mix not")
+
+
 def main():
     global verbose
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -530,6 +546,7 @@ def main():
 
     if args.driver:
         test_driver_routes(args.driver)
+    test_model_facts()
 
     work = tempfile.mkdtemp(prefix="audio_mixer_test_")
     try:
