@@ -23,6 +23,9 @@ void conf_saveAencParams(char* confFile, AencParams_t* aePara);
 void conf_loadRecordParams(char* confFile, RecordParams_t* recPara);
 void conf_saveRecordParams(char* confFile, RecordParams_t* recPara);
 
+/* live stream audio (RTSP AAC track): [live] audio, default off */
+bool conf_loadLiveAudio(char* confFile);
+
 #ifdef __cplusplus
 }
 #endif /* End of #ifdef __cplusplus */

@@ -17,6 +17,7 @@
 #include "H264LiveVideoServerMediaSubssion.hh"
 #include "H265LiveVideoServerMediaSubssion.hh"
 #endif
+#include "AACLiveAudioServerMediaSubsession.hh"
 
 extern "C"
 {
@@ -270,6 +271,10 @@ void* live_multicast_loop(void *context)
   Groupsock rtcpGroupsock(*env, destinationAddress, rtcpPort, ttl);
   rtcpGroupsock.multicastSendOnly(); // we're a SSM source
 
+  if( liveCtx->audio ) {
+    *env << LOG_PRIFIX << "live audio is not supported in multicast mode, streaming video only\n";
+  }
+
   // Create a 'H264 Video RTP' sink from the RTP 'groupsock':
   RTPSink* videoSink;
   OutPacketBuffer::maxSize = 7208076;//100000;
@@ -343,7 +348,14 @@ void* live_loop(void *context)
     portNumBits rtspServerPortNum = liveCtx->port;//8554;
 
     if( liveCtx->runDynamicRTSPServer ) {
-        rtspServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB, liveCtx->h265, liveCtx->streamName);
+        DynamicRTSPServer* dynamicServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB, liveCtx->h265, liveCtx->streamName);
+        if( dynamicServer != NULL ) {
+            // live stream audio (RTSP AAC track)
+            dynamicServer->_audio = liveCtx->audio;
+            dynamicServer->_audioSampleRate = liveCtx->audioSampleRate;
+            dynamicServer->_audioChannels = liveCtx->audioChannels;
+        }
+        rtspServer = dynamicServer;
     }
     else {
         rtspServer = RTSPServer::createNew(*env, rtspServerPortNum, authDB);
@@ -353,10 +365,16 @@ void* live_loop(void *context)
             ServerMediaSession* sms = ServerMediaSession::createNew(*env, streamName, streamName, descriptionString);
 
             if (liveCtx->h265) {
-                sms->addSubsession(H265LiveVideoServerMediaSubssion::createNew(*env, reuseFirstSource));
+                sms->addSubsession(H265LiveVideoServerMediaSubssion::createNew(*env, reuseFirstSource, liveCtx->audio));
             }
             else {
-                sms->addSubsession(H264LiveVideoServerMediaSubssion::createNew(*env, reuseFirstSource));
+                sms->addSubsession(H264LiveVideoServerMediaSubssion::createNew(*env, reuseFirstSource, liveCtx->audio));
+            }
+            // live stream audio (RTSP AAC track)
+            if (liveCtx->audio) {
+                sms->addSubsession(AACLiveAudioServerMediaSubsession::createNew(*env, reuseFirstSource,
+                                                                                liveCtx->audioSampleRate,
+                                                                                liveCtx->audioChannels));
             }
             rtspServer->addServerMediaSession(sms);
         }
@@ -427,6 +445,7 @@ void live_getParams(LiveContext_t* liveCtx, int argc, char* argv[])
     alogd("conf: %s\n", liveCtx->confFile);
 
     conf_loadLiveParams(liveCtx);
+    alogd("live audio: %s\n", liveCtx->audio ? "on" : "off");
 
     if( argc > 1 ) {
         if( strcmp(argv[1], "-nt") == 0 ) {

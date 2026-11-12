@@ -16,6 +16,11 @@
 #define KEY_PORT        "port"
 #define KEY_MULITCAST   "multicast"
 
+#define SEC_AI          "ai"
+#define KEY_AUDIO       "audio"
+#define KEY_sampleRATE  "sample_rate"
+#define KEY_CHANNELS    "channels"
+
 #define sizearray(a)  (sizeof(a) / sizeof((a)[0]))
 #define check_set(v, min, max)  ( ((v)<(min)) ? (min) : (((v)>(max)) ? (max) : (v)) )
 
@@ -41,4 +46,12 @@ void conf_loadLiveParams(LiveContext_t* liveCtx)
 
     lValue = ini_getbool(sSection, KEY_MULITCAST, LIVE_rtspMULTICAST, confFile);
     liveCtx->IsMulticast = (lValue > 0);
+
+    // live stream audio (RTSP AAC track)
+    lValue = ini_getbool(SEC_LIVE, KEY_AUDIO, LIVE_AUDIO, confFile);
+    liveCtx->audio = (lValue > 0);
+    lValue = ini_getl(SEC_AI, KEY_sampleRATE, LIVE_audioRATE, confFile);
+    liveCtx->audioSampleRate = (lValue > 0) ? (unsigned)lValue : LIVE_audioRATE;
+    lValue = ini_getl(SEC_AI, KEY_CHANNELS, LIVE_audioCHANNELS, confFile);
+    liveCtx->audioChannels = check_set(lValue, 1, 2);
 }

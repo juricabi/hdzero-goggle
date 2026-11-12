@@ -10,6 +10,7 @@ extern "C" {
 #include "ffpack.h"
 #include "disk.h"
 #include "record_definitions.h"
+#include "live_audio.h"
 
 typedef enum
 {
@@ -102,6 +103,10 @@ typedef struct
     uint32_t nbFramesLive;
     uint64_t ptsBaseLive;
     VencSpspps_t spspps;
+
+    // live stream audio (RTSP AAC track), see live_audio.h
+    LiveClock_t liveVideoClock;
+    LiveAudio_t liveAudio;
 } RecordContext_t;
 
 #ifdef __cplusplus

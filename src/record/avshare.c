@@ -199,7 +199,7 @@ millis: 时间戳
 streamType: 0:大码流; 1:小码流; 2:音频流
 */
 
-int avshare_add(uint8_t *pstStream, int len, FrameType_e frame_type, uint32_t millis, MediaType_e streamType) {
+int avshare_add(uint8_t *pstStream, int len, FrameType_e frame_type, uint64_t timestamp, MediaType_e streamType) {
     int buff_size[MEDIA_NUM];
     ShareStream_t *pStreamHead = NULL;
     int data_send = 0;
@@ -230,7 +230,7 @@ int avshare_add(uint8_t *pstStream, int len, FrameType_e frame_type, uint32_t mi
         // printf("debug -----AddToShareStream-1--%d,%d,%d,%d\n",pShareStreamHeader->wflag,streamType,pShareStreamHeader->frameType,frame_type);
         if (pStreamHead->wflag == 1) {
             pStreamHead->frameType = frame_type;
-            pStreamHead->timestamp = millis;
+            pStreamHead->timestamp = timestamp;
             pStreamHead->mediaType = streamType;
 
             memcpy((uint8_t *)gAvshare.streamBuf[connect_flag][gAvshare.idxNext[connect_flag]], pstStream + data_send, buffer_len);
@@ -254,6 +254,7 @@ int avshare_add(uint8_t *pstStream, int len, FrameType_e frame_type, uint32_t mi
                 }
             }
 
+            __sync_synchronize(); // slot contents must be visible before the reader sees it filled
             pStreamHead->wflag = 0;
             gAvshare.idxNext[connect_flag] = (gAvshare.idxNext[connect_flag] + 1) % SHAREBUF_COUNT;
 
@@ -313,7 +314,7 @@ void avshare_addaud(unsigned char *buf, int len, uint32_t millis) {
 #endif
 }
 
-void avshare_addvid(uint8_t *pstStream, int len, FrameType_e frameType, uint32_t millis) {
+void avshare_addvid(uint8_t *pstStream, int len, FrameType_e frameType, uint64_t timestamp) {
     static int iDropped = 0;
     int ret = 0;
 
@@ -336,7 +337,7 @@ void avshare_addvid(uint8_t *pstStream, int len, FrameType_e frameType, uint32_t
         }
     }
 
-    ret = avshare_add(pstStream, len, frameType, millis, MEDIA_VIDEO); // add to share memory
+    ret = avshare_add(pstStream, len, frameType, timestamp, MEDIA_VIDEO); // add to share memory
     if (ret == 1) {
         // buffer full, dropped a frame
         iDropped++;
@@ -473,4 +474,69 @@ void avshare_reset(void) {
         gAvshare.fileTest = NULL;
     }
 #endif
+}
+
+//----------------------------------------------------------------------------------------------
+// Live stream audio (RTSP AAC track)
+//
+// Unlike avshare_add(), a frame is either queued completely or not at all, so the reader never
+// sees a partial audio frame. Slots are published in order (first slot first), each one after
+// its contents, so a reader that sees a slot filled also sees its data.
+//----------------------------------------------------------------------------------------------
+int avshare_addAudioFrame(const uint8_t *data, int len, uint64_t timestampUs) {
+    const int mediaIndex = MEDIA_type2index(MEDIA_AUDIO);
+    int nSlots;
+    int i;
+
+    if (gAvshare.bufShare == NULL)
+        return -2;
+
+    if (!CHECK_IsConnect(MEDIA_AUDIO)) {
+        gAvshare.idxNext[mediaIndex] = 0;
+        return -3;
+    }
+
+    if (len <= 0)
+        return 0;
+
+    nSlots = (len + audioStreamSize - 1) / audioStreamSize;
+    if (nSlots > SHAREBUF_COUNT / 2)
+        return -4;
+
+    // only the reader frees slots, so slots seen free here stay free until we fill them
+    for (i = 0; i < nSlots; i++) {
+        int idx = (gAvshare.idxNext[mediaIndex] + i) % SHAREBUF_COUNT;
+        if (*(volatile char *)&gAvshare.bufStreamHead[mediaIndex][idx].wflag != 1)
+            return 1;
+    }
+    __sync_synchronize();
+
+    for (i = 0; i < nSlots; i++) {
+        int idx = gAvshare.idxNext[mediaIndex];
+        ShareStream_t *pStreamHead = &gAvshare.bufStreamHead[mediaIndex][idx];
+        int chunk = (len > audioStreamSize) ? audioStreamSize : len;
+
+        memcpy(gAvshare.streamBuf[mediaIndex][idx], data, chunk);
+        pStreamHead->frameType = FRAME_I;
+        pStreamHead->mediaType = MEDIA_AUDIO;
+        pStreamHead->timestamp = timestampUs;
+        pStreamHead->length = chunk;
+        if (nSlots == 1)
+            pStreamHead->buff_type = BUF_BEG_END;
+        else if (i == 0)
+            pStreamHead->buff_type = BUF_BEGIN;
+        else if (i == nSlots - 1)
+            pStreamHead->buff_type = BUF_END;
+        else
+            pStreamHead->buff_type = BUF_MIDDLE;
+
+        __sync_synchronize();
+        *(volatile char *)&pStreamHead->wflag = 0;
+
+        gAvshare.idxNext[mediaIndex] = (idx + 1) % SHAREBUF_COUNT;
+        data += chunk;
+        len -= chunk;
+    }
+
+    return 0;
 }
