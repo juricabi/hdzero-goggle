@@ -51,9 +51,10 @@ muxer only. So **during live streaming there is no audio unless a recording with
 running, and never with Record Audio off**. Nothing feeds the audio side of the ring:
 `avshare_addAudio()` (record) and `avshare_readAudio()` (rtspLive) are unused leftovers
 (`addAudio` expects TS PES fragments; `readAudio` computes `tv_usec = ts*100/9` without a modulo).
-Input routing is not touched by this work: the stream carries whatever the DVR's audio path
-captures on AI device 0 (on this branch the `audio_sel.sh` routing applied when entering video
-mode; with the audio mixer work on another branch, its DVR mix).
+Input routing is not touched by this work: the stream carries whatever the codec's ADC captures
+on AI device 0, which is what the DVR records: the **Recording** section of the Audio page
+(Record What I Hear, Record Mic / Line In / A/V In, Record Level; docs/audio.md). The headphone
+Volume does not change it.
 
 ### The shared ring (`src/record/avshare.c` writer, `src/rtspLive/stream/avshare.c` reader)
 
@@ -128,14 +129,19 @@ file), `ADTSAudioStreamDiscreteFramer` (*adds* ADTS headers).
   after the reader goes away (DESCRIBE and SETUP each connect, the delay avoids a restart in
   between); a failed start is retried after 5 s; a running chain that produces no frame for 2 s
   is stopped and started again.
-- The chain captures from the same `[ai] device` as recording: the stream carries whatever the
-  DVR's audio path captures (input routing / mixer settings the main app applies to the codec).
-  HDMI-in does not select an input (out of scope here).
-- Users of the AI device: recording with audio, the AI -> AO loop and the stream audio can run
-  at the same time (channels on one device). `aidev_heldByOthers(recCtx, self)` in `main.c`
-  answers whether a user other than `self` holds the device; every place that stops a user asks
-  it before disabling the device (`record_stop()`, `AIO_cmdSTOP`, the live audio poll, exit).
-  Further users register an `AiUser_e` entry and one line in its table.
+- The chain captures from the same `[ai] device` as recording: the stream carries what the DVR
+  records (the Audio page's Recording section). HDMI-in audio is in it only with HDMI In Audio
+  and Record What I Hear on (docs/hdmi-audio.md).
+- Users of the AI device: recording with audio, the AI -> AO loop, the stream audio and the HDMI
+  out audio bridge (`pcmbridge.c`, route `src=ai`) can run at the same time (channels on one
+  device). `aidev_heldByOthers(recCtx, self)` in `main.c` answers whether a user other than
+  `self` holds the device; every place that stops a user asks it before disabling the device
+  (`record_stop()`, `AIO_cmdSTOP`, `HDMIA_cmdSTART` / `HDMIA_cmdSTOP`, the live audio poll, exit,
+  in every order). Further users register an `AiUser_e` entry and one line in its table.
+  `t_aidev.sh` checks with the stub AI device that it is enabled exactly while a user holds a
+  channel: every start/stop order of recording, stream and bridge, every stop order with all
+  four running, the bridge route replaced by the HDMI-in route, a bridge start failing after
+  taking its channel, and quitting with each set of users running.
 - `liveaudio_onFrame()` queues each ADTS frame **with its header** via the new
   `avshare_addAudioFrame()`: all or nothing (a frame never ends up half in the ring), slots
   published in order behind a barrier. Ring full -> the frame is dropped and counted.

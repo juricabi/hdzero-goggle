@@ -4,7 +4,8 @@ Status: **experimental, everything default off.** Nothing here has been run on a
 goggle yet. With the default `setting.ini` the firmware behaves exactly as before
 (host tests: `utilities/probe/test/it66121_seq_test.sh` - the IT66121 register sequence
 is identical; `it66021_edid_test.sh` - the IT66021 I2C sequence and the EDID it serves
-are identical).
+are identical). Switches: **Audio > HDMI Audio (experimental) > HDMI Out Audio / HDMI In
+Audio** (`[hdmi] audio_out` / `audio_in`), section 6.
 
 Applies to the original **HDZero Goggle** (`-DHDZ_GOGGLE=ON`) and the **Goggle 2**
 (`-DHDZ_GOGGLE2=ON`); BoxPro builds the same code.
@@ -24,7 +25,7 @@ Control".
 | SoC side (V536 datasheet, shipped device tree) | I2S0 `daudio@0x05090000`; DT pin group `daudio0@0` = PH1/PH2/PH3 = I2S0 BCLK/LRCK/DOUT (PH_CFG0 function 3); `daudio_master=4`: the SoC drives BCLK/LRCK. ALSA card `snddaudio0`. The DT names no consumer | I2S2 `daudio@0x05092000`; `daudio2@0` = PG10/PG11/PG13 = I2S2 BCLK/LRCK/DIN (PG_CFG1 function 3); `daudio_master=1`: the external chip drives BCLK/LRCK. ALSA card `snddaudio2` |
 | wiring on the board | **likely** to the IT66121 (a group of exactly a transmitter's three signals, the IT66121 the only I2S receiver); which SoC pin reaches which chip pin: **unknown** | **likely** to the IT66021 (a receiver's three signals; vendor note records from `hw:snddaudio2`); pin order at the chip: **unknown** |
 | shipped firmware | audio never programmed (Reg04 audio resets stay asserted); **rc.sh re-muxes PH1 to uart4 and PH2/PH3 off at boot** | EDID advertises Basic Audio + L-PCM 2 ch 32/44.1/48 kHz; nothing captures I2S2 |
-| what this branch adds (off by default) | `[hdmi] audio_out=1`: IT66121 audio setup + the DVR audio input copied to I2S0 | `[hdmi] audio_in=1`: I2S2 played into the codec DAC while HDMI in is shown: heard on the line-out jack **and recorded by the DVR** (mixed with its source); EDID offers 48 kHz L-PCM only |
+| what this branch adds (off by default) | HDMI Out Audio (`[hdmi] audio_out=1`): IT66121 audio setup + the ADC capture (what is recorded) copied to I2S0 | HDMI In Audio (`[hdmi] audio_in=1`): I2S2 played into the codec DAC while HDMI in is shown, a source of the audio mixer: heard at the Audio page's HDMI In level, **recorded with Record What I Hear**; EDID offers 48 kHz L-PCM only |
 | not possible | - | HDMI in -> HDMI out (the app switches HDMI out off while HDMI in is shown) |
 | only the device can tell | whether PH1-PH3 reach SCK/WS/I2S0 of the IT66121 in this order (G1 and G2 separately; on G2 also whether the FPGA is in the path), whether the TV plays the tone | whether the IT66021 drives SCK/WS by default, at which word clock and format |
 
@@ -108,10 +109,17 @@ PH1, `uart_used=0`) competing with I2S0 for PH1; which driver owns PH1 is visibl
 and puts them back when it stops (section 4).
 
 **`/sys/class/sunxi_dump`** (what `awr`/`aww` use; the app runs `aww` from several places)
-is one address latch for every process: `echo addr > dump; cat dump`. Two users at the
-same time can read each other's register. Everything on this branch that reads through it
-(the bridge, the probe kit) reads three times and checks the value, takes the lock file
-`/tmp/.sunxi_dump.lock`, and the probe kit pauses the app (whose `aww` cannot take the lock).
+is one address latch for every process: `echo addr > dump; cat dump` (a single address
+answers `0x%08x\n`, the value only: `dump_reg.c` of the BSP). Two users at the same time
+can read each other's register. Writes (`aww`, `/sys/class/sunxi_dump/write`) do not use
+the latch. Readers in this firmware: the HDMI audio bridge (record daemon, only at a route
+start/stop) and the probe kit read three times, check the value and take the lock file
+`/tmp/.sunxi_dump.lock` (the probe kit also pauses the app); the stock `gpdac0_get()`
+(`awr`, Goggle 2 / BoxPro battery ADC) and the module bay's pin check (`read_reg()` in
+`src/module/module.c`, PG_CFG0 and PIO_POW_VAL, a single read) take no lock. The module
+bay's read is the one that can be fooled by the bridge (a wrong PG_CFG0 for one check);
+the fix belongs to the module bay code: take the same lock and read three times like the
+bridge (handed over with the module-bay branch).
 
 ### Other evidence
 
@@ -200,10 +208,18 @@ applies the vendor fix (I2S0 CTL MODE_SEL = I2S, BCLK/LRCK output) and returns P
 function 3: read three times (must agree), plausibility-checked (PH0/PH4 outputs; CTL
 reserved bits 0), written and read back. On stop - and on a start that fails half-way - it
 puts back exactly these fields, if they still hold its own values. The AI device is only
-disabled when none of DVR, `ai2ao` and the bridge use it, also after a failed start.
+disabled when none of DVR, `ai2ao`, the WiFi stream audio and the bridge use it, also after
+a failed start (one list of AI device users in `src/record/main.c`, checked in every
+start/stop/exit order by `utilities/live_audio_test/t_aidev.sh`).
 
-Flow: `setting.ini [hdmi] audio_out=1` -> `hdmi_audio_load()` configures the IT66121
-driver -> `IT66121_init()` programs audio -> `hdmi_audio_apply(hdmi_in_shown)` (after
+What HDMI out carries is the ADC capture, the same signal as the DVR and the WiFi stream:
+the Audio page's Recording section decides it (Record What I Hear, Record Mic / Line In /
+A/V In, Record Level), not the headphone Volume.
+
+Flow: HDMI Out Audio On (`setting.ini [hdmi] audio_out=1`) -> `hdmi_audio_load()` at
+start-up, or `hdmi_audio_set()` from the Audio page, configures the IT66121 driver (the
+page also programs the running IT66121 at once) -> `IT66121_init()` programs audio ->
+`hdmi_audio_apply(hdmi_in_shown)` (after
 start-up and every source switch; the route depends on the source being switched **to**)
 writes the request `/tmp/hdmi_audio.req` (`seq`, `active`, `src=ai`,
 `sink=hw:snddaudio0`, `i2s0_fix=1`) and sends `HDMIA_cmdSTART` on the record daemon's
@@ -240,7 +256,7 @@ there).
   I2S2 sample counter (RXCNT, `0x0509202C`) and a 10 s `arecord -D hw:snddaudio2` in
   `utilities/probe/hdmi_audio_test.sh` decide whether it does.
 
-### HDMI-in audio as a mixer source: jack and DVR (implemented behind `audio_in=1`)
+### HDMI-in audio as a mixer source: headphones and recording (HDMI In Audio = On)
 
 While HDMI in is shown, the bridge plays the I2S2 capture (`hw:snddaudio2`) into the
 internal codec's DAC (`plughw:audiocodec`, 48 kHz). From the DAC it enters the codec's
@@ -248,25 +264,27 @@ output mixers like any analog source:
 
 ```
 I2S2 (IT66021) -> bridge -> AIF1 DA0 -> DAC -> L/R output mixer -+-> L+R sum -> lineout volume -> jack
-                                                                 +-> "l/r_output mixer" -> ADC -> MPP AI -> DVR (AAC)
+                                                                 +-> "l/r_output mixer" -> ADC -> MPP AI -> DVR, stream
+                                                                     (Record What I Hear)
 ```
 
-`hdmi_audio_line_out()` in `src/core/hdmi_audio.c` is the one function that switches it
-(the integration point for the mixer module of the audio branch). Controls (card
-`audiocodec`):
+`hdmi_audio_line_out()` in `src/core/hdmi_audio.c` is the one function that switches it,
+and it only tells the audio mixer (`audio_mixer_set_live_dac()`, docs/audio.md "HDMI-in
+audio"); the mixer alone writes the codec's controls. On (the route starts): the DAC is a
+live source at the Audio page's **HDMI In** level (0.0 dB by default; the row is greyed
+out while HDMI In Audio is Off), mixed with the analog sources at their levels (mic +
+HDMI audio works), the line out stays on during HDMI in (Volume permitting), and **Record
+What I Hear** records it with the rest of the headphone mix. The direct Record switches
+cannot record it: there is no path from the DAC into the ADC except through the output
+mixer. Off (before the route stops; it waits until the codec has it, so the DAC leaves the
+mix before the bridge stops playing into it): HDMI in mutes the line out again, as stock.
 
-| purpose | controls |
-|---|---|
-| heard | `DACL Mixer AIF1DA0L Switch` 1, `DACR Mixer AIF1DA0R Switch` 1 (libmedia_mpp sets only the left one); `Left Output Mixer DACL Switch` 1, `Right Output Mixer DACR Switch` 1; `DAC volume` 152 (8 steps of 0.75 dB below libmedia_mpp's 160: the line out sums left and right); `LINEOUTL Mux` / `LINEOUTR Mux` 1 (OMIX_LR_SUM); `lineout volume` 31; `Lineout Switch` 1 (last) |
-| not mixed in | `Left Output Mixer LINEINL Switch` 0, `Right Output Mixer LINEINR Switch` 0 (the analog line-in bypass the last analog source left on) |
-| recorded | `LADC input Mixer l_output mixer Switch` 1, `RADC input Mixer r_output mixer Switch` 1 (left ADC <- left output mixer, right <- right), next to the DVR's own source (`audio_sel.sh in_*`: the direct ADC input switch and `AIF1 AD0L/R Mixer ADCL/R Switch`); `ADC input gain control` / `ADC volume` unchanged |
-| off (leaving HDMI in) | `Lineout Switch` 0 first (the state HDMI in had), the two ADC output-mixer switches 0, the DAC switches 0, `DAC volume` 160, the line-in bypass switches 1 (what `dvr_enable_line_out(true)` sets) |
-
-With the audio branch's mixer this becomes its DAC source (`AUDIO_MIXER_HDMI` level,
-`context->live_dac`); there the recording takes the output mixers only in "As Heard"
-mode, and "line out off for HDMI in" is lifted while HDMI-in audio plays. The record
-daemon's libmedia_mpp init resets part of the mixer (Lineout, DACL, DAC volume 160, line
-out 27); on a daemon restart `hdmi_audio_poll()` applies the controls again.
+Before this was joined to the mixer, the HDMI code ran its own amixer commands (DAC
+switches, DAC volume 152, both ADC output-mixer switches, the line-in bypass off, line
+out 31) and re-ran them after every record daemon restart, while the mixer's 2 s codec
+watcher put its own state back: the two would have undone each other every 2 s. Now
+the record daemon's libmedia_mpp reset is undone by the watcher alone, DAC source
+included.
 
 Coexistence and loops:
 * The record daemon runs one bridge route at a time. While HDMI in is shown the app closes
@@ -290,17 +308,20 @@ Limits:
   the incoming rate is seen to be 48 kHz (within 3 %) and mutes again if it is not; small
   drift is absorbed by dropping or repeating one frame per block (at most ~1400 ppm), an
   underrun is refilled with silence. Clicks at a correction are possible.
-* Recorded only through the output-mixer -> ADC switches (on the audio branch: As Heard only).
-  The WiFi stream (RTSP branch) and HDMI out carry what the DVR records only when they take
-  the DVR audio; HDMI out is off while HDMI in is shown anyway.
+* Recorded only through the output-mixer -> ADC switches (Record What I Hear). The WiFi
+  stream audio takes the same ADC capture as the DVR, so it carries it too; HDMI out is
+  off while HDMI in is shown anyway.
 
-Device test (with `audio_in=1`, and `RECORD.log` / `HDZGOGGLE.log` on the SD card):
+Device test (HDMI In Audio On and one restart, and `RECORD.log` / `HDZGOGGLE.log` on the
+SD card):
 1. HDMI source playing a known tone on HDMI in, headphones on the jack, HDMI in selected:
-   the tone is heard; `RECORD.log` shows `HDMI in audio at 48000 Hz: unmuted` and every
-   10 s `bridge: N frames in (~48000/s) ...`. A 44.1 kHz source: `muted`, silence.
-2. Start a DVR recording while it plays, speak into the mic: the file has the tone and the
-   mic (the DVR's selected source). Leave HDMI in: line out goes off as before; switch to
-   analog: A/V on the jack as before, no tone.
+   the tone is heard at the HDMI In level; `RECORD.log` shows `HDMI in audio at 48000 Hz:
+   unmuted` and every 10 s `bridge: N frames in (~48000/s) ...`. A 44.1 kHz source:
+   `muted`, silence.
+2. Audio page: Record What I Hear Yes, Mic 0 dB. Start a DVR recording while the tone
+   plays, speak into the mic: the file has the tone and the mic (once). Record What I Hear
+   No: the file has only the direct Record sources, no tone. Leave HDMI in: line out goes
+   off; switch to analog: A/V on the jack as before, no tone.
 3. Storage page: repair or format the SD card while HDMI in plays: within ~10 s the
    `HDZGOGGLE.log` shows `record daemon restarted` and the tone is back.
 4. Long run (10 min): count clicks; `drift-adjusted` in the bridge log should grow slowly.
@@ -310,21 +331,21 @@ Device test (with `audio_in=1`, and `RECORD.log` / `HDZGOGGLE.log` on the SD car
 
 ## 6. Switching it on (experimental)
 
-In `/mnt/app/setting.ini` (needs this firmware):
+**Audio > HDMI Audio (experimental)**, on every target (all three have HDMI in and out;
+the paths are unproven on all of them):
 
-```ini
-[hdmi]
-audio_out=1   ; HDMI out carries the DVR audio input (mic / line-in)
-audio_in=0    ; 1: HDMI in audio on the line-out jack and in the DVR while HDMI in is shown
-```
+| Row | setting.ini | applies |
+|---|---|---|
+| HDMI Out Audio On / Off | `[hdmi] audio_out=1/0` | at once: the running IT66121's audio is programmed or switched off (`IT66121_audio()`), and the bridge route follows; also at every later `IT66121_init()` |
+| HDMI In Audio On / Off | `[hdmi] audio_in=1/0` | the route at the next switch to HDMI in (the page is in the menu, HDMI in is not shown there); the EDID (48 kHz L-PCM only) at the next start: the EDID is written when the IT66021 is set up at boot, and writing it while the HDMI-in detect thread talks to the chip is not safe (no lock around the IT66021). The hint says "Restart once after switching on"; a source that kept the old EDID and sends 44.1 kHz is muted by the bridge, not played wrong |
 
-Reboot. Logs: HDZGOGGLE log `IT66121 audio on (I2S): 04=.. 5F=.. E0=01 .. CTS=..` and
+The keys can still be set by hand in `/mnt/app/setting.ini` (then reboot). Logs:
+HDZGOGGLE log `IT66121 audio on (I2S): 04=.. 5F=.. E0=01 .. CTS=..` and
 `hdmi audio: route a -> b`; record daemon (`/mnt/extsd/RECORD.log` if that file exists)
 lines tagged `pcmbridge` (`i2s0 fix: ...`, `first AI frame: len=...`,
 `input delivers about N frames/s`, `bridge: N frames in ...`, `i2s0 undo: ...`).
 `/tmp/hdmi_audio.req` / `/tmp/hdmi_audio.state` show the last request and the daemon's
-answer. `record.conf [hdmi_audio] latency_ms` (default 60) stays tunable. The future
-mixer UI can call `hdmi_audio_set(out, in)`.
+answer. `record.conf [hdmi_audio] latency_ms` (default 60) stays tunable.
 
 ## 7. Probe procedure
 
