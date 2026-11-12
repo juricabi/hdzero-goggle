@@ -51,7 +51,7 @@ static lv_obj_t *root_page;
  * To contain all menu pages.
  */
 
-#define PAGE_PACK_MAX_NUM 21 // Goggle 2: 19 pages + Module Bay + Audio
+#define PAGE_PACK_MAX_NUM 21 // Goggle 2: 19 stock pages + Audio + Module Bay
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
@@ -233,7 +233,7 @@ void menu_nav(uint8_t key) {
     }
     lv_obj_t *entry = lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), selected);
     lv_event_send(entry, LV_EVENT_CLICKED, NULL);
-    // more entries than fit (Goggle 2 with Module Bay): keep the selected one on screen
+    // more entries than fit: keep the selected one wholly on screen
     lv_obj_scroll_to_view(entry, LV_ANIM_OFF);
 }
 
@@ -321,7 +321,6 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_power;
     page_packs[page_packs_count++] = &pp_fans;
     page_packs[page_packs_count++] = &pp_record;
-    page_packs[page_packs_count++] = &pp_audio;
     page_packs[page_packs_count++] = &pp_autoscan;
     if (g_setting.has_all_features) {
         page_packs[page_packs_count++] = &pp_elrs;
@@ -334,12 +333,13 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_focus_chart;
     page_packs[page_packs_count++] = &pp_clock;
     page_packs[page_packs_count++] = &pp_input;
-#if defined(HDZBOXPRO)
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
     page_packs[page_packs_count++] = &pp_analog_rssi;
-#elif defined(HDZGOGGLE2)
-    page_packs[page_packs_count++] = &pp_analog_rssi;
-    page_packs[page_packs_count++] = &pp_modulebay;
-#elif defined(HDZGOGGLE)
+#endif
+    // the pages of this build: after every stock entry (which keep their stock places, so a pilot
+    // counting dial clicks lands where he always did), right before "Go Sleep!", which stays last
+    page_packs[page_packs_count++] = &pp_audio;
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
     page_packs[page_packs_count++] = &pp_modulebay;
 #endif
     page_packs[page_packs_count++] = &pp_sleep;
@@ -357,10 +357,15 @@ void main_menu_init(void) {
     root_page = lv_menu_page_create(menu, "aaa");
 
     lv_obj_t *section = lv_menu_section_create(root_page);
-    // scrolled only by menu_nav() (lv_obj_scroll_to_view) when the entries do not fit
+    // The entries do not fit (Goggle 1: 20, Goggle 2: 21, BoxPro: 20): scrolled only by menu_nav()
+    // (lv_obj_scroll_to_view keeps the selected entry whole on screen), with a thin scroll bar
+    // as on the Audio page, so that the list shows that there is more.
     lv_obj_add_flag(section, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(section, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(section, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scrollbar_mode(section, LV_SCROLLBAR_MODE_ON);
+    lv_obj_set_style_bg_color(section, lv_color_hex(TEXT_COLOR_DISABLE), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(section, LV_OPA_COVER, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(section, 4, LV_PART_SCROLLBAR);
     lv_obj_clear_flag(section, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM);
 
     for (uint32_t i = 0; i < page_packs_count; i++) {
