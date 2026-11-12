@@ -31,9 +31,15 @@ static lv_obj_t *cont;
 static lv_obj_t *btn_module_type;
 static lv_obj_t *lbl_module_mode;
 static lv_obj_t *btn_module_mode;
+static lv_obj_t *lbl_mode_note; // why Mode is greyed, in place of its list
 static lv_obj_t *lbl_status;
 static lv_obj_t *lbl_check;
 static unsigned check_seq_shown = 0;
+
+#define COLOR_ORANGE "FFA000"
+#define COLOR_GREEN  "00FF00"
+
+#define MB_DROPDOWN_W 420 // Module and Mode lists (check_strings.c: mb_option)
 
 static lv_obj_t *page_item_focused = NULL;
 static uint16_t focused_orig_sel = 0; // selection when the focused list was opened
@@ -51,8 +57,8 @@ static const char *const type_names[MODULE_TYPES] = {
     "SteadyView X",
 };
 
-// '\n'-separated options, each through _lang() ("PG0=1 ..." cannot be a key of a
-// language file and comes back as it is).
+// '\n'-separated options, each through _lang() (the Switch wirings "Wiring A
+// (standard)" ... "Wiring F", the SteadyView modes).
 static void translate_options(char *out, size_t size, const char *options) {
     char item[64];
     size_t len = 0;
@@ -77,7 +83,13 @@ static const char *mode_names(int type) {
 }
 
 static void show_module_settings(int mode) {
-    const char *modes = mode_names(lv_dropdown_get_selected(btn_module_type));
+    const int type = lv_dropdown_get_selected(btn_module_type);
+    const char *modes = mode_names(type);
+    // a module that has modes, but not on this goggle: say why the row is greyed
+    if (!modes && module_mode_names(type))
+        lv_label_set_text(lbl_mode_note, _lang("Mode needs the bay power switch"));
+    else
+        lv_label_set_text(lbl_mode_note, "");
     if (modes) {
         char buf[256];
         translate_options(buf, sizeof(buf), modes);
@@ -104,13 +116,13 @@ static void update_status(void) {
         snprintf(buf, sizeof(buf), "%s", _lang("No module bay"));
         break;
     case MODULE_STATUS_NONE:
-        snprintf(buf, sizeof(buf), "%s", _lang("Bay pins not used"));
+        snprintf(buf, sizeof(buf), "%s", _lang("Off, bay pins untouched"));
         break;
     case MODULE_STATUS_WIFI:
-        snprintf(buf, sizeof(buf), "#FFA000 %s#", _lang("Paused while WiFi is on"));
+        snprintf(buf, sizeof(buf), "#" COLOR_ORANGE " %s#", _lang("Paused while WiFi is on"));
         break;
     case MODULE_STATUS_SDIO:
-        snprintf(buf, sizeof(buf), "#FFA000 %s#", _lang("Paused, pins in use by WiFi"));
+        snprintf(buf, sizeof(buf), "#" COLOR_ORANGE " %s#", _lang("Paused, pins in use by WiFi"));
         break;
     case MODULE_STATUS_UNPOWERED:
         snprintf(buf, sizeof(buf), "%s", _lang("Waiting for bay power"));
@@ -119,9 +131,10 @@ static void update_status(void) {
         snprintf(buf, sizeof(buf), "%s", _lang("Waiting for the module to boot"));
         break;
     case MODULE_STATUS_ACTIVE:
-        // the bay module's own channel (Goggle 2: also while the built-in receiver is
-        // the analog source)
-        snprintf(buf, sizeof(buf), "#00FF00 %s# %s", _lang("Active"), module_channel_name());
+        // what the goggle sends: the bay module's own channel (it cannot know whether a module
+        // is there to take it). Goggle 2: also while the built-in receiver is the analog source.
+        snprintf(buf, sizeof(buf), "#" COLOR_GREEN " %s# %s%s%s", _lang("Sending"), module_channel_name(),
+                 module_bay_is_source() ? "" : " ", module_bay_is_source() ? "" : _lang("(not video source)"));
         break;
     default:
         buf[0] = 0;
@@ -132,7 +145,16 @@ static void update_status(void) {
     lv_label_set_text(lbl_status, text);
 }
 
-// Result of the last pin check: the PG bank supply and the three levels.
+// one pin of the result: 1, 0, or "toggling" (it changed while it was read)
+static const char *pin_text(const module_pin_check_t *r, int pin) {
+    if (r->toggled & (1 << pin))
+        return _lang("toggling");
+    return r->levels & (1 << pin) ? "1" : "0";
+}
+
+// Result of the last pin check, in plain words: "Pins 1 1 0, 3.3 V" (PG0 PG1 PG2, the
+// PG bank supply). No verdict: the goggle cannot know what is connected. 1.8 V in orange:
+// resistors alone cannot drive a 5 V module then (docs/module-bay-mod-safety.md).
 static void update_check(void) {
     char buf[192], bank[48];
     const module_pin_check_t r = module_pin_check_result();
@@ -143,34 +165,32 @@ static void update_check(void) {
     if (!r.seq)
         return; // (the hint set at page creation stays)
     check_seq_shown = r.seq;
-    if (r.pg_bank_mv == 1800) // (orange: resistors alone cannot drive a 5 V module, docs/module-bay-mod-safety.md)
-        snprintf(bank, sizeof(bank), "#FFA000 %s 1.8 V#", _lang("PG bank"));
-    else if (r.pg_bank_mv)
-        snprintf(bank, sizeof(bank), "%s %d.%d V", _lang("PG bank"), r.pg_bank_mv / 1000, r.pg_bank_mv % 1000 / 100);
-    else
-        snprintf(bank, sizeof(bank), "%s ?", _lang("PG bank"));
     if (r.levels < 0) {
-        snprintf(buf, sizeof(buf), "%s, %s: %s", bank, _lang("not read"), _lang(r.why ? r.why : "?"));
-    } else {
-        snprintf(buf, sizeof(buf), "%s, PG0 %s PG1 %s PG2 %s", bank,
-                 r.toggled & 1 ? "~" : (r.levels & 1 ? "1" : "0"),
-                 r.toggled & 2 ? "~" : (r.levels & 2 ? "1" : "0"),
-                 r.toggled & 4 ? "~" : (r.levels & 4 ? "1" : "0"));
+        snprintf(buf, sizeof(buf), "%s", _lang(r.why ? r.why : "Not read: no GPIO access"));
+        lv_label_set_text(lbl_check, buf);
+        return;
     }
+    if (r.pg_bank_mv == 1800)
+        snprintf(bank, sizeof(bank), "#" COLOR_ORANGE " 1.8 V#");
+    else if (r.pg_bank_mv)
+        snprintf(bank, sizeof(bank), "%d.%d V", r.pg_bank_mv / 1000, r.pg_bank_mv % 1000 / 100);
+    else
+        snprintf(bank, sizeof(bank), "? V");
+    snprintf(buf, sizeof(buf), "%s %s %s %s, %s", _lang("Pins"), pin_text(&r, 0), pin_text(&r, 1), pin_text(&r, 2), bank);
     lv_label_set_text(lbl_check, buf);
 }
 
 static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
     char buf[512];
+    // as the stock pages: the title and the rows start where theirs do
     lv_obj_t *page = lv_menu_page_create(parent, NULL);
     lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(page, 1053, 900);
+    lv_obj_set_size(page, UI_PAGE_VIEW_SIZE);
     lv_obj_add_style(page, &style_subpage, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(page, 94, 0);
 
     lv_obj_t *section = lv_menu_section_create(page);
     lv_obj_add_style(section, &style_submenu, LV_PART_MAIN);
-    lv_obj_set_size(section, 1053, 894);
+    lv_obj_set_size(section, UI_PAGE_VIEW_SIZE);
 
     snprintf(buf, sizeof(buf), "%s:", _lang("Module Bay"));
     create_text(NULL, section, false, buf, LV_MENU_ITEM_BUILDER_VARIANT_2);
@@ -191,17 +211,21 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
     for (int i = 1; i < MODULE_TYPES; i++)
         snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\n%s", _lang(type_names[i]));
     create_label_item(cont, _lang("Module"), 1, ROW_TYPE, 1);
-    // (wide enough for "Switch (Fat Shark)")
+    // (both lists wide enough for every entry in every language, "Wiring A (standard)" the widest:
+    // utilities/audio_mixer/check_strings.py)
     btn_module_type = create_dropdown_item(cont, buf, 2, ROW_TYPE,
-                                           320, 40, 2, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
+                                           MB_DROPDOWN_W, 40, 2, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
 
     lbl_module_mode = create_label_item(cont, _lang("Mode"), 1, ROW_MODE, 1);
-    // (wide enough for the Switch pin orders, "PG0=1 PG1=2 PG2=4")
     btn_module_mode = create_dropdown_item(cont, "-", 2, ROW_MODE,
-                                           320, 40, 2, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
+                                           MB_DROPDOWN_W, 40, 2, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
+    lbl_mode_note = create_label_item(cont, "", 2, ROW_MODE, 4);
+    lv_obj_set_width(lbl_mode_note, 610);
+    lv_obj_set_style_text_color(lbl_mode_note, lv_color_hex(TEXT_COLOR_DISABLE), 0);
 
+    // ("Check Pins": the name the mod guide and the True-D documents use)
     create_label_item(cont, _lang("Check Pins"), 1, ROW_CHECK, 1);
-    lbl_check = create_label_item(cont, _lang("Click: read PG0-PG2 as inputs, nothing driven"), 2, ROW_CHECK, 4);
+    lbl_check = create_label_item(cont, _lang("Click to read the 3 bay pins (read only)"), 2, ROW_CHECK, 4);
     // up to the page's right edge, so that a longer translation scrolls instead of being cut off
     lv_obj_set_width(lbl_check, 610);
 
@@ -213,7 +237,7 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
     // what a pilot needs before choosing a module
     lv_obj_t *note = lv_label_create(cont);
     snprintf(buf, sizeof(buf), "%s\n%s\n%s",
-             _lang("Module control needs the 3-wire bay mod with 4.7k resistors."),
+             _lang("Module control needs the 3-wire bay mod (resistors or level shifter)."),
              _lang("It pauses while WiFi is on: WiFi uses the same pins."),
              _lang("Furious True-D with MOD 1.17: choose rapidFIRE."));
     lv_label_set_text(note, buf);
@@ -257,6 +281,9 @@ static void apply_settings(void) {
 static void open_list(lv_obj_t *dropdown) {
     lv_obj_t *list = lv_dropdown_get_list(dropdown);
     focused_orig_sel = lv_dropdown_get_selected(dropdown);
+    // every entry shown, none cut off (the theme limits a list to about 5 entries; the Switch
+    // wirings are 6, and there is room for them below the row)
+    lv_obj_set_style_max_height(list, 480, 0);
     lv_dropdown_open(dropdown);
     lv_obj_add_style(list, &style_dropdown, LV_PART_MAIN);
     lv_obj_set_style_text_color(list, lv_color_make(0, 0, 0), LV_PART_SELECTED | LV_STATE_CHECKED);
