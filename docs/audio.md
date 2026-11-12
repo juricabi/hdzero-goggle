@@ -172,9 +172,47 @@ live mix is restored.
 
 ## Checking without hardware
 
-`utilities/audio_mixer/dryrun.sh` builds the routing code for the host, writes the
-batch of a dozen mixer states and checks every control name and value against the
-`amixer contents` dump. `utilities/audio_mixer/stub/amixer` logs what it is given;
-put it first in `PATH` (with `AMIXER_LOG`) to see the batches the emulator UI sends.
-On a goggle, `/tmp/audio_mixer.cmd` holds the last batch and `amixer contents`
-shows the result.
+`utilities/audio_mixer/test_mixer.py` (python3 and a host C compiler, ~20 s) builds
+the real `src/core/audio_mixer.c` and `audio_mixer_routing.c` for the host three
+times (`-DHDZGOGGLE`, `-DHDZGOGGLE2`, `-DHDZBOXPRO`) with a harness
+(`harness/harness.c`: real minIni and setting.ini, the worker thread, a simulated
+codec that takes the batches the code writes for `amixer -q -s`) and checks them
+against `codec_model.py`, a model of the codec's signal graph made of the driver's
+DAPM routes (`ac_dapm_routes[]`: switches, muxes, the gains on each widget/edge,
+the line out pin). For a codec state the model gives, per sink (recording left /
+right, line out left / right), every source that reaches it and the gain settings
+on the way. The test asserts:
+
+* routing: for a matrix of mixer states (As Heard / Custom, every source, headphones
+  0, HDMI in, playback, out-of-range values) the sources and gains of the recording
+  and the headphones are what this document specifies, and every batch line is a
+  control of the device's `amixer contents` dump with a value in range, set once;
+* loading: migration from each old Audio Source (and -1, 3, 258, read as the old
+  firmware did), what is written to `[mixer]`, clamping, missing fields;
+* migration equivalence: per target and old Audio Source, the old firmware (driver
+  defaults + the device tree's preamp values, libmedia_mpp's reset, then the real
+  `mkapp/app/script/audio_sel.sh` sequences of a source switch, HDMI in and the
+  recording start) against the new one: recording, headphones (sources and gains),
+  line out power and the analog receiver's audio switch must be equal. Booting
+  straight into HDZero is the one documented difference (headphones; the recording
+  is equal). Also with the record daemon resetting the codec after the app has
+  routed it: the watcher must restore the same state;
+* transitions: replaying the batch of a change line by line on the model, the line
+  out never loses power and the recording never loses its sources in between, and a
+  line out that goes off goes off first;
+* worker: `audio_mixer_apply()` returns at once even when amixer takes 150 ms, 20
+  dial steps coalesce into a few batches ending at the last value, setting.ini is
+  only written by `audio_mixer_save()`;
+* watcher: a libmedia_mpp reset is undone; a control the codec does not keep stops
+  after three re-applies.
+
+`--driver <BSP>/sound/soc/sunxi/sun8iw16-codec.c` also checks that every modelled
+route is one of the driver's. `utilities/audio_mixer/mutants.py` (~5 min) applies 18
+small mutations to a copy of the sources (among them the review's: ADC MIC1 and
+LINEIN switches swapped, AIF1 AD0L/R off, As Heard inverted; and the batch order, the
+receiver migration, the preamp defaults, clamping, the worker, the watcher) and fails
+unless the test catches every one.
+
+`utilities/audio_mixer/stub/amixer` logs what it is given; put it first in `PATH`
+(with `AMIXER_LOG`) to see the batches the emulator UI sends. On a goggle,
+`/tmp/audio_mixer.cmd` holds the last batch and `amixer contents` shows the result.
