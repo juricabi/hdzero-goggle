@@ -2,7 +2,7 @@
 # Wake-ups and CPU time of rtspLive while one client streams (10 s), Stream Audio on and off.
 # (Host numbers: they compare versions of the polling, they are not goggle numbers.)
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-L=$WORK/logs/cpu
+L=$LOGS/cpu
 rm -rf "$L"; mkdir -p "$L"
 cleanup_ipc
 

@@ -3,7 +3,7 @@
 # H.265, Stream Audio on and off, and frames that end in an SEI NAL unit (RTP marker placement).
 #   usage: t_e2e.sh [h264|h265 ...]
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-L=$WORK/logs/e2e
+L=$LOGS/e2e
 rm -rf "$L"; mkdir -p "$L"
 cleanup_ipc
 CODECS=${*:-h264 h265}

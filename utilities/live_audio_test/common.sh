@@ -2,9 +2,9 @@
 # Shared setup of the live stream audio host tests (sourced by build.sh and the t_*.sh tests).
 #
 # Environment:
-#   WORK       output directory (default ${TMPDIR:-/tmp}/live_audio_test)
+#   WORK       output directory (default ${TMPDIR:-/tmp}/live_audio_test; logs in $LOGS = $WORK/logs)
 #   LIVE555    built host live555 source tree: native rtspLive and its openRTSP client
-#   RTSPLIVE   "native" (default: $WORK/bin/rtspLive) or "arm": the cross-built rtspLive
+#   RTSPLIVE   "native" (default: $WORK/bin/rtspLive, or $RTSPLIVE_BIN) or "arm": the cross-built rtspLive
 #              ($ARM_RTSPLIVE, default $REPO/build_goggle2/rtspLive, with the prebuilt live555
 #              2022.12.01) under qemu-arm, with the C/C++ runtime from $TOOLCHAIN
 #   TOOLCHAIN  buildroot SDK (arm-buildroot-linux-musleabihf), for RTSPLIVE=arm and ring_test.arm
@@ -14,8 +14,9 @@
 LAT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$LAT_DIR/../.." && pwd)
 WORK=${WORK:-${TMPDIR:-/tmp}/live_audio_test}
-BIN=$WORK/bin
+BIN=${BIN:-$WORK/bin}
 MEDIA=$WORK/media
+LOGS=${LOGS:-$WORK/logs}
 PORT=${PORT:-18554}
 URL=rtsp://127.0.0.1:$PORT/hdzero
 RTSPLIVE=${RTSPLIVE:-native}
@@ -77,15 +78,15 @@ start_live() {
     if [ "$RTSPLIVE" = arm ]; then
         local sys=$TOOLCHAIN/arm-buildroot-linux-musleabihf/sysroot root=$run/armroot
         mkdir -p "$root/lib" "$root/usr/lib" "$root/data/confs"
-        cp "$sys/lib/ld-musl-armhf.so.1" "$root/lib/"
-        cp "$sys/lib/ld-musl-armhf.so.1" "$root/lib/libc.so"
+        cp "$sys/lib/libc.so" "$root/lib/ld-musl-armhf.so.1" # (musl: the loader is libc.so)
+        cp "$sys/lib/libc.so" "$root/lib/libc.so"
         cp -L "$sys/lib/libgcc_s.so.1" "$root/lib/"
         cp -L "$sys/usr/lib/libstdc++.so.6" "$root/usr/lib/"
         cp "$conf" "$root/data/confs/record.conf"
         cp "$ARM_RTSPLIVE" "$run/rtspLive"
         (cd "$run" && exec stdbuf -oL qemu-arm -L "$root" ./rtspLive > "$log" 2>&1) &
     else
-        cp "$BIN/rtspLive" "$run/rtspLive"
+        cp "${RTSPLIVE_BIN:-$BIN/rtspLive}" "$run/rtspLive"
         (cd "$run" && exec stdbuf -oL ./rtspLive > "$log" 2>&1) &
     fi
     LIVE_PID=$!

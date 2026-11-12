@@ -4,7 +4,7 @@
 # The stub AI device logs any disable while another channel still uses it (AIDEV VIOLATION) and
 # a device left enabled with no channel (AIDEV LEAK). The stream audio must not be interrupted.
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-L=$WORK/logs/share
+L=$LOGS/share
 rm -rf "$L"; mkdir -p "$L"
 cleanup_ipc
 

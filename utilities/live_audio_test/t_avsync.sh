@@ -8,7 +8,7 @@
 # flash/beep markers in a capture against the same offset in the source files, and what the
 # record log says about the pts clocks.
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-L=$WORK/logs/avsync
+L=$LOGS/avsync
 rm -rf "$L"; mkdir -p "$L"
 cleanup_ipc
 

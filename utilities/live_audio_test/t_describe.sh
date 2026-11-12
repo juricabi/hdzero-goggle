@@ -5,7 +5,7 @@
 #    share one wait (none waits longer than the first one's deadline);
 #  - the record side produces audio: DESCRIBE only waits for the chain to start, once.
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-L=$WORK/logs/describe
+L=$LOGS/describe
 rm -rf "$L"; mkdir -p "$L"
 cleanup_ipc
 

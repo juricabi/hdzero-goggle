@@ -16,6 +16,8 @@
 //   LAT_VIDEO_CLOCK      "mono": video pts on CLOCK_MONOTONIC; "foreign": pts on another clock
 //                        (capture - T0 + 7 days), as if the V4L2 timestamps were not monotonic
 //   LAT_TRAILING_SEI     1: every video frame ends with an SEI NAL unit (H.265: suffix SEI)
+//   LAT_VIDEO_FROM_START 1: each start of an encoder plays the video from its first frame (the
+//                        same frames for every run, to compare two rtspLive builds)
 //   LAT_CTRL             directory: if "$LAT_CTRL/ai_fail" exists, AI chains stop producing and
 //                        ai2aenc_start() fails (an audio chain failing for good)
 // Every AI device misuse (device disabled while another channel still uses it, device left
@@ -371,13 +373,15 @@ static void *venc_thread(void *arg) {
 
     usleep(80000); // VI + VENC start-up
     int n = (int)((now_us() - gT0) * VIDEO_FPS / 1e6) + 1;
-    while (!v->au[n % loop].idr) n++; // the encoder starts with an I frame
+    int first = n; // LAT_VIDEO_FROM_START: every encoder start plays the media from its frame 0
+    bool fromStart = env_long("LAT_VIDEO_FROM_START", 0) != 0;
+    while (!fromStart && !v->au[n % loop].idr) n++; // the encoder starts with an I frame
     while (!vv->bExit) {
         uint64_t capture = gT0 + (uint64_t)n * 1000000 / VIDEO_FPS;
         uint64_t late = jitter ? (uint64_t)(rand_r(&seed) % (jitter + 1)) : 0;
         sleep_until(capture + encLatency + late);
         if (vv->bExit) break;
-        Au_t *au = &v->au[n % loop];
+        Au_t *au = &v->au[(fromStart ? n - first : n) % loop];
         if (st->iFrameRequested && !au->idr) { n++; continue; }
         st->iFrameRequested = false;
         int len = au->len;

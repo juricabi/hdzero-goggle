@@ -6,7 +6,7 @@
 #   KILL  no handler at all (also what a crash or an rtspLive without the exit handlers leaves)
 # Then a new rtspLive must stream both tracks again.
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-L=$WORK/logs/kill
+L=$LOGS/kill
 rm -rf "$L"; mkdir -p "$L"
 cleanup_ipc
 

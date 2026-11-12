@@ -6,7 +6,7 @@
 #    (after one bounded wait) instead of announcing a track that never gets data;
 #  - once frames flow again the track is announced again; the streaming client gets audio again.
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-L=$WORK/logs/audio_fail
+L=$LOGS/audio_fail
 rm -rf "$L"; mkdir -p "$L"
 cleanup_ipc
 CTRL=$WORK/ctrl
