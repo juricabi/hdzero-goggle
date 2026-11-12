@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Checks every string of the Audio page in every language with the firmware's own fonts:
+"""Checks every string of the Audio page, the Module Bay page and the new WiFi rows in every
+language with the firmware's own fonts:
 
   - translated in every mkapp/app/language/*.ini,
   - every character present in the font (the CJK glyphs of the fonts are only those of the
     translations the fonts were generated from, utilities/font/generate_font_lib.py),
-  - as wide as its column at most (conf/ui.h UI_AUDIO_*), on the goggles and on the BoxPro.
+  - as wide as its column at most (conf/ui.h UI_AUDIO_*, page_modulebay.c), on the goggles and
+    (Audio and WiFi pages) on the BoxPro; texts the firmware puts together from several keys
+    are measured put together, in their widest form.
 
     utilities/audio_mixer/check_strings.py [-v]
 
 Needs a host C compiler; builds LVGL for the host once (about a minute) in a temporary directory.
+Exit status 1 on any problem, also when the measuring program fails or answers too few lines.
 """
 
 import glob
@@ -41,12 +45,40 @@ def page_strings():
         out.append(("hint", m.group(1)))
     if '.name = "Back"' in src:
         out.append(("label", "< Back"))
+    for m in re.finditer(r'^#define MARK_\w+\s+"([^"]+)"', src, re.M):
+        out.append(("value", m.group(1)))
     out += [("button", b) for b in ("Yes", "No", "On", "Off")]
     out += [("value", "Off"), ("value", "Mix")] + [("value", v) for v in NUMBERS]
-    return sorted(set(out))
+    # "Off at this start: <reason>" (row_hint(), core/hdmi_audio.c's reasons)
+    fault = re.search(r'^#define HINT_HDMI_FAULT\s+"([^"]+)"', src, re.M).group(1)
+    out += [("hint", ("{}: {}", (fault, reason))) for reason in HDMI_FAULTS]
+    return sorted(set(out), key=str)
 
 
 NUMBERS = ["+6.0 dB", "-4.5 dB", "31"]  # widest values, shown as they are in every language
+HDMI_FAULTS = ["pin check failed", "HDMI chip check failed", "audio path failed"]
+
+# The Module Bay page (src/ui/page_modulebay.c, src/module/*.c): (kind, text) or (kind, (format,
+# keys)) for a text put together from translated parts. Goggles only.
+MODULE_BAY = [("mb_label", t) for t in ("Module", "Mode", "Check Pins")] + [("mb_label", "< Back")] + \
+    [("mb_option", t) for t in ("None", "Switch (Fat Shark)", "rapidFIRE", "SteadyView", "SteadyView X",
+                                "Wiring A (standard)", "Wiring B", "Wiring C", "Wiring D", "Wiring E", "Wiring F",
+                                "Diversity", "Mix 1", "Mix 2", "Mix 3")] + \
+    [("mb_text", t) for t in ("Click to read the 3 bay pins (read only)", "Reading...", "Mode needs the bay power switch",
+                              "Not read: set Module to None first", "Not read: switch WiFi off first",
+                              "Not read: pins in use by WiFi", "Not read: pin state unknown", "Not read: no GPIO access")] + \
+    [("mb_text", ("{} {} {} {}, 1.8 V", ("Pins", "toggling", "toggling", "toggling"))),
+     ("mb_text", ("{} 1 0 1, 3.3 V", ("Pins",)))] + \
+    [("mb_status", ("{}: {}", ("Status", t))) for t in ("Off, bay pins untouched", "Paused while WiFi is on",
+                                                        "Paused, pins in use by WiFi", "Waiting for bay power",
+                                                        "Waiting for the module to boot")] + \
+    [("mb_status", ("{}: {} SteadyView X L8 {}", ("Status", "Sending", "(not video source)")))] + \
+    [("mb_note", t) for t in ("Module control needs the 3-wire bay mod (resistors or level shifter).",
+                              "It pauses while WiFi is on: WiFi uses the same pins.",
+                              "Furious True-D with MOD 1.17: choose rapidFIRE.")]
+
+# The WiFi page's System rows of this build (src/ui/page_wifi.c).
+WIFI = [("wifi_label", "Stream Audio"), ("wifi_note", ("{}.", ("Stream Audio: sound set on the Audio page",)))]
 
 
 def translations(path):
@@ -59,10 +91,26 @@ def translations(path):
 
 
 def translate(text, table):
+    if isinstance(text, tuple):  # (format, keys): put together from translated parts
+        fmt, keys = text
+        parts = [table.get(k) for k in keys]
+        return None if None in parts else fmt.format(*parts)
     if text.startswith("< "):  # "< %s" of the Back row
         inner = table.get(text[2:])
         return None if inner is None else "< " + inner
     return table.get(text)
+
+
+def english(text):
+    if isinstance(text, tuple):
+        return text[0].format(*text[1])
+    return text
+
+
+def keys_of(text):
+    if isinstance(text, tuple):
+        return list(text[1])
+    return [text[2:] if text.startswith("< ") else text]
 
 
 def build(work):
@@ -112,39 +160,60 @@ def main():
         print(f"{os.path.basename(path)}: {n} of {limit} translation entries")
         if n > limit:
             problems.append(f"{os.path.basename(path)} has {n} entries, the table {limit}")
-    lines = []
-    for lang, table in langs.items():
-        for kind, text in strings:
-            shown = text if lang == "en" or text in NUMBERS else translate(text, table)
-            if shown is None:
-                problems.append(f"not translated in {lang}: {text!r}")
-                shown = text  # the firmware shows the English text
-            lines.append(f"{kind}\t{lang}\t{shown}")
+    def lines_of(strings):
+        out = []
+        for lang, table in langs.items():
+            for kind, text in strings:
+                shown = english(text) if lang == "en" or text in NUMBERS else translate(text, table)
+                if shown is None:
+                    missing = [k for k in keys_of(text) if k not in table]
+                    problems.append(f"not translated in {lang}: {missing}")
+                    shown = english(text)  # the firmware shows the English text
+                out.append(f"{kind}\t{lang}\t{shown}")
+        return out
+
+    # the Module Bay page exists on the goggles only
+    per_target = {"HDZGOGGLE2": strings + MODULE_BAY + WIFI, "HDZBOXPRO": strings + WIFI}
+    lines = {target: lines_of(s) for target, s in per_target.items()}
+    problems = sorted(set(problems), key=problems.index)
 
     work = tempfile.mkdtemp(prefix="audio_strings_")
     try:
         tools = build(work)
         widest = {}
         for target, exe in tools.items():
-            p = subprocess.run([exe], input="\n".join(lines) + "\n", capture_output=True, text=True)
-            for out in p.stdout.splitlines():
+            p = subprocess.run([exe], input="\n".join(lines[target]) + "\n", capture_output=True, text=True)
+            answers = p.stdout.splitlines()
+            bad = 0
+            for out in answers:
                 verdict, kind, lang, size = out.split(" ")[:4]
+                if verdict == "BAD-KIND":
+                    problems.append(f"{target}: {out}")
+                    bad += 1
+                    continue
                 used, room = (int(x) for x in size.split("/"))
                 key = (target, kind)
                 if used * 100 // room > widest.get(key, (0, ""))[0]:
                     widest[key] = (used * 100 // room, out)
                 if verdict != "OK":
                     problems.append(f"{target}: {out}")
+                    bad += 1
                 elif verbose:
                     print(f"{target}: {out}")
+            # the measuring program's own verdict must agree with its lines: a crash or a line it
+            # did not answer is a failure, not a pass
+            if len(answers) != len(lines[target]) or p.returncode != (1 if bad else 0):
+                problems.append(f"{target}: the measuring program exited with {p.returncode} after "
+                                f"{len(answers)} of {len(lines[target])} lines: {p.stderr[-300:]}")
         for (target, kind), (pct, out) in sorted(widest.items()):
-            print(f"widest {kind:8s} {target:10s} {pct:3d} %: {out}")
+            print(f"widest {kind:10s} {target:10s} {pct:3d} %: {out}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
     for p in problems:
         print("FAIL " + p)
-    print(f"{len(strings)} strings x {len(langs)} languages x 2 layouts: "
+    count = sum(len(s) for s in per_target.values())
+    print(f"{count} strings (both layouts) x {len(langs)} languages: "
           + ("all fit" if not problems else f"{len(problems)} problems"))
     return 1 if problems else 0
 

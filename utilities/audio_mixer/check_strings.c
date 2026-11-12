@@ -1,10 +1,13 @@
 /*
- * Measures the Audio page's strings with the firmware's LVGL fonts (check_strings.sh builds it
- * once per target with conf/ui.h). Input, one per line: "<kind>\t<lang>\t<text>", kind one of
- * label, button, value, heading, hint. Output, one per line:
+ * Measures the strings of the Audio page, the Module Bay page and the new WiFi rows with the
+ * firmware's LVGL fonts (check_strings.py builds it once per target with conf/ui.h). Input, one
+ * per line: "<kind>\t<lang>\t<text>", kind one of label, button, value, heading, hint (Audio
+ * page), mb_label, mb_text, mb_status, mb_option, mb_note (Module Bay page, goggles only),
+ * wifi_label, wifi_note (WiFi page). Output, one per line:
  *   "OK|WIDE|GLYPH <kind> <lang> <width>/<room> px <text>"
  * WIDE: wider than its column, GLYPH: a character the font does not have (shown as a box or
  * nothing: the CJK fonts only hold the characters of the translations they were made from).
+ * Exit status: 0 all OK, 1 something WIDE / GLYPH / of an unknown kind.
  */
 
 #include <stdio.h>
@@ -37,6 +40,37 @@ static int room(const char *kind, const lv_font_t **font) {
     if (strcmp(kind, "hint") == 0) {
         *font = UI_AUDIO_HINT_FONT;
         return ROW_W;
+    }
+    // Module Bay page (src/ui/page_modulebay.c: goggles only, fixed sizes there)
+    if (strcmp(kind, "mb_label") == 0)
+        return 200 - 8; // column 1
+    if (strcmp(kind, "mb_text") == 0)
+        return 610; // Check Pins result, Mode note: up to the page's right edge
+    if (strcmp(kind, "mb_status") == 0)
+        return 880; // "Status: ..." from column 1 to the page's right edge
+    if (strcmp(kind, "mb_option") == 0) {
+        *font = &lv_font_montserrat_26;
+        return 420 - 60; // the 420 px dropdowns (MB_DROPDOWN_W) without their padding and arrow
+    }
+    if (strcmp(kind, "mb_note") == 0) {
+        *font = UI_PAGE_LABEL_FONT;
+        return 880;
+    }
+    // WiFi page, System: a row label up to the first button's arrow (measured on the emulator)
+    if (strcmp(kind, "wifi_label") == 0) {
+#ifdef HDZBOXPRO
+        return 132;
+#else
+        return 200;
+#endif
+    }
+    if (strcmp(kind, "wifi_note") == 0) {
+        *font = UI_PAGE_LABEL_FONT;
+#ifdef HDZBOXPRO
+        return 600;
+#else
+        return 880;
+#endif
     }
     return -1;
 }
