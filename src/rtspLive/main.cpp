@@ -510,6 +510,7 @@ void main_loop(LiveContext_t* liveCtx)
 
 int main(int argc, char *argv[])
 {
+    setvbuf(stdout, NULL, _IOLBF, 0); // /tmp/rtspLive.log is read while rtspLive runs
     show_version(argc, argv);
 
     alogd("rtspLive start ...\n");
