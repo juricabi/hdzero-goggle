@@ -231,6 +231,7 @@ int avshare_add(uint8_t *pstStream, int len, FrameType_e frame_type, uint64_t ti
         // printf("debug --share_stream_header[%d][%d]---AddToShareStream-1--%d,%d,%d,%d\n",streamType,indexOfBuf[streamType],pShareStreamHeader->wflag,streamType,pShareStreamHeader->frameType,frame_type);
         // printf("debug -----AddToShareStream-1--%d,%d,%d,%d\n",pShareStreamHeader->wflag,streamType,pShareStreamHeader->frameType,frame_type);
         if (pStreamHead->wflag == 1) {
+            __sync_synchronize(); // acquire: the reader is done with the slot it freed
             pStreamHead->frameType = frame_type;
             pStreamHead->timestamp = timestamp;
             pStreamHead->mediaType = streamType;

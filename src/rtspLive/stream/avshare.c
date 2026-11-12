@@ -462,6 +462,7 @@ int avshare_readFrame(uint8_t*sFrameBuf, int nBufLen, struct timeval* timestamp,
         }
 	}
 
+    __sync_synchronize(); // acquire: the slot was seen filled, now read it
     avshare_timestampToTimeval(pStreamHead->timestamp, timestamp);  // CLOCK_MONOTONIC us -> wall clock
     *uDurationInMicroseconds = 0;
 
@@ -470,6 +471,7 @@ int avshare_readFrame(uint8_t*sFrameBuf, int nBufLen, struct timeval* timestamp,
 
 	do
     {
+        __sync_synchronize(); // acquire: read the slot only after seeing it filled
         copyLen = pStreamHead->length - offset;
         if( frameLen + copyLen <= nBufLen )//MAXSTREAMBUF )
         {
@@ -485,6 +487,7 @@ int avshare_readFrame(uint8_t*sFrameBuf, int nBufLen, struct timeval* timestamp,
             break;
         }
 
+        __sync_synchronize(); // release: done reading the slot before freeing it
         pStreamHead->wflag = 1;
         idxBuf = (idxBuf+1) % SHAREBUF_COUNT;
         pStreamHead = (ShareStream_t*)&gAvshare.bufStreamHead[mediaIndex][idxBuf];;
@@ -872,6 +875,9 @@ int avshare_readMediaFrame(int media_type, uint8_t* buf, int bufLen, uint64_t* t
                 // writer has not finished this frame yet: try again later
                 return 0;
             }
+            // acquire: read the slot's header and data only after seeing it filled (ARMv7 may
+            // satisfy these loads before the wflag load: a control dependency does not order loads)
+            __sync_synchronize();
             if( (nSlots > 0) && IS_FRAME_START(h->buff_type) ) {
                 // the writer gave up on the previous frame (ring was full): drop the partial frame
                 restart = true;
