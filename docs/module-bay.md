@@ -121,11 +121,12 @@ the first seconds after power-up. Keep the goggle's type at **Unknown** (or Pin
 Control Off) until the True-D is set to a BAY mode (LINK or 1-8); only then
 choose True-D (LINK) or Switch (1-8) here and turn Pin Control on.
 
-Host test of the encoder and the bit-banged UART (no hardware):
-`make -C utilities/module_bay_test test`. It feeds the transmitter's pin trace,
-with jitter from simulated sysfs writes and interrupts, to a pin-change and a
-16x-oversampling software UART receiver and checks the test vectors byte for
-byte.
+Host tests (no hardware): `make -C utilities/module_bay_test test`.
+`test_trued_uart` feeds the transmitter's pin trace, with jitter from simulated
+sysfs writes and interrupts, to a pin-change and a 16x-oversampling software
+UART receiver and checks the test vectors byte for byte. `test_module_worker`
+runs `module.c` against recording module types: the power-on sequence above,
+power-off release, Pin Control, the WiFi interlock and the Switch channel range.
 
 ## Untested on hardware
 
