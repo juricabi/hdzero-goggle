@@ -470,9 +470,11 @@ on the meter.
    the hole at the red lead (for a positive reading) is **pin 9** (+5 V), the one at the
    black lead **pin 8** (GND); the hole at the far end of the row is **pin 1**. Write the
    voltage down (section 3 uses it). Then holes 1, 2 and 3 to hole 8, one at a time
-   (on a stock board they are not connected). Switch the goggle off and mark pin 1 on
-   the bay board (a dot of paint marker).
-   *Stop if* no end pair reads 4.75-5.25 V, or any of holes 1-3 reads above 0.5 V.
+   (on a stock board they are not connected). Switch the goggle off, mark pin 1 on the
+   bay board (a dot of paint marker), and with the meter on ohms write down hole 9 to
+   hole 8 after 5 s (step 17 compares with it).
+   *Stop if* no end pair reads 4.75-5.25 V, any of holes 1-3 reads above 0.5 V, or hole 9
+   to hole 8 reads 100 Ω or less with the goggle off.
 3. **Check Pins, twice.** Goggle on. Module Bay > Check Pins (hint: "Click to read the
    3 bay pins (read only)"), click. The row shows "Reading...", then for example
    "Pins 1 1 0, 3.3 V": the levels of PG0, PG1 and PG2 in that order (1, 0, or
@@ -482,7 +484,7 @@ on the meter.
    decides:
    * both "3.3 V": **path R**;
    * both "1.8 V" (orange): **path S** (the resistors and the shifter of section 5), or
-     no mod;
+     no mod (then stop here: nothing else on this page applies);
    * both "? V": step 4 decides.
 
    If the row says "Not read: …" instead: "set Module to None first" → Module = None
@@ -501,10 +503,11 @@ on the meter.
    * goggle still off: attach a hook clip (meter red lead) to the leg of one of the
      three connector pins of pkendall64's photos, so that it touches nothing else; push
      a short piece of solid wire into socket hole 8 and clip the black lead to it; with
-     the meter on ohms, the clip must read above 10 Ω to hole 8 and to hole 9 (it touches
-     no ground or supply pin; with the bay board in, the SoC's protection diodes can make
-     a signal pin read anything from a few hundred Ω upward, which is fine); then switch
-     the meter to DC volts;
+     the meter on ohms, the clip must read above 10 Ω to hole 8, and above 10 Ω to hole 9
+     (for this one reading hold the black probe tip in hole 9, goggle off). Then it
+     touches no ground or supply pin; with the bay board in, the SoC's protection diodes
+     can make a signal pin read anything from a few hundred Ω upward, which is fine.
+     Switch the meter to DC volts;
    * power on and listen: 10 s all low, then 1 beep → PG0 high for 10 s, 2 beeps → PG1,
      3 beeps → PG2; three rounds, about 3 minutes; 4 long beeps: finished (the goggle
      app then starts). One long beep right after boot means refused: nothing was driven,
@@ -537,11 +540,11 @@ detail; its readings count here too.
 6. **Look at the module.** Write down its version marking (True-D V3, V3.5 …). On a
    True-D V3 from before V3.5, look at the gap between its two boards: nothing metal of
    one may touch the other (step 7 also tests it electrically). Put Kapton tape over the
-   back of the module, the side that faces the bay board.
+   back of the module, the side that faces the bay board (not over its 9 pins).
 7. **Unpowered: ground, +5 V and pin 8.** Ohms (or continuity) from the **shield** (the
    outer metal body of an antenna socket, or the USB socket's shell) to each module pin:
    the pins that read 1 Ω or less are the module's ground (expect pin 7 and/or pin 8).
-   The end pin next to them is pin 9 (+5 V); the pin at the other end is pin 1. Then:
+   The end of the row nearer to them is pin 9 (+5 V); the other end is pin 1. Then:
    * pin 9 to the shield: above 100 Ω after 5 s, also while you press the module's two
      boards gently together;
    * pin 8 to the shield: 1 Ω or less (ground: fine) or above 1 MΩ (not connected:
@@ -576,9 +579,10 @@ detail; its readings count here too.
     goggle, as bench-test.md step 7 does; never USB and the bench supply together.)
     *Stop if* the voltage stays below 1.0 V for 2 s at the 0.1 A limit, or the supply is
     still at its limit with 0.5 A (voltage below 4.75 V).
-11. **Powered: do pins 1-3 only listen?** Wait 2 s after power-on (the bootloader's
-    time). For each of pins 1, 2, 3, meter on DC volts between the pin and ground:
-    (a) with 10 kΩ from the pin to ground, then (b) with 10 kΩ from the pin to pin 9.
+11. **Powered: do pins 1-3 only listen?** Read only from 2 s after power-on (the
+    bootloader's time). For each of pins 1, 2, 3, meter on DC volts between the pin and
+    ground: (a) with 10 kΩ from the pin to ground, then (b) with 10 kΩ from the pin to
+    pin 9 (the module may stay powered while you move the resistor).
 
     | reading | means |
     |---|---|
@@ -629,10 +633,11 @@ detail; its readings count here too.
     *Path S*: build the shifter of section 5 on perfboard with a DIP-14 socket, the
     **LM339 not yet inserted**, and without R5 for a 5 V module (True-D). Solder R1
     (4.7 kΩ) at each connector pin as in path R (within 5 mm); a wire from each R1's
-    other lead to its comparator's IN+ on the board; a wire from each comparator's R4
-    to socket pin 1, 2 or 3 (the line of the wiki's Pin 1 wire to socket pin 1, and so
-    on); the board's +5 V to socket pin 9's leg and its ground to pin 8's leg. Insulate
-    the board with Kapton and place it as planned.
+    other lead to its comparator's IN+ on the board; a wire from the free end of each
+    comparator's R4 to socket pin 1, 2 or 3, keeping the wiki's order (the connector pin
+    whose wire goes to socket pin 1 in the photos drives socket pin 1 through its
+    comparator; the same for 2 and 3); the board's +5 V to socket pin 9's leg and its
+    ground to pin 8's leg. Insulate the board with Kapton and place it as planned.
 16. **Check the mod: board still out, no module, ohms.** Every reading of step 13 that
     the table below does not cover must be as it was (within 10 %, or still above 1 MΩ).
 
@@ -663,8 +668,11 @@ detail; its readings count here too.
     *Stop if* any reading is outside its range, or (path S) pin 9 to pin 8 reads below
     1 kΩ with the LM339 in.
 17. **Bay board back in.** Goggle off. Board in, screws in; check that no wire is pinched
-    and the Kapton is in place. Then, in the socket holes, socket pin 9 to pin 8.
-    *Stop if* it reads 100 Ω or less (path S: below 1 kΩ) after 5 s.
+    and the Kapton is in place. Then, in the socket holes, socket pin 9 to pin 8 (ohms,
+    after 5 s). Path S adds its 5.7 kΩ reference divider in parallel to what step 2 read,
+    so a lower value than in step 2 is expected there.
+    *Stop if* it reads 100 Ω or less; path R: less than half of step 2's value; path S:
+    less than half of the smaller of step 2's value and 5.7 kΩ.
 
 ### D. Goggle on, bay empty, after the mod
 
