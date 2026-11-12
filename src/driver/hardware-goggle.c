@@ -1187,11 +1187,18 @@ void Set_HT_dat(uint16_t ch0, uint16_t ch1, uint16_t ch2) {
     I2C_Write(ADDR_FPGA, 0x77, (ch2 >> 8) & 0xff);
 }
 
+// The bay power: external_analog_module_power() (bay power thread, every 10 ms)
+// decides it.  The module worker's SteadyView mode set needs a short power cycle
+// with the mode pins set (external_analog_power_cycle()); it runs under the same
+// lock and only while the bay is on, so a switch-off asked for meanwhile happens
+// right after it and the bay never stays on against the policy.
+static pthread_mutex_t bay_power_lock = PTHREAD_MUTEX_INITIALIZER;
+static int bay_power = -1; // what the DM5680 was told last, -1: nothing yet (a power-on at boot is sent)
+
 void external_analog_module_power() {
     // Batch 2 goggles only
     if (getHwRevision() >= HW_REV_2) {
-        static int pwr = 0;
-        static int pwr_last = -1; // (was bool: -1 read as true, so a power-on at boot was never sent)
+        int pwr;
 
         if (g_app_state == APP_STATE_SLEEP) { // go sleep
             pwr = 0;
@@ -1204,12 +1211,32 @@ void external_analog_module_power() {
                   (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_EXTERNAL);
         }
 
-        if (pwr_last != pwr) {
-            pwr_last = pwr;
+        pthread_mutex_lock(&bay_power_lock);
+        if (bay_power != pwr) {
+            bay_power = pwr;
             DM5680_ExternalAnalog_Power(pwr);
             module_power_changed(pwr); // bay module pins: released while off, module set up again when on
         }
+        pthread_mutex_unlock(&bay_power_lock);
     }
+}
+
+bool external_analog_power_cycle(void (*while_off)(void)) {
+    bool done = false;
+    if (getHwRevision() < HW_REV_2)
+        return false; // no bay power switch
+    pthread_mutex_lock(&bay_power_lock);
+    if (bay_power == 1) {
+        DM5680_ExternalAnalog_Power(0);
+        usleep(70000);
+        if (while_off)
+            while_off();
+        usleep(50);
+        DM5680_ExternalAnalog_Power(1);
+        done = true;
+    }
+    pthread_mutex_unlock(&bay_power_lock);
+    return done;
 }
 
 int Get_VideoLatancy_status() // ret: 0=unlocked, 1=locked

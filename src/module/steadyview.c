@@ -1,9 +1,11 @@
 #include <unistd.h>
 
+#include <log/log.h>
+
 #include "core/common.hh"
 #include "core/settings.h"
 
-#include "driver/dm5680.h"
+#include "driver/hardware.h"
 
 #include "softspi.h"
 #include "steadyview.h"
@@ -48,15 +50,23 @@ static void steadyview_set_channel(int index) {
     current_channel = index;
 }
 
+// The SteadyView reads its mix mode from CLK/DAT as it powers up.
+static void set_mode_pins(void) {
+    softspi_set_pin(SOFTSPI_CLK, mix_mode & 0x01);
+    softspi_set_pin(SOFTSPI_DAT, mix_mode & 0x02);
+}
+
 static void steadyview_set_mixmode(steadyview_mix_mode_t mode) {
     mix_mode = mode;
 
-    DM5680_ExternalAnalog_Power(0U);
-    usleep(70000);
-    softspi_set_pin(SOFTSPI_CLK, mode & 0x01);
-    softspi_set_pin(SOFTSPI_DAT, mode & 0x02);
-    usleep(50);
-    DM5680_ExternalAnalog_Power(1U);
+    // bay off 70 ms, the mode pins set at its end, bay on: done by the bay power
+    // owner (hardware-goggle*.c), which keeps its power thread waiting meanwhile
+    if (!external_analog_power_cycle(set_mode_pins)) {
+        if (module_abort_requested())
+            return; // the bay was switched off: the pins are released next
+        LOGW("steadyview: no bay power switch (batch 1), mix mode %d not latched", mode);
+        set_mode_pins();
+    }
     usleep(100000);
 
     softspi_set_pin(SOFTSPI_CLK, 0);
