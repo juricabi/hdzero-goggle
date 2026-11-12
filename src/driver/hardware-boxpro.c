@@ -220,7 +220,7 @@ void vdpo_sync_ctrl_set(bool dclk_invert, bool dclk_dly_en, uint8_t dvlk_dly_num
     dat |= (dclk_dly_en << 10);
 
     snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 /*
@@ -235,7 +235,7 @@ void csic_pclk_dly_set(uint8_t pclk_dly_num) {
     char buf[32];
 
     snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 void csic_pclk_invert_set(uint8_t is_invert) {
@@ -244,7 +244,7 @@ void csic_pclk_invert_set(uint8_t is_invert) {
     char buf[32];
 
     snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 void pclk_phase_set(video_source_t source) {
@@ -538,7 +538,7 @@ void Display_HDZ_t(int mode, int is_43) {
     Display_VO_SWITCH(1);
     screen.display(1);
     I2C_Write(ADDR_FPGA, 0x8C, 0x01);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void Display_HDZ(int mode, int is_43) {
@@ -597,7 +597,7 @@ void Display_UI_init() {
     pclk_phase_set(VIDEO_SOURCE_MENU_UI);
 
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void Display_UI() {
@@ -675,7 +675,7 @@ void AV_Mode_Switch_fpga(int is_pal) {
         I2C_Write(ADDR_FPGA, 0x80, 0x00);
     }
     I2C_Write(ADDR_FPGA, 0x06, 0x0F);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
     pclk_phase_set(VIDEO_SOURCE_AV_IN);
 }
 

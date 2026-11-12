@@ -486,7 +486,7 @@ void vdpo_sync_ctrl_set(bool dclk_invert, bool dclk_dly_en, uint8_t dvlk_dly_num
     dat |= (dclk_dly_en << 10);
 
     snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 /*
@@ -501,7 +501,7 @@ void csic_pclk_dly_set(uint8_t pclk_dly_num) {
     char buf[32];
 
     snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 void csic_pclk_invert_set(uint8_t is_invert) {
@@ -510,7 +510,7 @@ void csic_pclk_invert_set(uint8_t is_invert) {
     char buf[32];
 
     snprintf(buf, sizeof(buf), "aww 0x%08x 0x%08x", addr, dat);
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 void pclk_phase_set(video_source_t source) {
@@ -584,8 +584,8 @@ void Display_UI_init() {
     I2C_Write(ADDR_FPGA, 0x84, 0x11);
 
     screen.vtmg(0);
-    system_exec("aww 0x0300b084 0x00001565"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x0300b084 0x00001565"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void Display_UI() {
@@ -623,7 +623,7 @@ void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void Display_720P90_t(int mode) {
@@ -645,7 +645,7 @@ void Display_720P90_t(int mode) {
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void Display_1080P30_t(int mode) {
@@ -669,7 +669,7 @@ void Display_1080P30_t(int mode) {
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void Display_1080P24_t(int mode) {
@@ -693,7 +693,7 @@ void Display_1080P24_t(int mode) {
     g_hw_stat.source_mode = SOURCE_MODE_HDZERO;
     Display_VO_SWITCH(1);
     screen.display(1);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void Display_720P60_50(int mode, uint8_t is_43) {
@@ -818,7 +818,7 @@ void AV_Mode_Switch_fpga(int is_pal) {
         I2C_Write(ADDR_FPGA, 0x80, 0x00);
     }
     I2C_Write(ADDR_FPGA, 0x06, 0x0F);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    system_exec_sunxi_dump("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
 
 void AV_Mode_Switch(int is_pal) {

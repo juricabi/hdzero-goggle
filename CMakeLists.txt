@@ -98,6 +98,11 @@ elseif(HDZ_GOGGLE2)
 	file(GLOB SRC_FILES_IMAGE  "src/image/goggle2/*.c" "src/image/goggle2/*.h")
 endif()
 
+# HDMI audio (experimental): SoC register access shared with the record daemon
+set(SRC_FILES_HDMI_BOOT
+	src/record/soc_reg.c
+)
+
 set(SRC_FILES
 	${SRC_FILES_CORE}
 	${SRC_FILES_DRIVER}
@@ -108,6 +113,7 @@ set(SRC_FILES
 	${SRC_FILES_MODULE}
 	${SRC_FILES_UTIL}
 	${SRC_FILES_LANG}
+	${SRC_FILES_HDMI_BOOT}
 )
 
 if(EMULATOR_BUILD)
