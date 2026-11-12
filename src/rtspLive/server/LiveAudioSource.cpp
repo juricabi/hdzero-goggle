@@ -24,13 +24,6 @@ unsigned aacSamplingFrequency(unsigned sfIndex) {
     return (sfIndex < 16) ? samplingFrequencyTable[sfIndex] : 0;
 }
 
-unsigned aacSamplingFrequencyIndex(unsigned frequency) {
-    for (unsigned i = 0; i < 13; ++i) {
-        if (samplingFrequencyTable[i] == frequency) return i;
-    }
-    return 15;
-}
-
 void aacConfigString(unsigned audioObjectType, unsigned sfIndex, unsigned channelConfig, char* out) {
     // AudioSpecificConfig: audioObjectType(5) samplingFrequencyIndex(4) channelConfiguration(4)
     // frameLengthFlag(1)=0 dependsOnCoreCoder(1)=0 extensionFlag(1)=0

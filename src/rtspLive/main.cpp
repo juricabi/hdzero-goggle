@@ -350,10 +350,7 @@ void* live_loop(void *context)
     if( liveCtx->runDynamicRTSPServer ) {
         DynamicRTSPServer* dynamicServer = DynamicRTSPServer::createNew(*env, rtspServerPortNum, authDB, liveCtx->h265, liveCtx->streamName);
         if( dynamicServer != NULL ) {
-            // live stream audio (RTSP AAC track)
-            dynamicServer->_audio = liveCtx->audio;
-            dynamicServer->_audioSampleRate = liveCtx->audioSampleRate;
-            dynamicServer->_audioChannels = liveCtx->audioChannels;
+            dynamicServer->_audio = liveCtx->audio; // live stream audio (RTSP AAC track)
         }
         rtspServer = dynamicServer;
     }
@@ -372,9 +369,7 @@ void* live_loop(void *context)
             }
             // live stream audio (RTSP AAC track)
             if (liveCtx->audio) {
-                sms->addSubsession(AACLiveAudioServerMediaSubsession::createNew(*env, reuseFirstSource,
-                                                                                liveCtx->audioSampleRate,
-                                                                                liveCtx->audioChannels));
+                sms->addSubsession(AACLiveAudioServerMediaSubsession::createNew(*env, reuseFirstSource));
             }
             rtspServer->addServerMediaSession(sms);
         }

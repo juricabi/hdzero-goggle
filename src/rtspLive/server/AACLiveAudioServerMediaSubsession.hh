@@ -2,19 +2,20 @@
 
 // Live stream audio (RTSP AAC track): on-demand subsession announcing
 // "MPEG4-GENERIC/<rate>/<channels>" (RFC 3640, mode AAC-hbr) fed by LiveAudioSource.
+//
+// The format (object type, rate, channels -> "config=") is read from the first ADTS header the
+// record process queues once we connect. If no frame comes in time the subsession leaves the
+// SDP (live555 skips a subsession without SDP lines): the session is then the video-only one,
+// and the next DESCRIBE tries again.
 
 #include <OnDemandServerMediaSubsession.hh>
 
 class AACLiveAudioServerMediaSubsession: public OnDemandServerMediaSubsession {
 public:
-    // defaultSampleRate/defaultChannels: the [ai] settings of the record conf, used when no
-    // encoded frame shows up in time to read the real format from its ADTS header.
-    static AACLiveAudioServerMediaSubsession* createNew(UsageEnvironment& env, Boolean reuseFirstSource,
-                                                        unsigned defaultSampleRate, unsigned defaultChannels);
+    static AACLiveAudioServerMediaSubsession* createNew(UsageEnvironment& env, Boolean reuseFirstSource);
 
 protected:
-    AACLiveAudioServerMediaSubsession(UsageEnvironment& env, Boolean reuseFirstSource,
-                                      unsigned defaultSampleRate, unsigned defaultChannels);
+    AACLiveAudioServerMediaSubsession(UsageEnvironment& env, Boolean reuseFirstSource);
     virtual ~AACLiveAudioServerMediaSubsession();
 
 protected: // redefined virtual functions
@@ -32,8 +33,6 @@ private:
     unsigned fProfile;       // audio object type - 1
     unsigned fSfIndex;
     unsigned fChannelConfig;
-    unsigned fDefaultSampleRate;
-    unsigned fDefaultChannels;
     char     fConfigStr[8];
     char     fDoneFlag;
     unsigned fWaitedMs;

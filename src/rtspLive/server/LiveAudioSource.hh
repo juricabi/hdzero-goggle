@@ -18,8 +18,6 @@ struct AdtsHeader {
 Boolean aacParseAdtsHeader(unsigned char const* data, unsigned len, AdtsHeader& hdr);
 // Sampling frequency of an ADTS/AudioSpecificConfig frequency index (0 if invalid).
 unsigned aacSamplingFrequency(unsigned sfIndex);
-// Frequency index of a sampling frequency (15 if not a standard one).
-unsigned aacSamplingFrequencyIndex(unsigned frequency);
 // 2-byte AudioSpecificConfig as the 4 hex digits of the SDP "config=" parameter.
 void aacConfigString(unsigned audioObjectType, unsigned sfIndex, unsigned channelConfig, char* out /* >= 5 bytes */);
 

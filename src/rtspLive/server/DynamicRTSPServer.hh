@@ -51,6 +51,4 @@ public:
 
     // live stream audio (RTSP AAC track)
     Boolean  _audio;
-    unsigned _audioSampleRate;
-    unsigned _audioChannels;
 };

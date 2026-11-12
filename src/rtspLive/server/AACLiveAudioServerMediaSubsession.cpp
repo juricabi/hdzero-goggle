@@ -10,19 +10,16 @@ extern "C"
 }
 
 #define FORMAT_CHECK_MS    10
-#define FORMAT_TIMEOUT_MS  2000 // the record process starts its audio chain when we connect
+#define FORMAT_TIMEOUT_MS  2500 // the record process starts its audio chain when we connect
 
 AACLiveAudioServerMediaSubsession*
-AACLiveAudioServerMediaSubsession::createNew(UsageEnvironment& env, Boolean reuseFirstSource,
-                                             unsigned defaultSampleRate, unsigned defaultChannels) {
-    return new AACLiveAudioServerMediaSubsession(env, reuseFirstSource, defaultSampleRate, defaultChannels);
+AACLiveAudioServerMediaSubsession::createNew(UsageEnvironment& env, Boolean reuseFirstSource) {
+    return new AACLiveAudioServerMediaSubsession(env, reuseFirstSource);
 }
 
-AACLiveAudioServerMediaSubsession::AACLiveAudioServerMediaSubsession(UsageEnvironment& env, Boolean reuseFirstSource,
-                                                                     unsigned defaultSampleRate, unsigned defaultChannels)
+AACLiveAudioServerMediaSubsession::AACLiveAudioServerMediaSubsession(UsageEnvironment& env, Boolean reuseFirstSource)
     : OnDemandServerMediaSubsession(env, reuseFirstSource),
       fFormatKnown(False), fProfile(1), fSfIndex(3), fChannelConfig(2),
-      fDefaultSampleRate(defaultSampleRate), fDefaultChannels(defaultChannels),
       fDoneFlag(0), fWaitedMs(0) {
     fConfigStr[0] = '\0';
     printf("[MEDIA SERVER]AAC server media subsession construct\n");
@@ -67,7 +64,7 @@ void AACLiveAudioServerMediaSubsession::checkFormat1() {
 void AACLiveAudioServerMediaSubsession::determineFormat() {
     // Read the format the encoder really produces from the first ADTS header (the source that
     // was just created makes the record process start encoding), like H264VideoFileServer-
-    // MediaSubsession waits for SPS/PPS. Fall back on the record conf if nothing comes.
+    // MediaSubsession waits for SPS/PPS.
     fDoneFlag = 0;
     fWaitedMs = 0;
     checkFormat1();
@@ -75,25 +72,22 @@ void AACLiveAudioServerMediaSubsession::determineFormat() {
         envir().taskScheduler().doEventLoop(&fDoneFlag);
     }
 
-    if (!fFormatKnown) {
-        fProfile = 1; // AAC-LC
-        fSfIndex = aacSamplingFrequencyIndex(fDefaultSampleRate);
-        if (fSfIndex > 12) fSfIndex = 3; // 48 kHz
-        fChannelConfig = (fDefaultChannels >= 1 && fDefaultChannels <= 7) ? fDefaultChannels : 2;
-        printf("[MEDIA SERVER]live audio: no frame yet, announcing the configured format\n");
-        // The SDP is generated once and kept for all clients: keep this format too.
-        fFormatKnown = True;
+    if (fFormatKnown) {
+        aacConfigString(fProfile + 1, fSfIndex, fChannelConfig, fConfigStr);
+        printf("[MEDIA SERVER]live audio: AAC object type %u, %u Hz, %u channels, config=%s\n",
+               fProfile + 1, aacSamplingFrequency(fSfIndex), fChannelConfig, fConfigStr);
+    } else {
+        printf("[MEDIA SERVER]live audio: no audio frame within %u ms, audio track not announced\n", FORMAT_TIMEOUT_MS);
     }
-
-    aacConfigString(fProfile + 1, fSfIndex, fChannelConfig, fConfigStr);
-    printf("[MEDIA SERVER]live audio: AAC object type %u, %u Hz, %u channels, config=%s\n",
-           fProfile + 1, aacSamplingFrequency(fSfIndex), fChannelConfig, fConfigStr);
 }
 
 RTPSink* AACLiveAudioServerMediaSubsession::createNewRTPSink(Groupsock* rtpGroupsock, unsigned char rtpPayloadTypeIfDynamic,
                                                              FramedSource* inputSource) {
     if (!fFormatKnown) {
         determineFormat();
+        if (!fFormatKnown) {
+            return NULL; // no SDP lines: the session is announced without audio
+        }
     }
 
     ((LiveAudioSource*)inputSource)->setExpectedFormat(fProfile, fSfIndex, fChannelConfig);

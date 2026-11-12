@@ -49,9 +49,7 @@ DynamicRTSPServer::DynamicRTSPServer(UsageEnvironment& env, int ourSocketIPv4, i
   : RTSPServer(env, ourSocketIPv4, ourSocketIPv6, ourPort, authDatabase, reclamationTestSeconds)
   , _h265(h265)
   , _streamName(streamName)
-  , _audio(False)
-  , _audioSampleRate(48000)
-  , _audioChannels(2) {
+  , _audio(False) {
 
   printf("[MEDIA SERVER]Dynamic RTSP server constructed\n");
 }
@@ -148,9 +146,7 @@ static ServerMediaSession* createNewSMS(UsageEnvironment& env,
     }
     // live stream audio (RTSP AAC track)
     if( server->_audio ) {
-        sms->addSubsession(AACLiveAudioServerMediaSubsession::createNew(env, reuseSource,
-                                                                        server->_audioSampleRate,
-                                                                        server->_audioChannels));
+        sms->addSubsession(AACLiveAudioServerMediaSubsession::createNew(env, reuseSource));
     }
   }
 
