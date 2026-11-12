@@ -61,7 +61,7 @@ LV_IMG_DECLARE(img_wifi);
 // not tune the bay module (type Unknown, Pin Control off, WiFi on).
 static void statusbar_analog_text(char *buf, size_t size) {
     if (analog_channel_tunable())
-        snprintf(buf, size, "%s: %s %s", _lang("RF"), _lang("Analog"), analog_channel_name(g_setting.source.analog_channel));
+        snprintf(buf, size, "%s: %s %s", _lang("RF"), _lang("Analog"), analog_channel_current_name());
     else
         snprintf(buf, size, "%s: %s", _lang("RF"), _lang("Analog"));
 }
@@ -231,7 +231,7 @@ void statubar_update(void) {
     // the analog channel list changes with Source > Analog Module, the Module Bay type
     // and whether the bay is controlled (Pin Control, WiFi)
     const int analog_list = (analog_channel_tunable() ? 0x10000 : 0) | (module_bay_is_source() ? 0x100 : 0) | analog_channel_count();
-    uint8_t channel_changed = (hdzero_channel_last != g_setting.scan.channel) || (analog_channel_last != g_setting.source.analog_channel) ||
+    uint8_t channel_changed = (hdzero_channel_last != g_setting.scan.channel) || (analog_channel_last != analog_channel_get()) ||
                               (analog_list_last != analog_list);
     analog_list_last = analog_list;
     if (channel_changed || (source_last != g_source_info.source) || (hdzero_band_last != g_setting.source.hdzero_band)) {
@@ -252,7 +252,7 @@ void statubar_update(void) {
     }
 
     hdzero_channel_last = g_setting.scan.channel;
-    analog_channel_last = g_setting.source.analog_channel;
+    analog_channel_last = analog_channel_get();
     source_last = g_source_info.source;
     hdzero_band_last = g_setting.source.hdzero_band;
 

@@ -1,5 +1,3 @@
-#include <unistd.h>
-
 #include "core/common.hh"
 #include "core/settings.h"
 
@@ -19,6 +17,12 @@ static const softspi_pin_t pin_orders[][3] = {
     {SOFTSPI_CS, SOFTSPI_DAT, SOFTSPI_CLK},
 };
 
+// At init the pins go from inputs straight to code 2 for 200 ms before the channel
+// code: a state that is not part of the rapidFIRE SPI set-up (all three high,
+// then all low within 100-400 ms), so a rapidFIRE in legacy mode stays in it.
+#define SWITCH_PRE_CODE 2
+#define SWITCH_PRE_MS   200
+
 static const softspi_pin_t *pin_order(void) {
     int order = g_setting.module.setting;
     if (order < 0 || order >= (int)ARRAY_SIZE(pin_orders))
@@ -26,26 +30,26 @@ static const softspi_pin_t *pin_order(void) {
     return pin_orders[order];
 }
 
-static void switch_set_channel(int channel) {
+// Each pin straight to its level (also from input), no intermediate all-low state.
+static void drive_code(int code) {
     const softspi_pin_t *pins = pin_order();
-    int code = channel % 8;
     for (int bit = 0; bit < 3; bit++)
-        softspi_set_pin(pins[bit], (code >> bit) & 1);
+        softspi_drive_pin(pins[bit], (code >> bit) & 1);
 }
 
-static void switch_update() {
-    // the pin order may have changed: all low, then the code in the new order
-    softspi_drive_all(0);
-    switch_set_channel(g_setting.source.analog_channel - 1);
+static void switch_set_channel(int channel) {
+    drive_code(channel % 8);
+}
+
+static void switch_set_mode() {
+    // new pin order: the worker sends the channel code next, in that order
 }
 
 static void switch_init() {
-    softspi_init();
-    // Set the swicthes/GPIO to a state that is NOT part of the rapidfire SPI setup.
-    // (200 ms: shorter than the 300 ms a True-D in "1-8" mode needs to take a code)
-    switch_set_channel(2);
-    usleep(200000);
-    switch_set_channel(g_setting.source.analog_channel - 1);
+    softspi_open(); // inputs
+    drive_code(SWITCH_PRE_CODE);
+    module_sleep_ms(SWITCH_PRE_MS);
+    // the worker sends the channel next
 }
 
 static void switch_close() {
@@ -67,7 +71,8 @@ module_def_t switch_module = {
     .init = switch_init,
     .close = switch_close,
     .set_channel = switch_set_channel,
-    .set_mode = switch_update,
+    .set_mode = switch_set_mode,
     .mode_names = "CLK/DAT/CS\nDAT/CS/CLK\nCS/DAT/CLK",
+    .boot_ms = 0,
     .boot_resend_ms = 0,
 };

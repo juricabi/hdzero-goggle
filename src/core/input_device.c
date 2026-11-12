@@ -76,18 +76,16 @@ void exit_tune_channel() {
 
 // Analog channel can be tuned from the goggle: the internal receiver (Goggle 2,
 // BoxPro) always, the module bay only when it is controlled (a module type set in
-// Module Bay, Pin Control on, WiFi off).  Range and names follow the bay module
-// (module.c analog_channel_*).
-static void analog_apply_channel(uint8_t channel) {
-#if defined(HDZGOGGLE)
-    module_set_channel(channel);
-#elif defined(HDZGOGGLE2)
-    if (module_bay_is_source())
-        module_set_channel(channel);
-    else
-        rtc6715.set_ch(channel - 1);
-#else
-    rtc6715.set_ch(channel - 1);
+// Module Bay, Pin Control on, WiFi off).  The dial walks the list of the analog
+// source (8 entries for a Switch module in the bay, module.c analog_channel_*);
+// the stored channel stays one of the 48.
+static void analog_apply_channel(int pos) {
+    const int channel = analog_channel_at(pos);
+    if (!analog_channel_set(channel))
+        return;
+#if !defined(HDZGOGGLE)
+    if (!module_bay_is_source())
+        rtc6715.set_ch(channel - 1); // the bay module follows through module.c
 #endif
 }
 
@@ -120,7 +118,7 @@ void tune_channel(uint8_t action) {
             if (g_source_info.source == SOURCE_HDZERO) {
                 channel = g_setting.scan.channel;
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                channel = analog_channel_fit(g_setting.source.analog_channel);
+                channel = analog_channel_pos(); // place in the list (CH1..CH8 for a Switch module)
             } else {
                 return;
             }
@@ -166,11 +164,9 @@ void tune_channel(uint8_t action) {
                 }
             }
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
-            if (g_setting.source.analog_channel != channel) {
-                g_setting.source.analog_channel = channel;
-                ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
+            if (analog_channel_at(channel) != analog_channel_get()) {
                 dvr_cmd(DVR_STOP);
-                analog_apply_channel(g_setting.source.analog_channel);
+                analog_apply_channel(channel);
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
                 }

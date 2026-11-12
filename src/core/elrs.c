@@ -135,19 +135,24 @@ static void change_channel_analog(uint8_t channel) {
         LOGE("Invalid analog channel %d", channel);
         return;
     }
-    // A bay module with fewer channels (Switch: 8, channels of the module's own band)
-    // gets (channel - 1) % 8 + 1, the VTX channel's place in its band: A1, B1 ... L1
-    // all select CH1.  48-channel modules and the internal receiver take it as is.
-    channel = analog_channel_fit(channel);
-    if (g_setting.source.analog_channel != channel || g_app_state != APP_STATE_VIDEO) {
-        g_setting.source.analog_channel = channel;
+    // Only for an analog receiver the goggle tunes: the built-in one (Goggle 2,
+    // BoxPro) or a controlled bay module.  An uncontrolled bay module (type Unknown,
+    // Pin Control Off, WiFi on) is left alone, picture and stored channel included.
+    if (!analog_channel_tunable()) {
+        LOGI("VTX channel %d not applied: the goggle does not control the bay module", channel);
+        return;
+    }
+    // Stored as it is, one of the 48 (and in setting.ini).  A bay module with fewer
+    // channels (Switch: 8 of the module's own band) is sent its place in its band,
+    // (channel - 1) % 8 + 1: A1, B1 ... L1 all select CH1.
+    if (analog_channel_get() != channel || g_app_state != APP_STATE_VIDEO) {
+        analog_channel_set(channel);
         beep();
         pthread_mutex_lock(&lvgl_mutex);
         dvr_cmd(DVR_STOP);
-        app_switch_to_analog(0);
+        app_switch_to_analog(0); // tunes the built-in receiver (Goggle 2, BoxPro)
         app_state_push(APP_STATE_VIDEO);
         pthread_mutex_unlock(&lvgl_mutex);
-        module_set_channel(channel);
     }
 }
 

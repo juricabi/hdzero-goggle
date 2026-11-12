@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -39,10 +40,12 @@ static module_def_t *modules[MODULE_TYPES] = {
 };
 
 // Time a module gets to boot after the goggle switches the bay power on, before
-// it is set up (pins, mode, channel).
+// it is set up (pins, mode, channel), unless its type says otherwise (boot_ms).
 #define MODULE_BOOT_MS 1000
 // While the bay pins are found in use by the SDIO host, check again this often.
+#ifndef SDIO_RECHECK_MS
 #define SDIO_RECHECK_MS 5000
+#endif
 // module_wifi_changed() waits at most this long for the pins to be released.
 #define WIFI_RELEASE_MS 3000
 
@@ -50,6 +53,11 @@ static module_def_t *modules[MODULE_TYPES] = {
 // is SDC1, the SDIO bus of the WiFi chip.
 #define PIO_PG_CFG0     0x0300b0d8
 #define PIO_FUNC_SDC1   2
+
+// What bay_pins_busy() looks at (variables so that the host test can point them
+// at files of its own; neither exists in the emulator).
+static const char *wlan_driver_path = "/sys/module/xradio_wlan";
+static const char *reg_dump_path = "/sys/class/sunxi_dump/dump";
 
 /*
  * Threads: the dial (input thread, lvgl_mutex held), ELRS, the menu and the bay
@@ -63,13 +71,14 @@ static bool started = false;
 
 // requests
 static bool bay_powered = false;
-static uint64_t power_on_ms = 0; // when the bay was switched on, 0: before the app started
-static bool reinit = false;      // power switched: set the module up again
+static uint64_t power_on_ms = 0;     // when the bay was switched on, 0: before the app started
+static bool reinit = false;          // power switched: release the pins, set the module up again
 static bool mode_pending = false;
-static int channel_pending = 0;  // 1-based, 0: none
+static bool channel_pending = false; // the bay module's stored channel changed
 
 // worker state
 static module_def_t *active = NULL; // initialised module, holds the pins
+static bool setup_channel = false;  // after init / set_mode: the channel goes out next, boot hold or not
 static uint64_t resend_at_ms = 0;   // boot resend (module_def_t.boot_resend_ms) due
 static bool sdio_busy = false;
 
@@ -97,12 +106,52 @@ static module_def_t *wanted(void) {
     return module_lookup();
 }
 
-#ifndef EMULATOR_BUILD
+// The pins are to be released (lock held).
+static bool release_requested(void) {
+    return active && (active != wanted() || reinit);
+}
+
+// ---- stored channels ----
+
+static int valid_channel(int ch) {
+    return ch >= 1 && ch <= ANALOG_CHANNEL_NUM ? ch : 33; // R1
+}
+
+// The bay module's stored channel (1..48).  Goggle 1 has no other analog receiver:
+// upstream's [source] analog_channel.  Goggle 2 keeps that for its built-in
+// receiver and stores the bay module's in [module] channel.
+static int bay_channel(void) {
+#if defined(HDZGOGGLE2)
+    return valid_channel(g_setting.module.channel);
+#else
+    return valid_channel(g_setting.source.analog_channel);
+#endif
+}
+
+static void bay_channel_store(int ch) {
+#if defined(HDZGOGGLE2)
+    g_setting.module.channel = ch;
+    ini_putl("module", "channel", ch, SETTING_INI);
+#else
+    g_setting.source.analog_channel = ch;
+    ini_putl("source", "analog_channel", ch, SETTING_INI);
+#endif
+}
+
+// place of a 48-list channel in a list of count channels: (ch - 1) % count + 1
+static int fold(int count, int ch) {
+    if (count <= 0 || count >= ANALOG_CHANNEL_NUM)
+        return ch;
+    return (ch - 1) % count + 1;
+}
+
+// ---- bay pins and WiFi ----
+
 // Reads an SoC register through the sunxi_dump driver (as the awr script does).
 static bool read_reg(uint32_t addr, uint32_t *val) {
     char buf[64];
     bool ok = false;
-    int fd = open("/sys/class/sunxi_dump/dump", O_RDWR);
+    int fd = open(reg_dump_path, O_RDWR);
     if (fd < 0)
         return false;
     int n = snprintf(buf, sizeof(buf), "0x%08x", addr);
@@ -126,15 +175,11 @@ static bool read_reg(uint32_t addr, uint32_t *val) {
     close(fd);
     return ok;
 }
-#endif
 
 // PG0-PG2 belong to the WiFi SDIO bus right now: the WiFi driver is loaded or the
 // SDIO host has them in its pin function.  Exporting them then would cut WiFi off.
 static bool bay_pins_busy(void) {
-#ifdef EMULATOR_BUILD
-    return false;
-#else
-    if (access("/sys/module/xradio_wlan", F_OK) == 0)
+    if (access(wlan_driver_path, F_OK) == 0)
         return true;
     uint32_t cfg;
     if (read_reg(PIO_PG_CFG0, &cfg)) {
@@ -144,20 +189,27 @@ static bool bay_pins_busy(void) {
         }
     }
     return false;
-#endif
 }
 
 static int fit_channel(module_def_t *m, int channel) {
-    if (channel < 1)
-        return 1;
-    if (channel > m->num_channels)
-        return (channel - 1) % m->num_channels + 1;
-    return channel;
+    return fold(m->num_channels, valid_channel(channel));
 }
 
 static void timed_wait(pthread_cond_t *cond, uint64_t until_ms) {
     struct timespec ts = {.tv_sec = until_ms / 1000, .tv_nsec = (until_ms % 1000) * 1000000};
     pthread_cond_timedwait(cond, &lock, &ts);
+}
+
+// ---- worker ----
+
+// The current bay channel to the active module (lock held, released meanwhile).
+static void send_channel(const char *why) {
+    module_def_t *m = active;
+    const int ch = fit_channel(m, bay_channel());
+    pthread_mutex_unlock(&lock);
+    LOGI("module: channel %d%s", ch, why);
+    m->set_channel(ch - 1);
+    pthread_mutex_lock(&lock);
 }
 
 static void *module_worker(void *arg) {
@@ -169,19 +221,21 @@ static void *module_worker(void *arg) {
         uint64_t wake_at = 0;
 
         // pins released: bay off, type changed, Pin Control off, WiFi on, power cycled
-        if (active && (active != want || reinit)) {
+        if (release_requested()) {
             module_def_t *m = active;
             pthread_mutex_unlock(&lock);
             LOGI("module: bay pins released");
             m->close();
             pthread_mutex_lock(&lock);
             active = NULL;
+            setup_channel = false;
             resend_at_ms = 0;
             continue;
         }
 
         if (!active && want) {
-            const uint64_t ready = power_on_ms ? power_on_ms + MODULE_BOOT_MS : 0;
+            const uint64_t boot = want->boot_ms > 0 ? (uint64_t)want->boot_ms : MODULE_BOOT_MS;
+            const uint64_t ready = power_on_ms ? power_on_ms + boot : 0;
             if (now < ready) {
                 wake_at = ready;
             } else {
@@ -196,17 +250,19 @@ static void *module_worker(void *arg) {
                 if (busy) {
                     wake_at = now + SDIO_RECHECK_MS;
                 } else {
-                    // init sets the mode and the current channel; while the module still
-                    // boots, channel changes wait for the boot resend
+                    // init takes the pins and sets the mode; the channel follows at once
+                    // (setup_channel).  While the module still boots, later channel
+                    // changes wait for the boot resend.
                     reinit = false;
                     mode_pending = false;
-                    channel_pending = 0;
+                    channel_pending = false;
+                    setup_channel = true;
                     resend_at_ms = 0;
                     if (want->boot_resend_ms > 0 && power_on_ms && power_on_ms + want->boot_resend_ms > now)
                         resend_at_ms = power_on_ms + want->boot_resend_ms;
                     active = want;
                     pthread_mutex_unlock(&lock);
-                    LOGI("module: type %d init, channel %d", g_setting.module.type, g_setting.source.analog_channel);
+                    LOGI("module: type %d init", g_setting.module.type);
                     want->init();
                     pthread_mutex_lock(&lock);
                     continue;
@@ -216,31 +272,33 @@ static void *module_worker(void *arg) {
 
         if (active) {
             const bool boot_hold = resend_at_ms && now < resend_at_ms;
+            if (setup_channel) {
+                // after init / a mode change: the module is put on the current channel
+                // whatever its type did (nothing a type does there is relied on)
+                setup_channel = false;
+                channel_pending = false;
+                send_channel(" (set-up)");
+                continue;
+            }
             if (mode_pending && !boot_hold) {
+                module_def_t *m = active;
                 mode_pending = false;
+                setup_channel = true;
                 pthread_mutex_unlock(&lock);
                 LOGI("module: mode %d", g_setting.module.setting);
-                active->set_mode();
+                m->set_mode();
                 pthread_mutex_lock(&lock);
                 continue;
             }
             if (resend_at_ms && !boot_hold) {
-                const int ch = fit_channel(active, channel_pending ? channel_pending : g_setting.source.analog_channel);
                 resend_at_ms = 0;
-                channel_pending = 0;
-                pthread_mutex_unlock(&lock);
-                LOGI("module: channel %d (boot resend)", ch);
-                active->set_channel(ch - 1);
-                pthread_mutex_lock(&lock);
+                channel_pending = false;
+                send_channel(" (boot resend)");
                 continue;
             }
             if (channel_pending && !boot_hold) {
-                const int ch = fit_channel(active, channel_pending);
-                channel_pending = 0;
-                pthread_mutex_unlock(&lock);
-                LOGI("module: channel %d", ch);
-                active->set_channel(ch - 1);
-                pthread_mutex_lock(&lock);
+                channel_pending = false;
+                send_channel("");
                 continue;
             }
             if (boot_hold && (!wake_at || resend_at_ms < wake_at))
@@ -255,6 +313,45 @@ static void *module_worker(void *arg) {
     }
     return NULL;
 }
+
+// ---- for the module types (worker thread) ----
+
+bool module_abort_requested(void) {
+    pthread_mutex_lock(&lock);
+    const bool abort = release_requested();
+    pthread_mutex_unlock(&lock);
+    return abort;
+}
+
+bool module_sleep_ms(unsigned ms) {
+    pthread_mutex_lock(&lock);
+    const uint64_t until = now_ms() + ms;
+    bool abort;
+    while (!(abort = release_requested()) && now_ms() < until)
+        timed_wait(&wake, until);
+    pthread_mutex_unlock(&lock);
+    return !abort;
+}
+
+int module_current_channel(void) {
+    pthread_mutex_lock(&lock);
+    module_def_t *m = active ? active : module_lookup();
+    const int ch = m ? fit_channel(m, bay_channel()) - 1 : 0;
+    pthread_mutex_unlock(&lock);
+    return ch;
+}
+
+unsigned module_ms_since_power_on(void) {
+    pthread_mutex_lock(&lock);
+    const uint64_t on = power_on_ms;
+    pthread_mutex_unlock(&lock);
+    if (!on)
+        return UINT_MAX;
+    const uint64_t since = now_ms() - on;
+    return since < UINT_MAX ? (unsigned)since : UINT_MAX;
+}
+
+// ---- requests ----
 
 static int count_modes(const module_def_t *m) {
     int modes = 0;
@@ -281,7 +378,6 @@ void module_init() {
     const int modes = count_modes(module_lookup());
     if (g_setting.module.setting < 0 || g_setting.module.setting >= (modes ? modes : 1))
         g_setting.module.setting = 0;
-    analog_channel_clamp();
 
     pthread_condattr_t attr;
     pthread_condattr_init(&attr);
@@ -302,13 +398,12 @@ void module_init() {
     } else {
         LOGE("module: worker thread not started");
     }
-    LOGI("module: type %d, mode %d, pin control %s, WiFi %s, bay %s", g_setting.module.type, g_setting.module.setting,
-         g_setting.module.pins ? "on" : "off", g_setting.wifi.enable ? "on" : "off",
-         bay_powered ? "always powered" : "power switched");
+    LOGI("module: type %d, mode %d, pin control %s, WiFi %s, bay %s, channel %d", g_setting.module.type,
+         g_setting.module.setting, g_setting.module.pins ? "on" : "off", g_setting.wifi.enable ? "on" : "off",
+         bay_powered ? "always powered" : "power switched", bay_channel());
 }
 
 void module_settings_changed(bool mode_changed) {
-    analog_channel_clamp();
     if (!started)
         return;
     pthread_mutex_lock(&lock);
@@ -318,13 +413,16 @@ void module_settings_changed(bool mode_changed) {
     pthread_mutex_unlock(&lock);
 }
 
-void module_set_channel(int channel) {
+void module_source_changed() {
     if (!started || !module_bay_is_source())
         return;
-    if (channel < 1 || channel > ANALOG_CHANNEL_NUM)
-        return;
+    // The bay module keeps its own channel while the built-in receiver is the
+    // source, but nothing watched it meanwhile (its own buttons, a command it
+    // missed): it gets its mode and channel again.  Not powered or not set up yet:
+    // the set-up after power-on / init sends both anyway.
     pthread_mutex_lock(&lock);
-    channel_pending = channel; // (unpowered: the power-on init sends the current one)
+    if (active)
+        mode_pending = true; // set_mode(), then the channel
     poke();
     pthread_mutex_unlock(&lock);
 }
@@ -393,11 +491,11 @@ int module_num_channels() {
     return m ? m->num_channels : 0;
 }
 
-char *module_channel_str(int channel) {
+const char *module_channel_name() {
     module_def_t *m = module_lookup();
     if (!m)
         return "";
-    return m->name(fit_channel(m, channel) - 1);
+    return m->name(fit_channel(m, bay_channel()) - 1);
 }
 
 const char *module_mode_names(int type) {
@@ -420,37 +518,70 @@ bool module_bay_controlled() {
     return module_lookup() && pins_allowed();
 }
 
+// ---- the analog channel of the receiver now selected ----
+
+int analog_channel_get() {
+    if (module_bay_is_source())
+        return bay_channel();
+    return valid_channel(g_setting.source.analog_channel);
+}
+
+bool analog_channel_set(int channel) {
+    if (channel < 1 || channel > ANALOG_CHANNEL_NUM || !analog_channel_tunable())
+        return false;
+    if (!module_bay_is_source()) {
+        if (g_setting.source.analog_channel != channel) {
+            g_setting.source.analog_channel = channel;
+            ini_putl("source", "analog_channel", channel, SETTING_INI);
+        }
+        return true;
+    }
+    if (bay_channel() == channel)
+        return true;
+    bay_channel_store(channel);
+    if (started) {
+        pthread_mutex_lock(&lock);
+        channel_pending = true; // (unpowered: the power-on set-up sends the current one)
+        poke();
+        pthread_mutex_unlock(&lock);
+    }
+    return true;
+}
+
 int analog_channel_count() {
     if (module_bay_is_source() && module_num_channels() > 0)
         return module_num_channels();
     return ANALOG_CHANNEL_NUM;
 }
 
-const char *analog_channel_name(int channel) {
-    channel = analog_channel_fit(channel);
-    if (module_bay_is_source() && module_num_channels() > 0)
-        return module_channel_str(channel);
-    return channel2str(0, 0, channel);
+int analog_channel_pos() {
+    return fold(analog_channel_count(), analog_channel_get());
+}
+
+int analog_channel_at(int pos) {
+    const int n = analog_channel_count();
+    const int ch = analog_channel_get();
+    if (pos < 1 || pos > n)
+        return ch;
+    if (n >= ANALOG_CHANNEL_NUM)
+        return pos;
+    return (ch - 1) / n * n + pos; // same band, place pos
+}
+
+const char *analog_channel_name(int pos) {
+    const int n = analog_channel_count();
+    if (pos < 1 || pos > n)
+        pos = 1;
+    module_def_t *m = module_lookup();
+    if (module_bay_is_source() && m)
+        return m->name(pos - 1);
+    return channel2str(0, 0, pos);
+}
+
+const char *analog_channel_current_name() {
+    return analog_channel_name(analog_channel_pos());
 }
 
 bool analog_channel_tunable() {
     return !module_bay_is_source() || module_bay_controlled();
-}
-
-int analog_channel_fit(int channel) {
-    const int n = analog_channel_count();
-    if (channel < 1)
-        return 1;
-    if (channel > n)
-        return (channel - 1) % n + 1;
-    return channel;
-}
-
-void analog_channel_clamp() {
-    const int ch = analog_channel_fit(g_setting.source.analog_channel);
-    if (ch != g_setting.source.analog_channel) {
-        LOGI("analog channel %d -> %d (%d channels)", g_setting.source.analog_channel, ch, analog_channel_count());
-        g_setting.source.analog_channel = ch;
-        ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
-    }
 }

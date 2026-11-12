@@ -29,6 +29,8 @@ void softspi_init();
 // All three pins outputs at level, set through the direction file ("high"/"low")
 // so the pin does not pass through the other level first.
 void softspi_drive_all(int level);
+// One pin an output at level, set through its direction file like softspi_drive_all().
+void softspi_drive_pin(softspi_pin_t pin, int level);
 // All three pins inputs again.
 void softspi_float_all();
 // Releases the pins: inputs, files closed, unexported.

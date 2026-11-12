@@ -48,7 +48,7 @@ static void steadyview_set_channel(int index) {
     current_channel = index;
 }
 
-void steadyview_set_mixmode(steadyview_mix_mode_t mode) {
+static void steadyview_set_mixmode(steadyview_mix_mode_t mode) {
     mix_mode = mode;
 
     DM5680_ExternalAnalog_Power(0U);
@@ -76,7 +76,9 @@ void steadyview_set_mixmode(steadyview_mix_mode_t mode) {
 }
 
 static void steadyview_set_mode() {
-    current_channel = g_setting.source.analog_channel-1;
+    // the mode sequence ends with the channel register (the worker sends the channel
+    // again afterwards; steadyview_set_channel() skips it when it reads back the same)
+    current_channel = module_current_channel();
     steadyview_set_mixmode(g_setting.module.setting);
 }
 
@@ -153,5 +155,6 @@ module_def_t steadyview_module = {
     .set_channel = steadyview_set_channel,
     .set_mode = steadyview_set_mode,
     .mode_names = "Diversity\nMix 1\nMix 2\nMix 3",
+    .boot_ms = 0,
     .boot_resend_ms = 0,
 };

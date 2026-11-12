@@ -394,9 +394,9 @@ char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // cha
     }
 }
 
-// Channel label text: HDZero channel, or the analog channel in the list of the
-// analog source (module bay names such as "CH3" for a Switch module are shown
-// without a second "CH:").
+// Channel label text: HDZero channel, or entry ch of the channel list of the analog
+// source (module bay names such as "CH3" for a Switch module are shown without a
+// second "CH:").
 static const char *osd_channel_name(uint8_t ch) {
     if (g_source_info.source == SOURCE_HDZERO)
         return channel2str(1, g_setting.source.hdzero_band, ch);
@@ -419,7 +419,7 @@ void osd_channel_show(bool bShow) {
         } else {
             // analog: only a channel the goggle tunes (not an uncontrolled bay module)
             if (g_source_info.source == SOURCE_AV_MODULE && analog_channel_tunable()) {
-                ch = g_setting.source.analog_channel & 0x7F;
+                ch = analog_channel_pos();
             } else {
                 bShow = false;
             }

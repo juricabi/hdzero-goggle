@@ -221,7 +221,7 @@ void source_status_timer() {
     // the goggle controls it, none when it does not
 #if defined(HDZGOGGLE)
     if (analog_channel_tunable())
-        snprintf(buf, sizeof(buf), "%s %s: %s", _lang("Analog"), analog_channel_name(g_setting.source.analog_channel),
+        snprintf(buf, sizeof(buf), "%s %s: %s", _lang("Analog"), analog_channel_current_name(),
                  state2string(g_source_info.av_bay_status));
     else
         snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), state2string(g_source_info.av_bay_status));
@@ -231,7 +231,7 @@ void source_status_timer() {
     if (!module_bay_is_source()) {
         snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), channel2str(0, 0, g_setting.source.analog_channel));
     } else if (analog_channel_tunable()) {
-        snprintf(buf, sizeof(buf), "%s: %s %s", _lang("Analog"), _lang("Expansion Module"), analog_channel_name(g_setting.source.analog_channel));
+        snprintf(buf, sizeof(buf), "%s: %s %s", _lang("Analog"), _lang("Expansion Module"), analog_channel_current_name());
     } else {
         snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), _lang("Expansion Module"));
     }
@@ -359,7 +359,7 @@ static void page_source_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&btn_group0);
         g_setting.source.analog_module = btn_group_get_sel(&btn_group0);
         ini_putl("source", "analog_module", g_setting.source.analog_module, SETTING_INI);
-        analog_channel_clamp(); // into the channel list of the receiver now selected
+        module_source_changed(); // the bay module gets its mode and channel again
         break;
 #endif
     case ROW_ANALOG_RATIO:

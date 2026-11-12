@@ -15,27 +15,23 @@
 #define RF_API_CHANNEL_CMD 'C'
 #define RF_API_MODE_CMD    'D'
 
-static int current_channel = -1;
-
-static void send_band(uint8_t band);
-static void send_channel(uint8_t channel);
-static void send_mode(uint8_t mode);
+static void send_cmd(uint8_t command, uint8_t value);
 
 static void rapidfire_set_channel(int index) {
-    uint8_t band = index / 8;
-    uint8_t channel = index % 8;
-
-    send_band(band);
+    // convert standard band index (A B E F R L) to IMRC band index
+    static const uint8_t band_map[] = {5, 4, 3, 1, 2, 6};
+    const int band = index / 8;
+    if (index < 0 || band >= (int)ARRAY_SIZE(band_map))
+        return;
+    send_cmd(RF_API_BAND_CMD, band_map[band]);
     usleep(100000);
-    send_channel(channel);
-
-    current_channel = index;
+    send_cmd(RF_API_CHANNEL_CMD, index % 8 + 1); // IMRC channel is 1-based
 }
 
 static void rapidfire_set_mode() {
-    rapidfire_set_channel(g_setting.source.analog_channel - 1);
     usleep(100000);
-    send_mode(g_setting.module.setting);
+    send_cmd(RF_API_MODE_CMD, g_setting.module.setting);
+    // the worker sends the channel next
 }
 
 static void rapidfire_init() {
@@ -88,57 +84,16 @@ static void send_spi(uint8_t *buf, uint8_t len) {
     softspi_set_pin(SOFTSPI_CS, 1);
 }
 
-static void send_band(uint8_t band) {
-    // convert standard band index to IMRC band index:
-    const uint8_t band_map[] = {5, 4, 3, 1, 2, 6, 7};
-    if (band >= ARRAY_SIZE(band_map))
-        return;
-    uint8_t imrcBand = band_map[band];
-
+// One command, SPAM_COUNT times (the rapidFIRE sometimes misses a packet).
+static void send_cmd(uint8_t command, uint8_t value) {
     uint8_t cmd[5];
-    cmd[0] = RF_API_BAND_CMD;  // 'B'
-    cmd[1] = RF_API_DIR_EQUAL; // '='
-    cmd[2] = 0x01;             // len
-    cmd[3] = imrcBand;         // temporarily set byte 4 to band for crc calc
-    cmd[3] = crc8(cmd, 4);     // reset byte 4 to crc
-    cmd[4] = imrcBand;         // assign band to correct byte 5
+    cmd[0] = command;
+    cmd[1] = RF_API_DIR_EQUAL;
+    cmd[2] = 0x01;         // len
+    cmd[3] = value;        // temporarily set byte 4 to the value for crc calc
+    cmd[3] = crc8(cmd, 4); // reset byte 4 to crc
+    cmd[4] = value;        // assign the value to byte 5
 
-    // rapidfire sometimes misses pkts, so send each one 3x
-    for (int i = 0; i < SPAM_COUNT; i++) {
-        send_spi(cmd, 5);
-        usleep(10000);
-    }
-}
-
-static void send_channel(uint8_t channel) {
-    // imrc channel is 1 based
-    channel++;
-
-    uint8_t cmd[5];
-    cmd[0] = RF_API_CHANNEL_CMD; // 'C'
-    cmd[1] = RF_API_DIR_EQUAL;   // '='
-    cmd[2] = 0x01;               // len
-    cmd[3] = channel;            // temporarily set byte 4 to channel for crc calc
-    cmd[3] = crc8(cmd, 4);       // reset byte 4 to crc
-    cmd[4] = channel;            // assign channel to correct byte 5
-
-    // rapidfire sometimes misses pkts, so send each one 3x
-    for (int i = 0; i < SPAM_COUNT; i++) {
-        send_spi(cmd, 5);
-        usleep(10000);
-    }
-}
-
-static void send_mode(uint8_t mode) {
-    uint8_t cmd[5];
-    cmd[0] = RF_API_MODE_CMD;  // 'D'
-    cmd[1] = RF_API_DIR_EQUAL; // '='
-    cmd[2] = 0x01;             // len
-    cmd[3] = mode;             // temporarily set byte 4 to mode for crc calc
-    cmd[3] = crc8(cmd, 4);     // reset byte 4 to crc
-    cmd[4] = mode;             // assign mode to correct byte 5
-
-    // rapidfire sometimes misses pkts, so send each one 3x
     for (int i = 0; i < SPAM_COUNT; i++) {
         send_spi(cmd, 5);
         usleep(10000);
@@ -156,5 +111,6 @@ module_def_t rapidfire_module = {
     .set_channel = rapidfire_set_channel,
     .set_mode = rapidfire_set_mode,
     .mode_names = "legacy\nrapidFIRE 1\nrapidFIRE 2",
+    .boot_ms = 0,
     .boot_resend_ms = 0,
 };

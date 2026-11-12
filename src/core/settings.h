@@ -293,6 +293,7 @@ typedef struct {
     int type;    // module_type_t
     int setting; // Mode list entry of that type
     bool pins;   // Pin Control: the goggle may drive the bay pins (PG0-PG2, shared with WiFi SDIO)
+    int channel; // Goggle 2: the bay module's channel, 1..48 (Goggle 1: source.analog_channel)
 } setting_module_t;
 
 typedef struct {

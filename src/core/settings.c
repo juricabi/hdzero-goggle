@@ -249,6 +249,7 @@ const setting_t g_setting_defaults = {
         .type = 0,
         .setting = 0,
         .pins = false,
+        .channel = 33, // R1
     },
 };
 
@@ -513,6 +514,12 @@ void settings_load(void) {
     g_setting.module.type = ini_getl("module", "type", g_setting_defaults.module.type, SETTING_INI);
     g_setting.module.setting = ini_getl("module", "setting", g_setting_defaults.module.setting, SETTING_INI);
     g_setting.module.pins = settings_get_bool("module", "pins", g_setting_defaults.module.pins);
+    // Goggle 2: the bay module's own channel, starting from the analog channel the
+    // goggle had (the built-in receiver's) when there is none yet
+    g_setting.module.channel = ini_getl("module", "channel", g_setting.source.analog_channel, SETTING_INI);
+    if (g_setting.module.channel < 1 || g_setting.module.channel > ANALOG_CHANNEL_NUM) {
+        g_setting.module.channel = g_setting.source.analog_channel;
+    }
 
     // Check
     if (fs_file_exists(SELF_TEST_FILE)) {

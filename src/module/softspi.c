@@ -57,6 +57,10 @@ void softspi_drive_all(int level) {
         write_attr(dir_fd[i], level ? "high" : "low");
 }
 
+void softspi_drive_pin(softspi_pin_t pin, int level) {
+    write_attr(dir_fd[pin], level ? "high" : "low");
+}
+
 void softspi_float_all() {
     for (int i = 0; i < SOFTSPI_PINS; i++)
         write_attr(dir_fd[i], "in");

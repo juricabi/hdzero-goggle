@@ -6,18 +6,19 @@
 // The pins are outputs only for a burst (5 packets, ~170 ms) and inputs
 // otherwise: idle high comes from the True-D's pull-ups, and a pin that meets a
 // True-D output (D13 is driven in its AUTO mode) is not fought for longer than one
-// burst.
+// burst.  A release request (bay off, Pin Control Off, WiFi on, type change) ends
+// a burst after the packet on the wire (<= ~11 ms).
 //
 // Timing: each edge has an absolute CLOCK_MONOTONIC deadline from the packet's
 // first start bit (bitbang_uart.c), busy-waited with the thread raised to
 // SCHED_FIFO for the ~10.4 ms of one packet and put back afterwards; the 30 ms
-// gaps between packets are plain sleeps.
+// gaps between packets are plain (abortable) sleeps.
 //
 // Boot: the True-D shows a 2 s boot screen after power-on and buffers at most 64
-// bytes meanwhile.  module.c runs init (one burst = 50 bytes) MODULE_BOOT_MS after
-// bay power-on and the channel again boot_resend_ms after power-on, and holds any
-// channel change in between back for that resend, so no more than 50 bytes reach
-// the True-D before its loop runs.
+// bytes meanwhile.  module.c sends the channel right after init (one burst = 50
+// bytes) MODULE_BOOT_MS after bay power-on and again boot_resend_ms after
+// power-on, and holds any channel change in between back for that resend, so no
+// more than 50 bytes reach the True-D before its loop runs.
 
 #include <pthread.h>
 #include <sched.h>
@@ -35,7 +36,7 @@
 #include "trued_proto.h"
 
 #define TRUED_REPEATS      5
-#define TRUED_GAP_US       30000
+#define TRUED_GAP_MS       30
 #define TRUED_RT_PRIORITY  80
 #define TRUED_IDLE_US      2000 // pins high before the first start bit
 
@@ -92,20 +93,19 @@ static void trued_set_channel(int index) {
     softspi_drive_all(1);
     usleep(TRUED_IDLE_US);
     for (int i = 0; i < TRUED_REPEATS; i++) {
-        if (i)
-            usleep(TRUED_GAP_US);
+        if (i && !module_sleep_ms(TRUED_GAP_MS))
+            break; // pins to be released
         trued_send_packet(frame, sizeof(frame));
     }
     softspi_float_all();
 }
 
 static void trued_set_mode() {
-    trued_set_channel(g_setting.source.analog_channel - 1);
+    // no modes (the worker sends the channel after this)
 }
 
 static void trued_init() {
-    pins_ok = softspi_open(); // inputs until the first burst
-    trued_set_channel(g_setting.source.analog_channel - 1);
+    pins_ok = softspi_open(); // inputs until the first burst, which the worker sends next
 }
 
 static void trued_close() {
@@ -121,5 +121,6 @@ module_def_t trued_module = {
     .set_channel = trued_set_channel,
     .set_mode = trued_set_mode,
     .mode_names = NULL,
+    .boot_ms = 0,
     .boot_resend_ms = 3500,
 };

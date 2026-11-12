@@ -55,7 +55,8 @@ static void steadyview_x_set_mode() {
 }
 
 // soft_uart.ko (built with gpio_tx = 192 = CLK/PG0 and gpio_rx = 193 = DAT/PG1 as
-// its defaults) gives /dev/ttySOFT0; CS (PG2) is held low.
+// its defaults) gives /dev/ttySOFT0; CS (PG2) is held low.  Init sends the mix
+// mode; the worker sends the channel next.
 static void steadyview_x_init() {
 #ifndef EMULATOR_BUILD
     gpio_open(GPIO_MODULE_CS);
@@ -92,5 +93,6 @@ module_def_t steadyview_x_module = {
     .set_channel = steadyview_x_set_channel,
     .set_mode = steadyview_x_set_mode,
     .mode_names = "Diversity\nMix 1\nMix 2\nMix 3",
+    .boot_ms = 0,
     .boot_resend_ms = 0,
 };

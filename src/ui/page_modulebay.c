@@ -93,10 +93,9 @@ static void update_status(void) {
         snprintf(buf, sizeof(buf), "%s", _lang("Waiting for the module to boot"));
         break;
     case MODULE_STATUS_ACTIVE:
-        if (module_bay_is_source())
-            snprintf(buf, sizeof(buf), "#00FF00 %s# %s", _lang("Active"), analog_channel_name(g_setting.source.analog_channel));
-        else
-            snprintf(buf, sizeof(buf), "#00FF00 %s#", _lang("Active"));
+        // the bay module's own channel (Goggle 2: also while the built-in receiver is
+        // the analog source)
+        snprintf(buf, sizeof(buf), "#00FF00 %s# %s", _lang("Active"), module_channel_name());
         break;
     default:
         buf[0] = 0;
