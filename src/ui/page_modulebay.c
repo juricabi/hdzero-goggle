@@ -9,6 +9,7 @@
 #include "module/module.h"
 #include "page_common.h"
 #include "page_modulebay.h"
+#include "ui/ui_main_menu.h"
 #include "ui/ui_style.h"
 
 // Rows: 0 Type, 1 Mode (selectable only when the type has modes), 2 Pin Control,
@@ -33,7 +34,6 @@ static btn_group_t btn_pins;
 
 static lv_obj_t *page_item_focused = NULL;
 static uint16_t focused_orig_sel = 0; // selection when the focused list was opened
-static bool in_page = false;
 
 static lv_coord_t col_dsc[] = {160, 200, 240, 240, 160, 40, LV_GRID_TEMPLATE_LAST};
 static lv_coord_t row_dsc[] = {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST};
@@ -274,7 +274,6 @@ static void page_on_click(uint8_t key, int sel) {
 }
 
 static void page_enter() {
-    in_page = true;
     update_status();
 }
 
@@ -282,19 +281,18 @@ static void page_exit() {
     // left with a list open (long press): drop what was only highlighted there
     close_list(false);
     apply_settings();
-    in_page = false;
 }
 
+// Called from the main menu loop for every page, also while Module Bay is only
+// highlighted in the menu (its preview shows the same status line).  The status
+// follows bay power, WiFi and the module's boot.
 static void page_on_update(uint32_t delta_ms) {
-    static uint32_t calls = 0;
+    static uint32_t last_ms = 0;
     (void)delta_ms;
-    if (!in_page)
+    if (!lbl_status || !main_menu_is_shown() || lv_tick_elaps(last_ms) < 500)
         return;
-    // the status follows bay power, WiFi and the module's boot (main loop ~5 ms)
-    if (++calls >= 100) {
-        calls = 0;
-        update_status();
-    }
+    last_ms = lv_tick_get();
+    update_status();
 }
 
 page_pack_t pp_modulebay = {
