@@ -55,7 +55,7 @@ static lv_obj_t *root_page;
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
-static page_pack_t *post_bootup_actions[PAGE_PACK_MAX_NUM];
+static page_pack_t *post_bootup_actions[18];
 static size_t post_bootup_actions_count = 0;
 static bool bootup_actions_fired = false;
 

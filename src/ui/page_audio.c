@@ -64,8 +64,17 @@ static const item_t items[] = {
 #define ITEM_COUNT ((int)ARRAY_SIZE(items))
 _Static_assert(ARRAY_SIZE(items) <= MAX_PANELS, "one select panel per row");
 
-static lv_coord_t col_dsc[] = {UI_AUDIO_COLS};
-static lv_coord_t row_dsc[] = {UI_AUDIO_ROWS};
+/*
+ * Own column layout (conf/ui.h): label | button | button | spacer | value. The labels get the
+ * whole label column and the toggle buttons room for "Как слышно" / "Wie gehört"; sliders span
+ * both button columns. Widths checked for every language at the target's font (docs/audio.md).
+ */
+static lv_coord_t col_dsc[] = {UI_AUDIO_COL_INDENT, UI_AUDIO_COL_LABEL, UI_AUDIO_COL_BUTTON, UI_AUDIO_COL_BUTTON,
+                               UI_AUDIO_COL_SPACER, UI_AUDIO_COL_VALUE, LV_GRID_TEMPLATE_LAST};
+static lv_coord_t row_dsc[ARRAY_SIZE(items) + 2]; // the rows, the note, end
+static lv_coord_t btn_col_dsc[] = {UI_AUDIO_ARROW_W, UI_AUDIO_COL_BUTTON - UI_AUDIO_ARROW_W, LV_GRID_TEMPLATE_LAST};
+_Static_assert(UI_AUDIO_COL_INDENT + UI_AUDIO_COL_LABEL + 2 * UI_AUDIO_COL_BUTTON + UI_AUDIO_COL_SPACER + UI_AUDIO_COL_VALUE <= UI_AUDIO_GRID_MAX_W,
+               "the Audio page's columns must fit the page");
 
 static slider_group_t sliders[ARRAY_SIZE(items)];
 static btn_group_t toggles[ARRAY_SIZE(items)];
@@ -114,7 +123,7 @@ static void update_items(void) {
 }
 
 static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
-    char buf[256];
+    char buf[512]; // the note, UTF-8 (Cyrillic and CJK take 2-3 bytes per character)
     lv_obj_t *page = lv_menu_page_create(parent, NULL);
     lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(page, UI_PAGE_VIEW_SIZE);
@@ -135,24 +144,49 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_style(cont, &style_context, LV_PART_MAIN);
 
+    for (int row = 0; row < ITEM_COUNT; row++)
+        row_dsc[row] = UI_AUDIO_ROWS_H / ITEM_COUNT;
+    row_dsc[ITEM_COUNT] = LV_GRID_CONTENT;
+    row_dsc[ITEM_COUNT + 1] = LV_GRID_TEMPLATE_LAST;
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
-    // 13 rows: no gap between them, or the last ones fall off the screen
+    // 14 rows: no gap between them, or the last ones fall off the screen; no column gaps either,
+    // the columns are sized for the longest translation
     lv_obj_set_style_pad_row(cont, 0, 0);
+    lv_obj_set_style_pad_column(cont, 0, 0);
 
     create_select_item(arr, cont);
 
     for (int row = 0; row < ITEM_COUNT; row++) {
         const item_t *item = &items[row];
         switch (item->type) {
-        case ITEM_SLIDER:
-            create_slider_item(&sliders[row], cont, _lang(item->name), audio_mixer_max(item->field), 0, row);
+        case ITEM_SLIDER: {
+            slider_group_t *s = &sliders[row];
+            create_slider_item(s, cont, _lang(item->name), audio_mixer_max(item->field), 0, row);
+            lv_obj_set_grid_cell(s->name, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, row, 1);
+            lv_obj_set_width(s->name, UI_AUDIO_COL_LABEL);
+            lv_obj_set_grid_cell(s->slider, LV_GRID_ALIGN_START, 2, 3, LV_GRID_ALIGN_CENTER, row, 1);
+            lv_obj_set_width(s->slider, 2 * UI_AUDIO_COL_BUTTON + UI_AUDIO_COL_SPACER - UI_AUDIO_SLIDER_GAP);
+            lv_obj_set_width(s->label, UI_AUDIO_COL_VALUE);
             // rows are tighter than on the other pages
-            lv_obj_set_style_pad_ver(sliders[row].slider, UI_AUDIO_KNOB_PAD, LV_PART_KNOB);
+            lv_obj_set_style_pad_ver(s->slider, UI_AUDIO_KNOB_PAD, LV_PART_KNOB);
             break;
-        case ITEM_TOGGLE:
-            create_btn_group_item(&toggles[row], cont, 2, _lang(item->name), _lang(item->btn0), _lang(item->btn1), "", "", row);
+        }
+        case ITEM_TOGGLE: {
+            btn_group_t *t = &toggles[row];
+            create_btn_group_item(t, cont, 2, _lang(item->name), _lang(item->btn0), _lang(item->btn1), "", "", row);
+            lv_obj_set_grid_cell(t->label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, row, 1);
+            lv_obj_set_width(t->label, UI_AUDIO_COL_LABEL);
+            for (int i = 0; i < 2; i++) {
+                btn_with_arr_t *b = &t->btn_a[i];
+                lv_obj_set_width(b->container, UI_AUDIO_COL_BUTTON);
+                lv_obj_set_style_grid_column_dsc_array(b->container, btn_col_dsc, 0);
+                lv_obj_set_width(b->btn, UI_AUDIO_COL_BUTTON - UI_AUDIO_ARROW_W);
+                lv_obj_set_style_pad_left(b->btn, UI_AUDIO_BTN_PAD, 0);
+                lv_obj_set_style_pad_right(b->btn, 0, 0);
+            }
             break;
+        }
         case ITEM_BACK:
             snprintf(buf, sizeof(buf), "< %s", _lang(item->name));
             create_label_item(cont, buf, 1, row, 1);
@@ -163,7 +197,7 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_t *note = lv_label_create(cont);
     snprintf(buf, sizeof(buf), "%s. %s.",
              _lang("Levels set the headphone mix, 0 is off"),
-             _lang("DVR Audio As Heard records this mix, Custom records the selected sources directly"));
+             _lang("As Heard records the sources at these levels, before the headphone volume; Custom records the selected sources directly"));
     lv_label_set_text(note, buf);
     lv_obj_set_style_text_font(note, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_LEFT, 0);

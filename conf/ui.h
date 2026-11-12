@@ -100,11 +100,20 @@ extern "C" {
 #define UI_VERSION_ROWS                   60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               160, 160, 160, 160, 160, 160, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
-// audio mixer page (13 rows, 14 on Goggle 2)
-#define UI_AUDIO_COLS                     160, 180, 180, 160, 100, 160, LV_GRID_TEMPLATE_LAST
-#define UI_AUDIO_ROWS                     54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 50, LV_GRID_TEMPLATE_LAST
-#define UI_AUDIO_PAD_TOP                  96 // = UI_STYLE_SUBMENU_PAD_TOP
-#define UI_AUDIO_KNOB_PAD                 20
+// audio mixer page (13 rows, 14 on Goggle 2): indent, label, two button columns (arrow + button;
+// sliders span them and the spacer), spacer, value. Fits every translation, see page_audio.c.
+#define UI_AUDIO_COL_INDENT               171 // no column gaps: labels where the other pages have them
+#define UI_AUDIO_COL_LABEL                316
+#define UI_AUDIO_COL_BUTTON               204
+#define UI_AUDIO_COL_SPACER               0
+#define UI_AUDIO_COL_VALUE                100
+#define UI_AUDIO_GRID_MAX_W               1005 // page view width - UI_STYLE_SUBMENU_PAD_LEFT
+#define UI_AUDIO_ARROW_W                  36
+#define UI_AUDIO_BTN_PAD                  8
+#define UI_AUDIO_SLIDER_GAP               20 // between a slider at its maximum and the value
+#define UI_AUDIO_ROWS_H                   700 // all rows: 53 px each on the Goggle, 50 on the Goggle 2
+#define UI_AUDIO_PAD_TOP                  84
+#define UI_AUDIO_KNOB_PAD                 18
 #define UI_VERSION_RELEASE_NOTES_MIN_SIZE 600
 #define UI_VERSION_RELEASE_NOTES_MAX_SIZE 1280
 #define UI_VERSION_FIRMWARE_MIN_SIZE      UI_VERSION_RELEASE_NOTES_MIN_SIZE
@@ -248,11 +257,19 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_VERSION_ROWS                   40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
-// audio mixer page (14 rows)
-#define UI_AUDIO_COLS                     106, 120, 120, 106, 66, 106, LV_GRID_TEMPLATE_LAST
-#define UI_AUDIO_ROWS                     36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 34, LV_GRID_TEMPLATE_LAST
-#define UI_AUDIO_PAD_TOP                  50
-#define UI_AUDIO_KNOB_PAD                 14
+// audio mixer page (14 rows), columns as on the goggles
+#define UI_AUDIO_COL_INDENT               112
+#define UI_AUDIO_COL_LABEL                236
+#define UI_AUDIO_COL_BUTTON               160
+#define UI_AUDIO_COL_SPACER               0
+#define UI_AUDIO_COL_VALUE                72
+#define UI_AUDIO_GRID_MAX_W               748
+#define UI_AUDIO_ARROW_W                  28
+#define UI_AUDIO_BTN_PAD                  6
+#define UI_AUDIO_SLIDER_GAP               14
+#define UI_AUDIO_ROWS_H                   476 // all rows: 34 px each
+#define UI_AUDIO_PAD_TOP                  30
+#define UI_AUDIO_KNOB_PAD                 12
 #define UI_VERSION_RELEASE_NOTES_MIN_SIZE 600
 #define UI_VERSION_RELEASE_NOTES_MAX_SIZE 1280
 #define UI_VERSION_FIRMWARE_MIN_SIZE      UI_VERSION_RELEASE_NOTES_MIN_SIZE
