@@ -355,11 +355,8 @@ void audio_mixer_set_playback(bool active) {
     context.playback = active;
     pthread_mutex_unlock(&mixer_mutex);
 
-    // a file that starts playing should start with its routing in place
-    if (active)
-        audio_mixer_apply_wait(1000);
-    else
-        audio_mixer_apply();
+    // in place before the file starts, and the live mix back before its stream closes
+    audio_mixer_apply_wait(1000);
 }
 
 bool audio_mixer_rx_audio(void) {

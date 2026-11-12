@@ -355,11 +355,12 @@ void mplayer_file(char *fname) {
 
 void mplayer_exit() {
     pthread_mutex_unlock(&lvgl_mutex);
+    // back to the live mix while the file's stream is still open: the line out keeps a source
+    audio_mixer_set_playback(false);
     if (media) {
         media_exit(media);
         media = NULL;
     }
-    audio_mixer_set_playback(false); // back to the live mix
     pthread_mutex_lock(&lvgl_mutex);
     free_mplayer();
 }

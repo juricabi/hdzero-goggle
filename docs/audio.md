@@ -46,7 +46,9 @@ thread writes the latest state, so a burst of dial steps ends in one or two amix
 runs instead of one per step, and the input thread (which holds `lvgl_mutex`) never
 waits for amixer or the driver's PA sleep. Two callers still wait for the codec,
 as before: the recording start (`dvr_select_audio_source()`, so a recording never
-starts with the previous routing) and the start of DVR playback.
+starts with the previous routing) and DVR playback on/off (after `media_init()`,
+and before `media_exit()` closes the file's stream, so the live sources are back
+before the DAC stops: the line out never loses its last source).
 `setting.ini` is written from the UI thread like every other setting: on a toggle
 click, when a slider is released, when the page is left, and 1 s after the last
 dial step of a slider that is still grabbed (so a power cut loses at most that

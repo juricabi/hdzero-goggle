@@ -85,7 +85,8 @@ bool audio_mixer_apply_wait(unsigned timeout_ms);
 // when a DVR file is played, at a time the app does not know.
 
 void audio_mixer_set_line_out(bool enable);
-// DVR playback on (waits until the codec has it, so the file starts with its routing) / off.
+// DVR playback on / off. Waits until the codec has it: call it after media_init() (whose
+// AW_MPI_SYS_Init resets the mixer) and before media_exit(), so the line out always has a source.
 void audio_mixer_set_playback(bool active);
 
 // Audio output of the built-in analog receiver: the audio_on of every rtc6715.init(1, ...)
