@@ -22,6 +22,7 @@ SDL_mutex *global_sdl_mutex;
 #include "core/app_state.h"
 #include "core/common.hh"
 #include "core/elrs.h"
+#include "core/hdmi_audio.h"
 #include "core/ht.h"
 #include "core/input_device.h"
 #include "core/osd.h"
@@ -160,6 +161,7 @@ int main(int argc, char *argv[]) {
     // 1. Recall configuration
     settings_init();
     settings_load();
+    hdmi_audio_load(); // HDMI audio (experimental): [hdmi] audio_out / audio_in, default off
     language_init();
 #ifdef HDZGOGGLE2
     vclk_phase_init();
@@ -211,6 +213,7 @@ int main(int argc, char *argv[]) {
     // 7. Start threads
     g_bootup_sdcard_state = sdcard_mounted() ? 1 : 0;
     start_running();
+    hdmi_audio_apply(); // HDMI audio (experimental): no-op unless enabled in setting.ini
     create_threads();
 
     // 8. Synthetic counter for gif refresh

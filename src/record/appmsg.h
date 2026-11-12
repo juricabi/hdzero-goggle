@@ -44,6 +44,12 @@ typedef enum {
 	AIO_cmdSTOP,
 
 	AIO_cmdBUTT,
+
+	/* HDMI audio bridge (experimental, src/record/pcmbridge.c); sent by src/core/hdmi_audio.c */
+	HDMIA_cmdSTART = AIO_cmdBUTT,
+	HDMIA_cmdSTOP,
+
+	HDMIA_cmdBUTT,
 } RecordMsgCommand_e;
 
 /** @} */

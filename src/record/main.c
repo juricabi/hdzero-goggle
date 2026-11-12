@@ -248,7 +248,7 @@ inline static bool record_isArecording(RecordContext_t *recCtx) {
 
 void record_stop(RecordContext_t *recCtx) {
     if (recCtx->params.enableAudio) {
-        bool aoplay = ai2ao_playing(recCtx->ao);
+        bool aoplay = ai2ao_playing(recCtx->ao) || pcmbridge_usesAi(recCtx->hdmiAudio); // HDMI audio keeps AI dev
         ai2aenc_stop(recCtx->aa, !aoplay);
     }
 
@@ -907,8 +907,20 @@ void main_loop(RecordContext_t *recCtx) {
             break;
         }
         case AIO_cmdSTOP:
-            ai2ao_stop(recCtx->ao, !record_isArecording(recCtx));
+            ai2ao_stop(recCtx->ao, !record_isArecording(recCtx) && !pcmbridge_usesAi(recCtx->hdmiAudio));
             break;
+        /* ---- HDMI audio bridge (experimental, sent only when setting.ini [hdmi] enables it) ---- */
+        case HDMIA_cmdSTART: {
+            AiParams_t aiParams;
+            ZeroMemory(&aiParams, sizeof(aiParams));
+            conf_loadAiParams(recCtx->confFile, &aiParams);
+            pcmbridge_start(recCtx->hdmiAudio, recCtx->confFile, &aiParams);
+            break;
+        }
+        case HDMIA_cmdSTOP:
+            pcmbridge_stop(recCtx->hdmiAudio, !record_isArecording(recCtx) && !ai2ao_playing(recCtx->ao));
+            break;
+        /* ---- end HDMI audio bridge ---- */
         case LIVE_cmdSTART:
             recCtx->enableLive = true;
             // for debug only
@@ -972,6 +984,7 @@ int main(int argc, char *argv[]) {
     recCtx.vv = NULL;
     recCtx.aa = NULL;
     recCtx.ao = NULL;
+    recCtx.hdmiAudio = NULL;
     recCtx.stateGo = REC_statIdle;
     recCtx.stateGoing = REC_statIdle;
     recCtx.status = REC_statSave;
@@ -1000,6 +1013,7 @@ int main(int argc, char *argv[]) {
     }
 
     recCtx.ao = ai2ao_initSys();
+    recCtx.hdmiAudio = pcmbridge_initSys(); // HDMI audio (experimental), idle until HDMIA_cmdSTART
     avshare_init();
 
     main_loop(&recCtx);
@@ -1008,6 +1022,7 @@ failed:
     LOGD("exit ...");
 
     record_stop(&recCtx);
+    pcmbridge_deinitSys(recCtx.hdmiAudio, recCtx.ao == NULL || !ai2ao_playing(recCtx.ao));
     ai2ao_deinitSys(recCtx.ao);
     ai2aenc_deinitSys(recCtx.aa);
     vi2live_deinitSys(recCtx.vvLive);
