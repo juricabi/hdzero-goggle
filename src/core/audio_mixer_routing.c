@@ -23,6 +23,15 @@
 #define DIGITAL_0DB     160 // 'ADC volume' / 'DAC volume': -119.25 dB + 160 * 0.75 dB
 #define DAC_PLAYBACK    152 // -6 dB: line out sums the left and right output mixers
 
+// Preamp gains the old firmware recorded with: the codec driver sets them at probe from the
+// device tree (sys_config.fex [codec] maingain / headsetmicgain), libmedia_mpp sets MIC1
+// to 4 again, nothing sets MIC2. Same value in the official images of all three targets:
+// Goggle Rev20250319, Goggle 2 Rev20250715 and BoxPro Rev20250517 (docs/audio.md).
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2) || defined(HDZBOXPRO)
+#define MIC1_BOOST_OLD 4 // maingain
+#define MIC2_BOOST_OLD 4 // headsetmicgain
+#endif
+
 static const uint8_t field_max[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_MIC] = AUDIO_MIXER_LEVEL_MAX,
     [AUDIO_MIXER_LINE_IN] = AUDIO_MIXER_LEVEL_MAX,
@@ -60,8 +69,8 @@ void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, lo
     v[AUDIO_MIXER_LINE_IN] = 0;
     v[AUDIO_MIXER_AV] = 8;
     // Preamps and ADC gain as set by libmedia_mpp / the codec driver until now.
-    v[AUDIO_MIXER_MIC_BOOST] = 4;
-    v[AUDIO_MIXER_LINE_IN_BOOST] = 4;
+    v[AUDIO_MIXER_MIC_BOOST] = MIC1_BOOST_OLD;
+    v[AUDIO_MIXER_LINE_IN_BOOST] = MIC2_BOOST_OLD;
     v[AUDIO_MIXER_DVR_LEVEL] = OUTPUT_GAIN_0DB;
     v[AUDIO_MIXER_HEADPHONES] = 31;
     // libmedia_mpp's line-out volume, which DVR playback used until now.

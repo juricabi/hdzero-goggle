@@ -119,7 +119,12 @@ live mix is restored.
   * headphones as the old `out_on`: A/V +6 dB (register 7), line out 31, mics off;
   * Mic/Line In Boost 4 and Record Level 3 (0 dB): what libmedia_mpp and the driver
     have always set; Playback Volume 27: libmedia_mpp's line out level that playback
-    used until now.
+    used until now. The boosts come from the device tree (`[codec] maingain` /
+    `headsetmicgain` in sys_config.fex, written by the driver at probe; libmedia_mpp
+    sets MIC1 to 4 again, nothing sets MIC2). They are 4 / 4 in the official images
+    of all three targets (Goggle Rev20250319, Goggle 2 Rev20250715, BoxPro
+    Rev20250517; `lineoutvol` 31 and `pa_msleep_time` 160 ms there as well), so
+    Line In recordings keep their level on every target.
 
 ## Targets
 
