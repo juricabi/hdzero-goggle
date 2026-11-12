@@ -70,7 +70,6 @@ void app_exit_menu() {
     if (SOURCE_HDZERO == g_source_info.source) {
         progress_bar.start = 1;
         app_switch_to_hdzero(true);
-        audio_mixer_apply(); // the analog and HDMI paths re-apply it themselves
     } else if (SOURCE_HDMI_IN == g_source_info.source) {
         app_switch_to_hdmi_in();
     } else {

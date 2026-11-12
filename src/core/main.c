@@ -212,10 +212,9 @@ int main(int argc, char *argv[]) {
 
     // 7. Start threads
     g_bootup_sdcard_state = sdcard_mounted() ? 1 : 0;
-    // audio routing for every source (the analog ones apply it again), and once more
-    // in case the record daemon started by rc.sh initialised after this point
+    // audio routing for every source (a source switch applies it again; the mixer's
+    // worker also undoes the reset of the record daemon started by rc.sh)
     audio_mixer_apply();
-    audio_mixer_record_daemon_restarted();
     start_running();
     create_threads();
 

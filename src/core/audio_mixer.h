@@ -79,11 +79,10 @@ bool audio_mixer_unsaved(void);
 void audio_mixer_apply(void);
 // Same, but wait (at most timeout_ms) until the codec has the current state.
 bool audio_mixer_apply_wait(unsigned timeout_ms);
-// Apply again after `ms` milliseconds (from a separate thread).
-void audio_mixer_apply_later(unsigned ms);
-// The record daemon was (re)started: its AW_MPI_SYS_Init resets part of the codec mixer
-// (libmedia_mpp alsaOpenMixer), so apply again once it is up.
-void audio_mixer_record_daemon_restarted(void);
+// While idle, the worker compares the codec with the last batch every 2 s (a few ioctls,
+// no process) and applies again when it differs: libmedia_mpp's AW_MPI_SYS_Init() resets
+// part of the mixer whenever the record daemon starts (boot, SD check, SD format) and
+// when a DVR file is played, at a time the app does not know.
 
 void audio_mixer_set_line_out(bool enable);
 // DVR playback on (waits until the codec has it, so the file starts with its routing) / off.
@@ -104,6 +103,12 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
 
 // Defaults for a setting.ini that still has the old [record] audio_source (0 = Mic, 1 = Line In, 2 = A/V In).
 void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, long audio_source);
+
+// Value a batch sets for a control; false if the batch does not set it.
+bool audio_mixer_batch_value(const char *batch, const char *name, int *value);
+
+// Read one control of the codec (audio_mixer_codec.c): 0 = ok, -1 = not available.
+int audio_mixer_codec_read(const char *name, int *value);
 
 #ifdef __cplusplus
 }

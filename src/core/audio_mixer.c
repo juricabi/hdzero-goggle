@@ -25,6 +25,13 @@
 #endif
 #define AUDIO_MIXER_AMIXER "amixer -q -s < " AUDIO_MIXER_CMD_FILE
 
+// How often the worker compares the codec with the last batch (audio_mixer_codec.c).
+#ifndef AUDIO_MIXER_WATCH_MS
+#define AUDIO_MIXER_WATCH_MS 2000
+#endif
+// Applies in a row for the same state when the codec does not keep it, before giving up.
+#define AUDIO_MIXER_WATCH_RETRIES 3
+
 static const char *const field_key[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_MIC] = "mic",
     [AUDIO_MIXER_LINE_IN] = "line_in",
@@ -58,6 +65,8 @@ static audio_mixer_context_t context = {.line_out = true, .playback = false};
 static unsigned requested; // apply generations: requested by the UI ...
 static unsigned applied;   // ... and in the codec
 static bool worker_running;
+static char last_batch[4096]; // what the codec should have (batch_mutex)
+static bool have_batch;
 
 static void start_worker(void);
 
@@ -161,6 +170,8 @@ static void write_batch(const audio_mixer_settings_t *settings, const audio_mixe
         fwrite(cmd, 1, len, fp);
         fclose(fp);
         system_exec(AUDIO_MIXER_AMIXER);
+        memcpy(last_batch, cmd, len + 1);
+        have_batch = true;
     }
 
     pthread_mutex_unlock(&batch_mutex);
@@ -181,13 +192,89 @@ static void apply_latest(void) {
     pthread_cond_broadcast(&done_cond);
 }
 
+bool audio_mixer_batch_value(const char *batch, const char *name, int *value) {
+    char line_name[64];
+    int line_value;
+    for (const char *line = batch; line && *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : NULL) {
+        if (sscanf(line, "cset name='%63[^']' %d", line_name, &line_value) == 2 && strcmp(line_name, name) == 0) {
+            *value = line_value;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Does the codec still have every value of the last batch? -1: cannot read the codec
+// (emulator, no ALSA device), the worker then stops watching.
+static int codec_has_last_batch(void) {
+    int result = 1;
+
+    pthread_mutex_lock(&batch_mutex);
+    for (const char *line = have_batch ? last_batch : ""; line && *line; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : NULL) {
+        char name[64];
+        int want, have;
+        if (sscanf(line, "cset name='%63[^']' %d", name, &want) != 2)
+            continue;
+        if (audio_mixer_codec_read(name, &have) != 0) {
+            result = -1;
+            break;
+        }
+        if (have != want) {
+            LOGI("audio mixer: codec changed by someone else ('%s' = %d, want %d), applying again", name, have, want);
+            result = 0;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&batch_mutex);
+
+    return result;
+}
+
 static void *worker_thread(void *arg) {
     (void)arg;
+    bool watching = true;
+    int retries = 0;
 
     pthread_mutex_lock(&mixer_mutex);
     for (;;) {
-        while (applied == requested)
-            pthread_cond_wait(&work_cond, &mixer_mutex);
+        while (applied == requested) {
+            if (!watching) {
+                pthread_cond_wait(&work_cond, &mixer_mutex);
+                continue;
+            }
+
+            // Nothing to do: look at the codec now and then. The record daemon's
+            // AW_MPI_SYS_Init (boot, SD check/format, DVR playback) resets part of
+            // the mixer whenever it runs; whatever the timing, it is undone here.
+            struct timespec deadline;
+            clock_gettime(CLOCK_MONOTONIC, &deadline);
+            deadline.tv_sec += AUDIO_MIXER_WATCH_MS / 1000;
+            deadline.tv_nsec += (long)(AUDIO_MIXER_WATCH_MS % 1000) * 1000000L;
+            if (deadline.tv_nsec >= 1000000000L) {
+                deadline.tv_sec++;
+                deadline.tv_nsec -= 1000000000L;
+            }
+            if (pthread_cond_timedwait(&work_cond, &mixer_mutex, &deadline) != ETIMEDOUT || applied != requested)
+                continue;
+
+            pthread_mutex_unlock(&mixer_mutex);
+            const int has = codec_has_last_batch();
+            pthread_mutex_lock(&mixer_mutex);
+
+            if (has < 0) {
+                watching = false;
+            } else if (has) {
+                retries = 0;
+            } else if (applied == requested && retries < AUDIO_MIXER_WATCH_RETRIES) {
+                retries++;
+                requested++;
+            } else if (applied == requested && retries == AUDIO_MIXER_WATCH_RETRIES) {
+                retries++;
+                LOGE("audio mixer: the codec does not keep the routing, not applying it again until it changes");
+            }
+        }
+        if (retries > AUDIO_MIXER_WATCH_RETRIES)
+            retries = 0; // a new state: watch it again
         apply_latest();
     }
     return NULL;
@@ -251,26 +338,6 @@ bool audio_mixer_apply_wait(unsigned timeout_ms) {
     if (!done)
         LOGW("audio mixer: codec not updated within %u ms", timeout_ms);
     return done;
-}
-
-static void *apply_later_thread(void *arg) {
-    usleep((useconds_t)(size_t)arg * 1000);
-    audio_mixer_apply();
-    return NULL;
-}
-
-void audio_mixer_apply_later(unsigned ms) {
-    pthread_t tid;
-    if (pthread_create(&tid, NULL, apply_later_thread, (void *)(size_t)ms) == 0)
-        pthread_detach(tid);
-    else
-        audio_mixer_apply();
-}
-
-void audio_mixer_record_daemon_restarted(void) {
-    // the scripts mount the card, sleep a second and start the daemon in the background
-    audio_mixer_apply_later(4000);
-    audio_mixer_apply_later(12000);
 }
 
 void audio_mixer_set_line_out(bool enable) {

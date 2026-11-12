@@ -80,10 +80,10 @@ the new path for the few milliseconds of the batch instead of leaving a gap.
 audio at all. The old "Audio Source" row is gone: the same thing is DVR Audio =
 Custom with one source set to Yes.
 
-The mixer is applied at boot, when a recording starts and on every source switch
-(the old `dvr_select_audio_source()` / `dvr_enable_line_out()` call sites), when
-leaving the menu to HDZero, while a DVR file plays and after it, and again 4 s and
-12 s after the record daemon (re)starts. HDMI in keeps the old rule: line out off.
+The mixer is applied at boot, on every change on the Audio page, when a recording
+starts and on every source switch (the old `dvr_select_audio_source()` /
+`dvr_enable_line_out()` call sites), and when a DVR file starts and stops playing.
+HDMI in keeps the old rule: line out off.
 
 The built-in analog receiver (RTC6715 on Goggle 2 and BoxPro) has an audio output
 of its own, switched by the receiver itself: the "Analog RX Audio" row
@@ -104,8 +104,20 @@ install has it off, like the old default (Mic).
 `LINEOUTL/R Mux` OMIX_LR_SUM, `MIC1 boost AMP gain control` 4,
 `ADC input gain control` 3 and `ADC volume` 160. It runs when the record daemon
 starts (rc.sh, and again in chkfixsd.sh / formatsd.sh, i.e. the automatic SD check
-after boot) and in the app itself for every DVR file played. Hence the re-applies
-above.
+after boot, the SD repair and format of the Storage page) and in the app itself for
+every DVR file played. When the daemon gets there is not known to the app (fsck can
+run for minutes, formatsd.sh copies resources first).
+
+So the mixer's worker watches the codec instead of guessing: while it has nothing
+to apply, it reads every control of the last batch back every 2 s, straight from
+`/dev/snd/controlC0` with ALSA control ioctls (`audio_mixer_codec.c`, no process,
+36 small ioctls), and applies the current state again as soon as one differs. A
+reset is therefore undone within about 2 s whenever it happens, and logged
+(`codec changed by someone else`). If the codec does not keep a value (three
+re-applies in a row for the same state), the worker logs it and stops re-applying
+until the state changes. This also means that `amixer cset` by hand on one of the
+mixer's controls is undone within 2 s; to experiment, change the setting on the
+Audio page or stop the app. The emulator has no codec, so it does not watch.
 
 ### DVR playback
 
