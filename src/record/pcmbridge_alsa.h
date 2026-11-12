@@ -1,5 +1,5 @@
 #pragma once
-/* Minimal alsa-lib 1.1.x declarations for pcmbridge.c (the SDK ships libasound.so
+/* Minimal alsa-lib declarations for pcmbridge.c (the SDK ships libasound.so
  * in lib/softwinner/lib but no headers). Values match alsa/pcm.h. */
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +22,18 @@ typedef enum _snd_pcm_access {
     SND_PCM_ACCESS_RW_INTERLEAVED = 3,
 } snd_pcm_access_t;
 
+typedef enum _snd_pcm_state {
+    SND_PCM_STATE_OPEN = 0,
+    SND_PCM_STATE_SETUP,
+    SND_PCM_STATE_PREPARED,
+    SND_PCM_STATE_RUNNING,
+    SND_PCM_STATE_XRUN,
+    SND_PCM_STATE_DRAINING,
+    SND_PCM_STATE_PAUSED,
+    SND_PCM_STATE_SUSPENDED,
+    SND_PCM_STATE_DISCONNECTED,
+} snd_pcm_state_t;
+
 #define SND_PCM_NONBLOCK 0x00000001
 
 int snd_pcm_open(snd_pcm_t **pcm, const char *name, snd_pcm_stream_t stream, int mode);
@@ -34,6 +46,10 @@ int snd_pcm_recover(snd_pcm_t *pcm, int err, int silent);
 int snd_pcm_wait(snd_pcm_t *pcm, int timeout);
 int snd_pcm_start(snd_pcm_t *pcm);
 int snd_pcm_drop(snd_pcm_t *pcm);
+int snd_pcm_prepare(snd_pcm_t *pcm);
+snd_pcm_state_t snd_pcm_state(snd_pcm_t *pcm);
+snd_pcm_sframes_t snd_pcm_avail(snd_pcm_t *pcm);
+int snd_pcm_delay(snd_pcm_t *pcm, snd_pcm_sframes_t *delayp);
 const char *snd_strerror(int errnum);
 
 #ifdef __cplusplus

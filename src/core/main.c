@@ -213,7 +213,7 @@ int main(int argc, char *argv[]) {
     // 7. Start threads
     g_bootup_sdcard_state = sdcard_mounted() ? 1 : 0;
     start_running();
-    hdmi_audio_apply(); // HDMI audio (experimental): no-op unless enabled in setting.ini
+    hdmi_audio_apply(g_source_info.source == SOURCE_HDMI_IN && g_app_state == APP_STATE_VIDEO); // HDMI audio (experimental)
     create_threads();
 
     // 8. Synthetic counter for gif refresh

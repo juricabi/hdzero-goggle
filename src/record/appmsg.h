@@ -46,11 +46,26 @@ typedef enum {
 	AIO_cmdBUTT,
 
 	/* HDMI audio bridge (experimental, src/record/pcmbridge.c); sent by src/core/hdmi_audio.c */
-	HDMIA_cmdSTART = AIO_cmdBUTT,
+	HDMIA_cmdSTART = AIO_cmdBUTT, /* apply HDMIA_REQ_FILE */
 	HDMIA_cmdSTOP,
 
 	HDMIA_cmdBUTT,
 } RecordMsgCommand_e;
+
+/* HDMI audio bridge (experimental): files in /tmp (RAM, empty after every boot).
+ * HDMIA_REQ_FILE   written by the app (src/core/hdmi_audio.c) before each command:
+ *                  [hdmi_audio] seq= active= src= sink= sink2= i2s0_fix=
+ * HDMIA_STATE_FILE written by the record daemon at start, after each command and at exit:
+ *                  [hdmi_audio] state=running|stopped|failed seq= pid= err=
+ *                  The app compares it with its request and re-sends (record daemon restarted
+ *                  by the Storage page, queue not there yet, sink busy, ...).
+ * HDMIA_LOCK_FILE  flock() around every /sys/class/sunxi_dump access (one latch for all
+ *                  processes); utilities/probe takes the same lock. */
+#ifndef HDMIA_REQ_FILE /* host tests (utilities/probe/test/pcmbridge_test.sh) put them elsewhere */
+#define HDMIA_REQ_FILE   "/tmp/hdmi_audio.req"
+#define HDMIA_STATE_FILE "/tmp/hdmi_audio.state"
+#define HDMIA_LOCK_FILE  "/tmp/.sunxi_dump.lock"
+#endif
 
 /** @} */
 

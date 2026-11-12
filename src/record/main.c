@@ -246,6 +246,11 @@ inline static bool record_isArecording(RecordContext_t *recCtx) {
     return record_isGoing(recCtx->vv) && recCtx->params.enableAudio;
 }
 
+// HDMI audio bridge (experimental): does anyone besides the bridge hold the AI device?
+static bool hdmia_aiDevUsedByOthers(RecordContext_t *recCtx) {
+    return (recCtx->vv != NULL && record_isArecording(recCtx)) || (recCtx->ao != NULL && ai2ao_playing(recCtx->ao));
+}
+
 void record_stop(RecordContext_t *recCtx) {
     if (recCtx->params.enableAudio) {
         bool aoplay = ai2ao_playing(recCtx->ao) || pcmbridge_usesAi(recCtx->hdmiAudio); // HDMI audio keeps AI dev
@@ -914,11 +919,11 @@ void main_loop(RecordContext_t *recCtx) {
             AiParams_t aiParams;
             ZeroMemory(&aiParams, sizeof(aiParams));
             conf_loadAiParams(recCtx->confFile, &aiParams);
-            pcmbridge_start(recCtx->hdmiAudio, recCtx->confFile, &aiParams);
+            pcmbridge_start(recCtx->hdmiAudio, recCtx->confFile, &aiParams, !hdmia_aiDevUsedByOthers(recCtx));
             break;
         }
         case HDMIA_cmdSTOP:
-            pcmbridge_stop(recCtx->hdmiAudio, !record_isArecording(recCtx) && !ai2ao_playing(recCtx->ao));
+            pcmbridge_stop(recCtx->hdmiAudio, !hdmia_aiDevUsedByOthers(recCtx));
             break;
         /* ---- end HDMI audio bridge ---- */
         case LIVE_cmdSTART:
@@ -1022,7 +1027,7 @@ failed:
     LOGD("exit ...");
 
     record_stop(&recCtx);
-    pcmbridge_deinitSys(recCtx.hdmiAudio, recCtx.ao == NULL || !ai2ao_playing(recCtx.ao));
+    pcmbridge_deinitSys(recCtx.hdmiAudio, !hdmia_aiDevUsedByOthers(&recCtx));
     ai2ao_deinitSys(recCtx.ao);
     ai2aenc_deinitSys(recCtx.aa);
     vi2live_deinitSys(recCtx.vvLive);
