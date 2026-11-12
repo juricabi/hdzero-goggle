@@ -102,7 +102,7 @@ extern "C" {
 #define UI_ANALOG_RSSI_ROWS               60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 // Audio page: indent, label, two button columns (arrow + button; sliders span them and the spacer),
 // spacer, value; section headings span the row. The rows scroll in a window of UI_AUDIO_VIEW_H with
-// the hint line below it. Every translation fits (utilities/audio_mixer/check_strings.sh).
+// the hint line below it. Every translation fits (utilities/audio_mixer/check_strings.py).
 #define UI_AUDIO_COL_INDENT               171 // no column gaps: labels where the other pages have them
 #define UI_AUDIO_COL_LABEL                420
 #define UI_AUDIO_COL_BUTTON               152

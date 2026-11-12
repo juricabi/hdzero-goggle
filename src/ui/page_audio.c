@@ -99,7 +99,7 @@ static const row_t rows[] = {
  * Own column layout (conf/ui.h): indent | label | button | button | spacer | value. Sliders span
  * both button columns and the spacer; the value column of a Record source switch shows "Mix" while
  * that source is recorded through What I Hear. Widths checked for every language at the target's
- * fonts by utilities/audio_mixer/check_strings.sh.
+ * fonts by utilities/audio_mixer/check_strings.py.
  */
 static lv_coord_t col_dsc[] = {UI_AUDIO_COL_INDENT, UI_AUDIO_COL_LABEL, UI_AUDIO_COL_BUTTON, UI_AUDIO_COL_BUTTON,
                                UI_AUDIO_COL_SPACER, UI_AUDIO_COL_VALUE, LV_GRID_TEMPLATE_LAST};
@@ -352,6 +352,8 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     pp_audio.p_arr.max = sel_count;
     update_rows();
+    // no hint while the page is only previewed from the main menu
+    lv_label_set_text(hint, "");
 
     // runs in lv_timer_handler(), under lvgl_mutex like the input handlers
     save_timer = lv_timer_create(save_timer_cb, SAVE_DELAY_MS, NULL);
@@ -383,7 +385,9 @@ static void page_audio_exit(void) {
     // submenu_exit() has already set the main menu state
     release_slider(false);
     audio_mixer_save();
+    // previewed from the main menu as when it was first shown: from the top, no hint
     lv_label_set_text(hint, "");
+    lv_obj_scroll_to_y(list, 0, LV_ANIM_OFF);
 }
 
 static void page_audio_on_roller(uint8_t key) {
