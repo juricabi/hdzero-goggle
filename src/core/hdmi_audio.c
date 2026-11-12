@@ -17,6 +17,7 @@
 #include <log/log.h>
 #include <minIni.h>
 
+#include "core/app_state.h"
 #include "driver/it66021.h"
 #include "driver/it66121.h"
 #include "record/appmsg.h"
@@ -176,7 +177,8 @@ void hdmi_audio_set(bool out, bool in) {
     IT66021_audio_config(in); // the EDID is written by the next IT66021_edid()
     if (IT66121_is_active() && IT66121_audio_is_on() != out)
         IT66121_audio(out);
-    hdmi_audio_apply_locked(route == HDMI_AUDIO_ROUTE_HDMI_IN_MONITOR);
+    // called outside a source switch: g_source_info.source is the shown source
+    hdmi_audio_apply_locked(g_source_info.source == SOURCE_HDMI_IN && g_app_state == APP_STATE_VIDEO);
     pthread_mutex_unlock(&ha_lock);
 }
 
