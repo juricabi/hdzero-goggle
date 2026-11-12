@@ -11,7 +11,8 @@
  *   LINEIN (A/V)        ------------> L/R output mixer (LINEIN gain)    / ADC input mixer
  *   DAC (playback)      ------------> L/R output mixer
  *   L/R output mixer -> LINEOUT (L+R sum) -> lineout volume -> headphone jack
- *                    -> ADC input mixer ("l_output/r_output mixer" switches)
+ *                    -> ADC input mixer ("l_output/r_output mixer" switches: left ADC <- left
+ *                       output mixer, right <- right; before the sum and the line-out volume)
  *   ADC input mixer -> ADC input gain -> ADC -> AIF1 -> record daemon (48 kHz stereo AAC)
  */
 
@@ -49,6 +50,7 @@ static const uint8_t field_max[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_DVR_AV] = 1,
     [AUDIO_MIXER_DVR_LEVEL] = AUDIO_MIXER_DVR_LEVEL_MAX,
     [AUDIO_MIXER_RX_AUDIO] = 1,
+    [AUDIO_MIXER_HDMI] = AUDIO_MIXER_LEVEL_MAX,
 };
 
 int audio_mixer_max(audio_mixer_field_t field) {
@@ -88,6 +90,9 @@ void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, lo
     // Built-in analog receiver audio: the old rtc6715.init(1, audio_source == A/V In)
     // (off with the old default, Mic).
     v[AUDIO_MIXER_RX_AUDIO] = old_value == 2;
+
+    // HDMI-in audio, when integrated: 0 dB, the level of DVR playback.
+    v[AUDIO_MIXER_HDMI] = OUTPUT_GAIN_0DB + 1;
 }
 
 typedef struct {
@@ -129,6 +134,16 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
     const int mon_line = playback ? 0 : v[AUDIO_MIXER_LINE_IN];
     const int mon_av = playback ? 0 : v[AUDIO_MIXER_AV];
 
+    // The DAC is a digital source with two uses: DVR playback (alone), or a live source such as
+    // HDMI-in audio, mixed with the others at its own level. Either way it reaches the ADC only
+    // through the output mixers (As Heard); the AIF1 DA -> AD loopback switches are never set.
+    const bool live_dac = context->live_dac && !playback;
+    const int mon_dac = live_dac ? v[AUDIO_MIXER_HDMI] : 0;
+    const int dac_on = playback || mon_dac > 0;
+    // live level 1..8 = -4.5..+6 dB around the playback level, in 2 steps of 0.75 dB
+    const int dac_volume = playback ? DAC_PLAYBACK
+                                    : (mon_dac ? DAC_PLAYBACK + 2 * (mon_dac - 1 - OUTPUT_GAIN_0DB) : DIGITAL_VOLUME_OLD);
+
     // Sources straight into the ADC (custom DVR mode only)
     const int adc_mic = !as_heard && v[AUDIO_MIXER_DVR_MIC];
     const int adc_line = !as_heard && v[AUDIO_MIXER_DVR_LINE_IN];
@@ -136,7 +151,8 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
 
     // Line out volume; 0 switches the line out off
     const int volume = playback ? v[AUDIO_MIXER_PLAYBACK] : v[AUDIO_MIXER_HEADPHONES];
-    const int line_out = (context->line_out || playback) && volume > 0;
+    // (HDMI in mutes the line out, unless its audio is played: live_dac)
+    const int line_out = (context->line_out || live_dac || playback) && volume > 0;
 
     // Every switch the mixer owns, with the value it gets. They are written in two passes, the
     // ones that end up on before the ones that end up off: a path that stays never drops out,
@@ -155,8 +171,8 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
         {"Right Output Mixer MIC2Booststage Switch", mon_line > 0},
         {"Left Output Mixer LINEINL Switch", mon_av > 0},
         {"Right Output Mixer LINEINR Switch", mon_av > 0},
-        {"Left Output Mixer DACL Switch", playback},
-        {"Right Output Mixer DACR Switch", playback},
+        {"Left Output Mixer DACL Switch", dac_on},
+        {"Right Output Mixer DACR Switch", dac_on},
         {"Left Output Mixer DACR Switch", 0},
         {"Right Output Mixer DACL Switch", 0},
         {"DACL Mixer AIF1DA0L Switch", 1},
@@ -192,7 +208,7 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
         cset(&cb, "LINEINL/R to L_R output mixer gain", mon_av - 1);
     cset(&cb, "ADC input gain control", v[AUDIO_MIXER_DVR_LEVEL]);
     cset(&cb, "ADC volume", DIGITAL_VOLUME_OLD);
-    cset(&cb, "DAC volume", playback ? DAC_PLAYBACK : DIGITAL_VOLUME_OLD);
+    cset(&cb, "DAC volume", dac_volume);
 
     // 3. every path that is on
     for (size_t i = 0; i < sw_count; i++)

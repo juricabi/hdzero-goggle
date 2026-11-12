@@ -38,7 +38,7 @@ MUTANTS = [
         ('    if (line_out)\n        cset(&cb, "Lineout Switch", 1);', '    cset(&cb, "Lineout Switch", line_out);')]),
     ("line out not mono (LOMIX)", R, [('cset(&cb, "LINEOUTL Mux", 1);', 'cset(&cb, "LINEOUTL Mux", 0);')]),
     ("playback: right DAC not in the mix", R, [
-        ('{"Right Output Mixer DACR Switch", playback}', '{"Right Output Mixer DACR Switch", 0}')]),
+        ('{"Right Output Mixer DACR Switch", dac_on}', '{"Right Output Mixer DACR Switch", 0}')]),
     ("playback: DAC at 160", R, [("#define DAC_PLAYBACK       152", "#define DAC_PLAYBACK       160")]),
     ("migration: receiver audio always on", R, [
         ("v[AUDIO_MIXER_RX_AUDIO] = old_value == 2;", "v[AUDIO_MIXER_RX_AUDIO] = old_value == 2 || v[AUDIO_MIXER_AV] > 0;")]),
@@ -46,6 +46,13 @@ MUTANTS = [
     ("migration: headphones line out 27", R, [("v[AUDIO_MIXER_HEADPHONES] = 31;", "v[AUDIO_MIXER_HEADPHONES] = 27;")]),
     ("migration: negative old value read as Mic", R, [
         ("uint8_t dvr_source = (uint8_t)audio_source;", "uint8_t dvr_source = audio_source < 0 ? 0 : (uint8_t)audio_source;")]),
+    ("live dac mutes the other sources", R, [("const int mon_mic = playback ? 0 : v[AUDIO_MIXER_MIC];",
+                                              "const int mon_mic = (playback || context->live_dac) ? 0 : v[AUDIO_MIXER_MIC];")]),
+    ("live dac: line out stays off with hdmi in", R, [
+        ("const int line_out = (context->line_out || live_dac || playback) && volume > 0;",
+         "const int line_out = (context->line_out || playback) && volume > 0;")]),
+    ("live dac: digital loopback into the ADC", R, [
+        ('{"Right Output Mixer DACL Switch", 0},', '{"Right Output Mixer DACL Switch", 0},\n        {"AIF1 AD0L Mixer AIF1 DA0L Switch", dac_on},')]),
     ("load: no clamping", M, [("mixer.value[i] = clamp_field(i, value);", "mixer.value[i] = (uint8_t)value;")]),
     ("load: missing fields from Mic, not the old setting", M, [
         ("audio_mixer_defaults_from_audio_source(&defaults, audio_source);",

@@ -45,6 +45,10 @@ static const item_t items[] = {
     SLIDER(AUDIO_MIXER_MIC, "Mic"),
     SLIDER(AUDIO_MIXER_LINE_IN, "Line In"),
     SLIDER(AUDIO_MIXER_AV, "A/V In"),
+#if AUDIO_MIXER_HDMI_IN_ROW
+    // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()), once integrated
+    SLIDER(AUDIO_MIXER_HDMI, "HDMI In"),
+#endif
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
     // audio output of the built-in analog receiver, one of the sources of A/V In
     TOGGLE(AUDIO_MIXER_RX_AUDIO, "Analog RX Audio", "On", "Off", 1),
@@ -150,7 +154,7 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
     row_dsc[ITEM_COUNT + 1] = LV_GRID_TEMPLATE_LAST;
     lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
-    // 14 rows: no gap between them, or the last ones fall off the screen; no column gaps either,
+    // up to 15 rows: no gap between them, or the last ones fall off the screen; no column gaps either,
     // the columns are sized for the longest translation
     lv_obj_set_style_pad_row(cont, 0, 0);
     lv_obj_set_style_pad_column(cont, 0, 0);

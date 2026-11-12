@@ -84,6 +84,7 @@ the new path for the few milliseconds of the batch instead of leaving a gap.
 | Record Mic/Line In/A/V In | `dvr_mic`, `dvr_line_in`, `dvr_av` | Custom: `L/RADC input Mixer MIC1/MIC2/LINEIN` switches |
 | Record Level      | `dvr_level` 0..7      | `ADC input gain control` (-4.5..+6 dB); `ADC volume` stays 160 (see below) |
 | Analog RX Audio (Goggle 2, BoxPro) | `rx_audio` 0/1 | not a codec control: the RTC6715's audio output |
+| HDMI In (hidden until integrated) | `hdmi` 0..8 | live DAC level: `DAC volume` 152 + 2 x (level - 4), see below |
 
 "Record Audio" on the Record Option page still decides whether the DVR records
 audio at all. The old "Audio Source" row is gone: the same thing is DVR Audio =
@@ -92,7 +93,7 @@ Custom with one source set to Yes.
 The mixer is applied at boot, on every change on the Audio page, when a recording
 starts and on every source switch (the old `dvr_select_audio_source()` /
 `dvr_enable_line_out()` call sites), and when a DVR file starts and stops playing.
-HDMI in keeps the old rule: line out off.
+HDMI in keeps the old rule: line out off (unless the HDMI-in audio hook below is on).
 
 The built-in analog receiver (RTC6715 on Goggle 2 and BoxPro) has an audio output
 of its own, switched by the receiver itself: the "Analog RX Audio" row
@@ -140,6 +141,29 @@ DACR -> right output mixer, `DAC volume` 152 (8 steps of 0.75 dB = 6 dB below th
 old level instead of +6 dB), line out =
 Playback Volume (also when Headphones is 0 or the source is HDMI in). Afterwards the
 live mix is restored.
+
+### HDMI-in audio (hook for integration, off by default)
+
+The DAC is a digital source with two uses. DVR playback (above) plays alone. A live
+digital source, HDMI-in audio that the `goggle2-hdmi-audio` branch plays into the
+DAC while HDMI in is shown, is mixed like the analog sources:
+`audio_mixer_set_live_dac(true)` connects DACL -> left and DACR -> right output
+mixer at the HDMI In level (`[mixer] hdmi`, 0 = off, 1..8 = -4.5..+6 dB around
+the playback level: `DAC volume` 152 + 2 x (level - 4), 146..160, 0.75 dB steps,
+never above the 160 of before; default 4 = the playback level), keeps the other
+live sources (mic + HDMI-in audio works), and keeps the line out on (Headphones
+permitting) although HDMI in is the source. As Heard records it, through the
+output mixers like any source; Custom does not: there is no analog path from the
+DAC into the ADC, and the digital loopbacks (`AIF1 AD0L/R Mixer AIF1 DA0L/R
+Switch`, `DACL/R Mixer ADCL/R Switch`) are never set (the test checks every
+batch). DVR playback takes precedence: while a file plays, the live DAC is out like
+the other live sources. With the state off nothing changes, HDMI in still mutes
+the line out.
+
+To integrate: call `audio_mixer_set_live_dac(true)` when the HDMI audio stream into
+the DAC starts and `false` before it closes (like playback, so the line out keeps a
+source), and build with `-DAUDIO_MIXER_HDMI_IN_ROW=1` to show the "HDMI In" level
+on the page (the rows share the same height, 15 rows fit; `MAX_PANELS` is 15).
 
 ## Levels and defaults
 
@@ -278,9 +302,11 @@ right, line out left / right), every source that reaches it and the gain setting
 on the way. The test asserts:
 
 * routing: for a matrix of mixer states (As Heard / Custom, every source, headphones
-  0, HDMI in, playback, out-of-range values) the sources and gains of the recording
-  and the headphones are what this document specifies, and every batch line is a
-  control of the device's `amixer contents` dump with a value in range, set once;
+  0, HDMI in, playback, out-of-range values, the live DAC: in the headphones with the
+  mic during HDMI in, in the recording in As Heard only) the sources and gains of the
+  recording and the headphones are what this document specifies, and every batch
+  line is a control of the device's `amixer contents` dump with a value in range, set
+  once, never a digital DAC/ADC loopback;
 * loading: migration from each old Audio Source (and -1, 3, 258, read as the old
   firmware did), what is written to `[mixer]`, clamping, missing fields;
 * migration equivalence: per target and old Audio Source, the old firmware (driver
@@ -301,10 +327,11 @@ on the way. The test asserts:
   after three re-applies.
 
 `--driver <BSP>/sound/soc/sunxi/sun8iw16-codec.c` also checks that every modelled
-route is one of the driver's. `utilities/audio_mixer/mutants.py` (~5 min) applies 18
+route is one of the driver's. `utilities/audio_mixer/mutants.py` (~6 min) applies 21
 small mutations to a copy of the sources (among them the review's: ADC MIC1 and
 LINEIN switches swapped, AIF1 AD0L/R off, As Heard inverted; and the batch order, the
-receiver migration, the preamp defaults, clamping, the worker, the watcher) and fails
+receiver migration, the preamp defaults, clamping, the worker, the watcher, the live
+DAC) and fails
 unless the test catches every one.
 
 `utilities/audio_mixer/stub/amixer` logs what it is given; put it first in `PATH`

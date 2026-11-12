@@ -3,10 +3,11 @@
 /*
  * Audio mixer for the V536 internal codec (all targets).
  *
- * Every source has its own level in the analog output mixer, which feeds the
- * headphone / line-out jack. The DVR either records that same mix ("as heard",
- * the ADC is fed from the output mixer) or a custom set of sources that go
- * straight into the ADC (the path the old "Audio Source" setting used).
+ * Every source has its own level in the analog output mixers, which feed the
+ * headphone / line-out jack (left + right summed, mono). The DVR either records
+ * those output mixers ("as heard": left and right separately, before the sum and
+ * before the line-out volume) or a custom set of sources that go straight into
+ * the ADC (the path the old "Audio Source" setting used).
  * See docs/audio.md for the signal paths and the register ranges.
  */
 
@@ -19,7 +20,7 @@ extern "C" {
 #include <stdint.h>
 
 typedef enum {
-    AUDIO_MIXER_DVR_AS_HEARD = 0, // DVR records the headphone mix
+    AUDIO_MIXER_DVR_AS_HEARD = 0, // DVR records the output mixers (the levels), stereo
     AUDIO_MIXER_DVR_CUSTOM = 1,   // DVR records the selected sources directly
 } audio_mixer_dvr_mode_t;
 
@@ -39,6 +40,7 @@ typedef enum {
     AUDIO_MIXER_DVR_LEVEL,     // ADC input gain 0..7 = -4.5..+6 dB
     AUDIO_MIXER_RX_AUDIO,      // audio output of the built-in analog receiver (RTC6715), 0/1;
                                // not a codec control (Goggle 2 and BoxPro only)
+    AUDIO_MIXER_HDMI,          // mix level of the live digital source in the DAC (HDMI-in audio)
     AUDIO_MIXER_FIELD_COUNT
 } audio_mixer_field_t;
 
@@ -54,7 +56,13 @@ typedef struct {
 typedef struct {
     bool line_out; // false: line out muted (HDMI in)
     bool playback; // DVR playback is running
+    bool live_dac; // a live digital source plays into the DAC (HDMI-in audio), see audio_mixer_set_live_dac()
 } audio_mixer_context_t;
+
+// The page shows the "HDMI In" level once the HDMI-in audio feature is integrated.
+#ifndef AUDIO_MIXER_HDMI_IN_ROW
+#define AUDIO_MIXER_HDMI_IN_ROW 0
+#endif
 
 // setting.ini [mixer] key of a field
 const char *audio_mixer_key(audio_mixer_field_t field);
@@ -85,6 +93,10 @@ bool audio_mixer_apply_wait(unsigned timeout_ms);
 // when a DVR file is played, at a time the app does not know.
 
 void audio_mixer_set_line_out(bool enable);
+// Hook for HDMI-in audio (default off): a live digital source plays into the DAC. Its level is
+// AUDIO_MIXER_HDMI; unlike playback it is mixed with the other live sources, the line out is on
+// even while HDMI in is the source (Headphones permitting), and As Heard records it (Custom not).
+void audio_mixer_set_live_dac(bool on);
 // DVR playback on / off. Waits until the codec has it: call it after media_init() (whose
 // AW_MPI_SYS_Init resets the mixer) and before media_exit(), so the line out always has a source.
 void audio_mixer_set_playback(bool active);

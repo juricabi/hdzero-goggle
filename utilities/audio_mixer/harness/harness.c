@@ -9,8 +9,8 @@
  *   stuck <name>=<value>   the codec does not keep that control: it is back at <value>
  *                          after every batch
  *   amixer_delay <ms>      every amixer run takes that long (Goggle 2 PA-off sleep)
- *   init | apply | save | wait | rx | dump | unsaved
- *   set <key> <value> | get <key> | line_out <0|1> | playback <0|1>
+ *   init | apply | save | wait | rx | dump | unsaved | mark (prints MARK)
+ *   set <key> <value> | get <key> | line_out <0|1> | playback <0|1> | live_dac <0|1>
  *   sleep <ms>             let the worker run (watcher)
  *   time_apply <n>         n x (set + apply) like dial steps; prints the slowest call
  *
@@ -181,6 +181,8 @@ int main(void) {
             out("WAIT %s\n", audio_mixer_apply_wait(5000) ? "ok" : "timeout");
         } else if (strcmp(line, "rx") == 0) {
             out("RX %d\n", audio_mixer_rx_audio());
+        } else if (strcmp(line, "mark") == 0) {
+            out("MARK\n");
         } else if (strcmp(line, "unsaved") == 0) {
             out("UNSAVED %d\n", audio_mixer_unsaved());
         } else if (strcmp(line, "dump") == 0) {
@@ -199,6 +201,8 @@ int main(void) {
             audio_mixer_set_line_out(value != 0);
         } else if (sscanf(line, "playback %d", &value) == 1) {
             audio_mixer_set_playback(value != 0);
+        } else if (sscanf(line, "live_dac %d", &value) == 1) {
+            audio_mixer_set_live_dac(value != 0);
         } else if (sscanf(line, "sleep %d", &value) == 1) {
             usleep((useconds_t)value * 1000);
         } else if (sscanf(line, "time_apply %d", &value) == 1) {

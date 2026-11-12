@@ -7,7 +7,8 @@ codec's signal graph (codec_model.py, from the driver's DAPM routes).
 
 For every target (Goggle, Goggle 2, BoxPro):
   routing     a matrix of mixer states: which sources reach the recording (left, right) and
-              the headphones, through which gains; every batch line a real control in range
+              the headphones, through which gains; every batch line a real control in range,
+              never a digital DAC/ADC loopback; the live DAC hook (HDMI-in audio) included
   loading     migration from each old Audio Source, clamping, fields missing from [mixer]
   migration   old firmware (libmedia_mpp reset + audio_sel.sh) vs new, per old Audio Source:
               recording, headphones and the analog receiver's audio switch must be the same
@@ -36,10 +37,13 @@ import codec_model as cm  # noqa: E402
 
 TARGETS = ["HDZGOGGLE", "HDZGOGGLE2", "HDZBOXPRO"]
 KEYS = ["mic", "line_in", "av", "mic_boost", "line_in_boost", "headphones", "playback",
-        "dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av", "dvr_level", "rx_audio"]
+        "dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av", "dvr_level", "rx_audio", "hdmi"]
 MAX = {"mic": 8, "line_in": 8, "av": 8, "mic_boost": 7, "line_in_boost": 7, "headphones": 31,
        "playback": 31, "dvr_mode": 1, "dvr_mic": 1, "dvr_line_in": 1, "dvr_av": 1, "dvr_level": 7,
-       "rx_audio": 1}
+       "rx_audio": 1, "hdmi": 8}
+# DAC -> ADC and ADC -> DAC digital loopbacks: the mixer must never switch them on
+LOOPBACKS = ["AIF1 AD0L Mixer AIF1 DA0L Switch", "AIF1 AD0R Mixer AIF1 DA0R Switch",
+             "DACL Mixer ADCL Switch", "DACR Mixer ADCR Switch"]
 DUMP = os.path.join(ROOT, "mkapp/app/app/record/audio/audiocodec/alsa-util/amixer-record.txt")
 AUDIO_SEL = os.path.join(ROOT, "mkapp/app/script/audio_sel.sh")
 WATCH_MS = 50  # the harness's watcher period (firmware: 2000)
@@ -96,6 +100,7 @@ class Harness:
         if p.returncode != 0:
             raise RuntimeError(f"harness failed ({p.returncode}): {p.stderr[-2000:]}")
         batches, queries, codec = [], [], {}
+        self.dumps, self.marks = [], []  # every dump; number of batches at each "mark"
         it = iter(p.stdout.splitlines())
         for line in it:
             if line.startswith("BATCH "):
@@ -106,10 +111,18 @@ class Harness:
                     text.append(b)
                 batches.append(cm.parse_batch("\n".join(text)))
             elif line.startswith("CODEC "):
+                if not codec:
+                    self.dumps.append(codec)
                 name, value = line[6:].rsplit("=", 1)
                 codec[name] = int(value)
+            elif line == "MARK":
+                self.marks.append(len(batches))
+                codec = {}
             else:
+                if codec:
+                    codec = {}
                 queries.append(line)
+        codec = self.dumps[-1] if self.dumps else {}
         return batches, queries, codec, p.stderr, open(ini_path).read()
 
 
@@ -142,9 +155,13 @@ def clamp_values(values):
     return v
 
 
-def expected(v, line_out=True, playback=False):
+def expected(v, line_out=True, playback=False, live_dac=False):
     """What each sink must get: {sink: {source: {(gains, output mixer side)}}}."""
     mix = {}  # sources in the output mixers: gains up to and including the output mixer
+    live_dac = live_dac and not playback
+    if live_dac and v["hdmi"]:
+        # live digital source (HDMI-in audio): level 1..8 = -4.5..+6 dB around playback's 152
+        mix["dac"] = {("DAC volume", 152 + 2 * (v["hdmi"] - 4))}
     if not playback:
         if v["mic"]:
             mix["mic"] = {("MIC1 boost AMP gain control", v["mic_boost"]), ("MIC1_G boost stage output mixer control", v["mic"] - 1)}
@@ -157,7 +174,7 @@ def expected(v, line_out=True, playback=False):
 
     volume = v["playback"] if playback else v["headphones"]
     phones = {}
-    if (line_out or playback) and volume > 0:
+    if (line_out or playback or live_dac) and volume > 0:
         # mono line out: both outputs carry left + right output mixer
         for source, gains in mix.items():
             g = frozenset(gains | {("lineout volume", volume)})
@@ -187,7 +204,7 @@ def migration_spec(target, audio_source):
     return {"mic": 0, "line_in": 0, "av": 8, "mic_boost": dt["MIC1 boost AMP gain control"],
             "line_in_boost": dt["MIC2 boost AMP gain control"], "headphones": 31, "playback": 27,
             "dvr_mode": 1, "dvr_mic": int(sel == 0), "dvr_line_in": int(sel == 1), "dvr_av": int(sel == 2),
-            "dvr_level": 3, "rx_audio": int(audio_source == 2)}
+            "dvr_level": 3, "rx_audio": int(audio_source == 2), "hdmi": 4}
 
 
 def compare(test, got, want):
@@ -201,6 +218,7 @@ def compare(test, got, want):
 def check_batches(test, batches):
     for i, batch in enumerate(batches):
         errors = cm.check_batch(CONTROLS, batch)
+        errors += [f"digital loopback '{n}' switched on" for n, value in batch if n in LOOPBACKS and value]
         if errors:
             fail(f"{test} batch {i + 1}", "; ".join(errors))
             return False
@@ -225,7 +243,14 @@ ROUTING_STATES = [
     ("playback volume 0", {"dvr_mode": 1, "dvr_mic": 1, "av": 8, "headphones": 31, "playback": 0, "dvr_level": 3}, {"playback": 1}),
     ("out of range in setting.ini", {"mic": 99, "line_in": -3, "av": 12, "mic_boost": 8, "line_in_boost": 100,
                                      "headphones": 200, "playback": 40, "dvr_mode": 5, "dvr_mic": 7, "dvr_line_in": 2,
-                                     "dvr_av": -1, "dvr_level": 9, "rx_audio": 3}, {}),
+                                     "dvr_av": -1, "dvr_level": 9, "rx_audio": 3, "hdmi": 11}, {}),
+    # HDMI-in audio in the DAC (hook, default off): mixed with the mic, line out on despite HDMI in
+    ("live dac, as heard, with mic", {"dvr_mode": 0, "mic": 4, "av": 0, "hdmi": 6, "headphones": 25, "dvr_level": 3},
+     {"line_out": 0, "live_dac": 1}),
+    ("live dac, custom mic: not recorded", {"dvr_mode": 1, "dvr_mic": 1, "mic": 4, "hdmi": 1, "headphones": 31},
+     {"line_out": 0, "live_dac": 1}),
+    ("live dac at level 0, hdmi in", {"dvr_mode": 0, "mic": 4, "hdmi": 0, "headphones": 31}, {"line_out": 0, "live_dac": 1}),
+    ("live dac during playback", {"dvr_mode": 0, "mic": 4, "hdmi": 8, "playback": 27}, {"live_dac": 1, "playback": 1}),
 ]
 
 
@@ -235,6 +260,8 @@ def test_routing(h):
         lines = codec_lines(base_codec(h.target)) + ["init", "apply"]
         if "line_out" in ctx:
             lines.append(f"line_out {ctx['line_out']}")
+        if "live_dac" in ctx:
+            lines.append(f"live_dac {ctx['live_dac']}")
         if "playback" in ctx:
             lines.append(f"playback {ctx['playback']}")
         lines += ["wait", "dump"]
@@ -245,13 +272,14 @@ def test_routing(h):
         check_batches(test, batches)
         # fields not in [mixer] come from the old setting (absent: Mic)
         full = dict(migration_spec(h.target, 0), **values)
-        want = expected(clamp_values(full), line_out=ctx.get("line_out", 1) == 1, playback=ctx.get("playback", 0) == 1)
-        compare(test, cm.evaluate(codec, dac_active=ctx.get("playback", 0) == 1), want)
+        playback, live_dac = ctx.get("playback", 0) == 1, ctx.get("live_dac", 0) == 1
+        want = expected(clamp_values(full), line_out=ctx.get("line_out", 1) == 1, playback=playback, live_dac=live_dac)
+        compare(test, cm.evaluate(codec, dac_active=playback or live_dac), want)
 
 
 def test_loading(h):
     # clamping on load
-    values = dict(ROUTING_STATES[-1][1])
+    values = dict(next(v for name, v, _ in ROUTING_STATES if name == "out of range in setting.ini"))
     _, queries, _, _, _ = h.run(mixer_ini(values), ["init"] + [f"get {k}" for k in KEYS] + ["rx"])
     got = {q.split()[1]: int(q.split()[2]) for q in query(queries, "GET ")}
     want = clamp_values(values)
@@ -376,18 +404,23 @@ TRANSITIONS = [
      ["line_out 0"], False),
     ("headphones 0", {"dvr_mode": 0, "av": 8, "headphones": 20}, [],
      ["set headphones 0", "apply"], False),
+    ("hdmi-in audio starts (mic heard)", {"dvr_mode": 0, "mic": 4, "hdmi": 4, "headphones": 31}, ["line_out 0"],
+     ["live_dac 1"], True),
+    ("hdmi-in audio: the only source changes (dac -> mic)", {"dvr_mode": 0, "hdmi": 4, "headphones": 31},
+     ["line_out 0", "live_dac 1"], ["set hdmi 0", "set mic 4", "apply"], True),
+    ("playback while hdmi-in audio plays", {"dvr_mode": 0, "mic": 4, "hdmi": 4, "headphones": 31, "playback": 27},
+     ["line_out 0", "live_dac 1"], ["playback 1"], True),
 ]
 
 
 def test_transitions(h):
     for name, values, start, change, dac in TRANSITIONS:
         test = f"{h.target} transition '{name}'"
-        # one batch for "wait", one per start line; the change must be one batch on its own
-        lines = codec_lines(base_codec(h.target)) + ["init", "wait"] + start + ["dump"]
-        batches, _, before, _, _ = h.run(mixer_ini(values), lines)
-        lines = lines[:-1] + change + ["sleep 300", "dump"]
-        batches2, _, after, _, _ = h.run(mixer_ini(values), lines)
-        new = batches2[len(batches):]
+        # everything before the mark is applied; the change must be one batch on its own
+        lines = codec_lines(base_codec(h.target)) + ["init", "wait"] + start + ["wait", "dump", "mark"] + change + ["sleep 300", "dump"]
+        batches, _, _, _, _ = h.run(mixer_ini(values), lines)
+        before, after = h.dumps[0], h.dumps[-1]
+        new = batches[h.marks[0]:]
         if len(new) != 1:
             fail(test, f"{len(new)} batches for the change")
             continue
@@ -421,11 +454,11 @@ def test_worker(h):
     test = f"{h.target} worker"
     values = {"dvr_mode": 0, "av": 8, "headphones": 31}
     ini = mixer_ini(values)
-    lines = codec_lines(base_codec(h.target)) + ["init", "apply", "wait", "amixer_delay 150",
+    lines = codec_lines(base_codec(h.target)) + ["init", "wait", "mark", "amixer_delay 150",
                                                  "time_apply 20", "unsaved", "wait", "dump"]
     batches, queries, codec, _, after = h.run(ini, lines)
     slowest = int(query(queries, "APPLY_US ")[0].split()[1])
-    burst = len(batches) - 1
+    burst = len(batches) - h.marks[0]  # the 20 steps and the final wait
     problems = []
     if slowest > 30000:
         problems.append(f"an apply call took {slowest / 1000:.0f} ms (amixer takes 150 ms)")
@@ -449,23 +482,24 @@ def test_worker(h):
 def test_watcher(h):
     test = f"{h.target} watcher"
     values = {"dvr_mode": 1, "dvr_line_in": 1, "av": 8, "headphones": 31}
-    lines = codec_lines(base_codec(h.target, libmedia=False)) + ["init", "apply", "wait", "dump"]
-    batches, _, before, _, _ = h.run(mixer_ini(values), lines)
-    lines = lines[:-1] + codec_lines(dict(cm.LIBMEDIA_RESET)) + [f"sleep {WATCH_MS * 8}", "dump"]
-    batches2, _, after, log, _ = h.run(mixer_ini(values), lines)
-    if after != before or len(batches2) != len(batches) + 1 or "codec changed by someone else" not in log:
-        fail(test, f"reset not undone: {len(batches2) - len(batches)} batches, "
+    lines = codec_lines(base_codec(h.target, libmedia=False)) + ["init", "wait", "dump", "mark"]
+    lines += codec_lines(dict(cm.LIBMEDIA_RESET)) + [f"sleep {WATCH_MS * 8}", "dump"]
+    batches, _, _, log, _ = h.run(mixer_ini(values), lines)
+    before, after = h.dumps[0], h.dumps[-1]
+    reapplied = len(batches) - h.marks[0]
+    if after != before or reapplied != 1 or "codec changed by someone else" not in log:
+        fail(test, f"reset not undone: {reapplied} batches, "
                    f"differences {sorted(k for k in after if after[k] != before.get(k))}")
     else:
         ok(test)
 
     test = f"{h.target} watcher, control the codec does not keep"
-    lines = codec_lines(base_codec(h.target, libmedia=False)) + ["stuck lineout volume=27", "init", "apply", "wait",
-                                                                   f"sleep {WATCH_MS * 16}", "set av 4", "apply", "wait"]
+    lines = codec_lines(base_codec(h.target, libmedia=False)) + ["stuck lineout volume=27", "init", "wait",
+                                                                   f"sleep {WATCH_MS * 16}", "mark", "set av 4", "wait"]
     batches, _, _, log, _ = h.run(mixer_ini(values), lines)
     # 1 batch, 3 retries, then quiet until the state changes (1 more)
-    if len(batches) != 5 or "does not keep the routing" not in log:
-        fail(test, f"{len(batches)} batches")
+    if h.marks[0] != 4 or len(batches) != 5 or "does not keep the routing" not in log:
+        fail(test, f"{h.marks[0]} batches before the change, {len(batches)} in all")
     else:
         ok(test)
 

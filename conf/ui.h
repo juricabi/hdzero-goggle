@@ -100,7 +100,7 @@ extern "C" {
 #define UI_VERSION_ROWS                   60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               160, 160, 160, 160, 160, 160, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
-// audio mixer page (13 rows, 14 on Goggle 2): indent, label, two button columns (arrow + button;
+// audio mixer page (13 rows, 14 on Goggle 2, one more with HDMI In): indent, label, two button columns (arrow + button;
 // sliders span them and the spacer), spacer, value. Fits every translation, see page_audio.c.
 #define UI_AUDIO_COL_INDENT               171 // no column gaps: labels where the other pages have them
 #define UI_AUDIO_COL_LABEL                316
@@ -257,7 +257,7 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_VERSION_ROWS                   40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
-// audio mixer page (14 rows), columns as on the goggles
+// audio mixer page (14 rows, 15 with HDMI In), columns as on the goggles
 #define UI_AUDIO_COL_INDENT               112
 #define UI_AUDIO_COL_LABEL                236
 #define UI_AUDIO_COL_BUTTON               160

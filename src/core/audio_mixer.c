@@ -46,6 +46,7 @@ static const char *const field_key[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_DVR_AV] = "dvr_av",
     [AUDIO_MIXER_DVR_LEVEL] = "dvr_level",
     [AUDIO_MIXER_RX_AUDIO] = "rx_audio",
+    [AUDIO_MIXER_HDMI] = "hdmi",
 };
 
 /*
@@ -61,7 +62,7 @@ static pthread_cond_t work_cond;                                 // worker: some
 static pthread_cond_t done_cond;                                 // audio_mixer_apply_wait()
 static audio_mixer_settings_t mixer;                             // current values
 static audio_mixer_settings_t saved;                             // values in setting.ini (UI)
-static audio_mixer_context_t context = {.line_out = true, .playback = false};
+static audio_mixer_context_t context = {.line_out = true, .playback = false, .live_dac = false};
 static unsigned requested; // apply generations: requested by the UI ...
 static unsigned applied;   // ... and in the codec
 static bool worker_running;
@@ -153,13 +154,14 @@ static void write_batch(const audio_mixer_settings_t *settings, const audio_mixe
 
     const size_t len = audio_mixer_build_commands(settings, ctx, cmd, sizeof(cmd));
     const uint8_t *v = settings->value;
-    LOGI("audio mixer: mic=%d line_in=%d av=%d boost=%d/%d phones=%d playback=%d dvr=%s(%d%d%d) dvr_level=%d rx=%d line_out=%d playing=%d",
+    LOGI("audio mixer: mic=%d line_in=%d av=%d boost=%d/%d phones=%d playback=%d dvr=%s(%d%d%d) dvr_level=%d rx=%d hdmi=%d line_out=%d playing=%d live_dac=%d",
          v[AUDIO_MIXER_MIC], v[AUDIO_MIXER_LINE_IN], v[AUDIO_MIXER_AV],
          v[AUDIO_MIXER_MIC_BOOST], v[AUDIO_MIXER_LINE_IN_BOOST],
          v[AUDIO_MIXER_HEADPHONES], v[AUDIO_MIXER_PLAYBACK],
          v[AUDIO_MIXER_DVR_MODE] == AUDIO_MIXER_DVR_AS_HEARD ? "as_heard" : "custom",
          v[AUDIO_MIXER_DVR_MIC], v[AUDIO_MIXER_DVR_LINE_IN], v[AUDIO_MIXER_DVR_AV],
-         v[AUDIO_MIXER_DVR_LEVEL], v[AUDIO_MIXER_RX_AUDIO], ctx->line_out, ctx->playback);
+         v[AUDIO_MIXER_DVR_LEVEL], v[AUDIO_MIXER_RX_AUDIO], v[AUDIO_MIXER_HDMI],
+         ctx->line_out, ctx->playback, ctx->live_dac);
 
     FILE *fp = fopen(AUDIO_MIXER_CMD_FILE, "w");
     if (!fp || len >= sizeof(cmd)) {
@@ -350,6 +352,16 @@ void audio_mixer_set_line_out(bool enable) {
         audio_mixer_apply();
 }
 
+void audio_mixer_set_live_dac(bool on) {
+    pthread_mutex_lock(&mixer_mutex);
+    const bool changed = context.live_dac != on;
+    context.live_dac = on;
+    pthread_mutex_unlock(&mixer_mutex);
+
+    if (changed)
+        audio_mixer_apply();
+}
+
 void audio_mixer_set_playback(bool active) {
     pthread_mutex_lock(&mixer_mutex);
     context.playback = active;
@@ -373,6 +385,7 @@ void audio_mixer_value_str(audio_mixer_field_t field, int value, char *buf, size
     case AUDIO_MIXER_MIC:
     case AUDIO_MIXER_LINE_IN:
     case AUDIO_MIXER_AV:
+    case AUDIO_MIXER_HDMI:
         // 0 = off, 1..8 = output mixer gain register 0..7: -4.5 dB .. +6 dB in 1.5 dB steps
         if (value <= 0)
             snprintf(buf, size, "%s", _lang("Off"));
