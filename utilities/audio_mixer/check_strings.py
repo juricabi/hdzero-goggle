@@ -104,6 +104,14 @@ def main():
         langs[os.path.basename(path)[:-4]] = translations(path)
 
     problems = []
+    # every entry of a language file must fit the firmware's table (src/lang/language.c drops the rest)
+    limit = int(re.search(r"#define TRANSLATE_STRING_NUM\s+(\d+)",
+                          open(os.path.join(ROOT, "src/lang/language.h")).read()).group(1))
+    for path in sorted(glob.glob(os.path.join(LANG_DIR, "*.ini"))):
+        n = sum(1 for line in open(path, encoding="utf-8") if re.match(r'^[^;#\[\s][^=]*=', line))
+        print(f"{os.path.basename(path)}: {n} of {limit} translation entries")
+        if n > limit:
+            problems.append(f"{os.path.basename(path)} has {n} entries, the table {limit}")
     lines = []
     for lang, table in langs.items():
         for kind, text in strings:
