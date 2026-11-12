@@ -860,7 +860,7 @@ int avshare_readMediaFrame(int media_type, uint8_t* buf, int bufLen, uint64_t* t
             }
 
             int length = h->length;
-            if( (length < 0) || (length > ((mediaIndex == 0) ? largeStreamSize : audioStreamSize)) ) {
+            if( (length < 0) || (length > ((mediaIndex == 0) ? (largeStreamSize) : (audioStreamSize))) ) {
                 length = 0;
             }
             if( !overflow && (len + length <= bufLen) ) {

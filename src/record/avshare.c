@@ -499,7 +499,7 @@ int avshare_addAudioFrame(const uint8_t *data, int len, uint64_t timestampUs) {
     if (len <= 0)
         return 0;
 
-    nSlots = (len + audioStreamSize - 1) / audioStreamSize;
+    nSlots = (len + (audioStreamSize) - 1) / (audioStreamSize); // the macros are not parenthesized
     if (nSlots > SHAREBUF_COUNT / 2)
         return -4;
 
@@ -514,7 +514,7 @@ int avshare_addAudioFrame(const uint8_t *data, int len, uint64_t timestampUs) {
     for (i = 0; i < nSlots; i++) {
         int idx = gAvshare.idxNext[mediaIndex];
         ShareStream_t *pStreamHead = &gAvshare.bufStreamHead[mediaIndex][idx];
-        int chunk = (len > audioStreamSize) ? audioStreamSize : len;
+        int chunk = (len > (audioStreamSize)) ? (audioStreamSize) : len;
 
         memcpy(gAvshare.streamBuf[mediaIndex][idx], data, chunk);
         pStreamHead->frameType = FRAME_I;
