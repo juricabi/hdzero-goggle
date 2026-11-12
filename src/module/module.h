@@ -42,7 +42,11 @@ typedef enum {
 
 // Start-up: checks the settings, starts the worker.
 void module_init();
-// Module Bay page: Module or Mode changed (already in g_setting.module).
+// Module Bay page: stores Module and Mode in g_setting.module (not setting.ini) and
+// applies them.  Both change together, so the worker never sets a new Module up with
+// the Mode of the one before.
+void module_settings_set(int type, int mode);
+// Module or Mode changed (already in g_setting.module; host tests).
 void module_settings_changed(bool mode_changed);
 // Goggle 2, Source > Analog Module changed (already in g_setting.source): when the
 // bay became the analog source its module gets its mode and channel again.
@@ -50,8 +54,8 @@ void module_source_changed();
 // Bay power thread (batch 2 hardware): bay power switched.
 void module_power_changed(int on);
 // WiFi page: call after g_setting.wifi.enable changed, before WiFi is started
-// (returns once the bay pins are released, at most a few seconds) and after it
-// was stopped.
+// (returns once the bay pins are released and no pin check is reading them, at
+// most a few seconds) and after it was stopped.
 void module_wifi_changed();
 module_status_t module_status();
 

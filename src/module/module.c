@@ -483,6 +483,25 @@ void module_settings_changed(bool mode_changed) {
     pthread_mutex_unlock(&lock);
 }
 
+void module_settings_set(int type, int mode) {
+    if (type < 0 || type >= MODULE_TYPES)
+        type = MODULE_NONE;
+    if (mode < 0)
+        mode = 0;
+    pthread_mutex_lock(&lock);
+    // both under the lock: the worker never sets a new type up with the old one's mode
+    const bool type_changed = type != g_setting.module.type, mode_changed = mode != g_setting.module.setting;
+    g_setting.module.type = type;
+    g_setting.module.setting = mode;
+    if (started) {
+        // a new type is set up from scratch (its mode included); same type: new mode only
+        if (mode_changed && !type_changed)
+            mode_pending = true;
+        poke();
+    }
+    pthread_mutex_unlock(&lock);
+}
+
 void module_source_changed() {
     if (!started || !module_bay_is_source())
         return;
@@ -523,11 +542,13 @@ void module_wifi_changed() {
     pthread_mutex_lock(&lock);
     poke();
     if (g_setting.wifi.enable) {
-        // the SDIO host takes PG0-PG2 when WiFi starts: let go of them first
+        // the SDIO host takes PG0-PG2 when WiFi starts: let go of them first, and let
+        // a pin check that is reading them (exported as GPIO inputs) finish, since its
+        // close() would set them to GPIO input under the SDIO host's feet
         const uint64_t deadline = now_ms() + WIFI_RELEASE_MS;
-        while (active && now_ms() < deadline)
+        while ((active || check_busy) && now_ms() < deadline)
             timed_wait(&idle, deadline);
-        if (active)
+        if (active || check_busy)
             LOGE("module: bay pins still held while WiFi starts");
     }
     pthread_mutex_unlock(&lock);

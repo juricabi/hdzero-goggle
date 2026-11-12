@@ -1,4 +1,4 @@
-#include <errno.h>
+#include <stdbool.h>
 #include <time.h>
 
 #include "core/common.hh"
@@ -14,9 +14,10 @@
 //
 //   2.0 s after bay power-on (MODULE_BOOT_MS; the ExpressLRS backpack's
 //   VRX_BOOT_DELAY), the pins inputs until then:
-//   init      pins from input straight to all three high, 200 ms; all low, 200 ms
-//             (the SPI mode entry, as the ExpressLRS backpack does it); then CS
-//             high, CLK and DATA low (idle, kept while the module is controlled)
+//   init      pins from input straight to all three high (CS first), 200 ms; all
+//             low, 200 ms (the SPI mode entry, as the ExpressLRS backpack does it);
+//             then CS high, CLK and DATA low (idle, kept while the module is
+//             controlled)
 //   mode      100 ms later 'D' '=' 0x01 crc mode
 //   channel   right after: 'B' '=' 0x01 crc band (IMRC numbering), 100 ms, 'C' '='
 //             0x01 crc channel (1-8); crc = (cmd + '=' + 1 + value) & 0xFF
@@ -34,8 +35,10 @@
 // changes only right after a CLK fall, >= RF_PHASE_US before the next rise.  A True-D
 // reads a bay edge <= 43.1 us after it in its worst case and needs >= 100 us per level
 // and gap (furiousdfw docs/bay-standards.md, section 4); a real rapidFIRE takes up to
-// ~80 kHz.  81 waits per frame: >= 8.1 ms, typically ~12-17 ms on the goggle (each
-// wait overshoots by the timer slack and the wake-up latency; never less).
+// ~80 kHz (>= 6.25 us per level).  81 waits per frame: >= 8.1 ms guaranteed; each wait
+// overshoots by the timer slack (50 us for a normal thread), the wake-up latency and
+// the sysfs writes, never less: ~13.5-14.5 ms per frame on a PC, an estimated
+// ~12-20 ms on the goggle (not measured).
 
 #define SPAM_COUNT 3
 
@@ -53,21 +56,28 @@
 #define RF_PHASE_US 100 // the shortest time between two successive frame edges
 #endif
 
+static bool before(const struct timespec *a, const struct timespec *b) {
+    return a->tv_sec < b->tv_sec || (a->tv_sec == b->tv_sec && a->tv_nsec < b->tv_nsec);
+}
+
 // Waits until RF_PHASE_US after the pin write that has just returned.  The edge
 // happened inside that write, the next one happens inside the next write, which
-// starts only once an absolute CLOCK_MONOTONIC deadline has passed: a sleep can
-// only end late (timer slack, scheduling, preemption), and an interrupted one goes
-// back to sleep, so the gap on the pins is >= RF_PHASE_US whatever the scheduler.
+// starts only once the clock has been read past an absolute CLOCK_MONOTONIC
+// deadline: a sleep can only end late (timer slack, scheduling, preemption), and
+// one that ends early for any reason (a signal, an error) is simply repeated, so
+// the gap on the pins is >= RF_PHASE_US whatever the scheduler does.
 static void phase_wait(void) {
-    struct timespec t;
+    struct timespec t, now;
     clock_gettime(CLOCK_MONOTONIC, &t);
     t.tv_nsec += RF_PHASE_US * 1000L;
     if (t.tv_nsec >= 1000000000L) {
         t.tv_sec++;
         t.tv_nsec -= 1000000000L;
     }
-    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL) == EINTR)
-        ;
+    do {
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &now);
+    } while (before(&now, &t));
 }
 
 // Every wait between frames is an abort point (module_sleep_ms()): a release
@@ -86,15 +96,20 @@ static void rapidfire_set_channel(int index) {
 }
 
 static void rapidfire_set_mode() {
+    const int mode = g_setting.module.setting;
     if (!module_sleep_ms(CMD_GAP_MS))
         return;
-    send_cmd(RF_API_MODE_CMD, g_setting.module.setting);
+    send_cmd(RF_API_MODE_CMD, mode >= 0 && mode <= 2 ? mode : 0); // (only 0-2 exist)
     // the worker sends the channel next
 }
 
 static void rapidfire_init() {
-    softspi_open();       // inputs
-    softspi_drive_all(1); // straight to high, no low step before the entry
+    softspi_open(); // inputs
+    // straight to high, no low step before the entry; CS first, so that CLK rises
+    // with CS already high: a listener that saw CS float low takes no clock edge
+    softspi_drive_pin(SOFTSPI_CS, 1);
+    softspi_drive_pin(SOFTSPI_CLK, 1);
+    softspi_drive_pin(SOFTSPI_DAT, 1);
     if (!module_sleep_ms(200))
         return;
     softspi_set_pin(SOFTSPI_CLK, 0);

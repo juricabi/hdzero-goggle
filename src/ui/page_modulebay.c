@@ -41,8 +41,8 @@ static uint16_t focused_orig_sel = 0; // selection when the focused list was ope
 static lv_coord_t col_dsc[] = {160, 200, 240, 240, 160, 40, LV_GRID_TEMPLATE_LAST};
 static lv_coord_t row_dsc[] = {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST};
 
-// The Module list, in module_type_t order ([module] type): only "None" is a word,
-// the others are the modules' own names.
+// The Module list, in module_type_t order ([module] type).  Every entry goes
+// through the language files (the modules' own names map to themselves there).
 static const char *const type_names[MODULE_TYPES] = {
     "None",
     "Switch (Fat Shark)",
@@ -50,6 +50,22 @@ static const char *const type_names[MODULE_TYPES] = {
     "SteadyView",
     "SteadyView X",
 };
+
+// '\n'-separated options, each through _lang() ("PG0=1 ..." cannot be a key of a
+// language file and comes back as it is).
+static void translate_options(char *out, size_t size, const char *options) {
+    char item[64];
+    size_t len = 0;
+    out[0] = 0;
+    for (const char *p = options; p && *p && len + 1 < size;) {
+        const char *end = strchr(p, '\n');
+        const size_t n = end ? (size_t)(end - p) : strlen(p);
+        snprintf(item, sizeof(item), "%.*s", (int)n, p);
+        const int w = snprintf(out + len, size - len, "%s%s", len ? "\n" : "", _lang(item));
+        len = w < 0 ? size : len + (size_t)w;
+        p = end ? end + 1 : p + n;
+    }
+}
 
 // Mode list of a type, NULL when it has none here.
 static const char *mode_names(int type) {
@@ -63,7 +79,9 @@ static const char *mode_names(int type) {
 static void show_module_settings(int mode) {
     const char *modes = mode_names(lv_dropdown_get_selected(btn_module_type));
     if (modes) {
-        lv_dropdown_set_options(btn_module_mode, modes);
+        char buf[256];
+        translate_options(buf, sizeof(buf), modes);
+        lv_dropdown_set_options(btn_module_mode, buf);
         if (mode < 0 || mode >= (int)lv_dropdown_get_option_cnt(btn_module_mode))
             mode = 0;
         lv_dropdown_set_selected(btn_module_mode, mode);
@@ -169,7 +187,7 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     snprintf(buf, sizeof(buf), "%s", _lang(type_names[0]));
     for (int i = 1; i < MODULE_TYPES; i++)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\n%s", type_names[i]);
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\n%s", _lang(type_names[i]));
     create_label_item(cont, _lang("Module"), 1, ROW_TYPE, 1);
     // (wide enough for "Switch (Fat Shark)")
     btn_module_type = create_dropdown_item(cont, buf, 2, ROW_TYPE,
@@ -225,12 +243,10 @@ static void apply_settings(void) {
         return;
 
     LOGI("module bay: module %d, mode %d", type, mode);
-    g_setting.module.type = type;
-    g_setting.module.setting = mode;
+    // a new module is set up from scratch (its mode included); same one: new mode only
+    module_settings_set(type, mode);
     ini_putl("module", "type", g_setting.module.type, SETTING_INI);
     ini_putl("module", "setting", g_setting.module.setting, SETTING_INI);
-    // a new module is set up from scratch (its mode included); same one: new mode only
-    module_settings_changed(mode_changed && !type_changed);
     update_status();
 }
 

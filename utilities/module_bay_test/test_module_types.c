@@ -13,7 +13,8 @@
 //   before, DATA changed only while CLK is low and >= 100 us before the next rise;
 //   a model of MOD 1.17's receiver (its frame check and band / channel pairing)
 //   takes every commanded channel; the SPI mode entry, the set-up commands, the
-//   5 s resend; the trace's timing is printed for docs/module-bay.md.
+//   5 s resend; the trace's timing is printed for docs/module-bay.md.  The same
+//   frame checks under a signal storm that cuts the worker's sleeps short.
 //   TRACE_OUT=<file>: the rapidFIRE edges written there (for the True-D simulator).
 // SteadyView X: soft_uart loaded >= 2.0 s after power-on, CS low; pins inputs at close.
 // All: the pins are inputs again soon after power-off, also in mid-transfer.
@@ -21,6 +22,7 @@
 //   make -C utilities/module_bay_test test
 
 #include <pthread.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -516,6 +518,22 @@ static int trued17_rapidfire(uint64_t start_us, taken_t *out, int max, int start
     return n;
 }
 
+// Signal storm: SIGUSR1 is blocked in every thread but the module worker, so each
+// kill() lands there and cuts its current sleep short (no SA_RESTART).
+static volatile sig_atomic_t storm_on, storm_hits;
+static void on_storm(int sig) {
+    (void)sig;
+    storm_hits++;
+}
+static void *storm_thread(void *arg) {
+    (void)arg;
+    while (storm_on) {
+        kill(getpid(), SIGUSR1);
+        usleep(29);
+    }
+    return NULL;
+}
+
 static void write_trace(const char *path, const char *what) {
     FILE *fp = fopen(path, "w");
     if (!fp)
@@ -539,7 +557,16 @@ int main(void) {
     g_setting.source.analog_module = SETTING_SOURCES_ANALOG_MODULE_EXTERNAL;
     g_setting.source.analog_channel = 1;
     g_setting.module.channel = 8; // A8
+    // the worker (created in module_init()) takes SIGUSR1; every other thread blocks it
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = on_storm; // (no SA_RESTART: an interrupted sleep returns early)
+    sigaction(SIGUSR1, &sa, NULL);
     module_init();
+    sigset_t usr1;
+    sigemptyset(&usr1);
+    sigaddset(&usr1, SIGUSR1);
+    pthread_sigmask(SIG_BLOCK, &usr1, NULL);
     static const softspi_pin_t order0[3] = {SOFTSPI_CLK, SOFTSPI_DAT, SOFTSPI_CS}; // pin order 0: bit i on PG i
 
     // ---- stock ----
@@ -692,11 +719,15 @@ int main(void) {
     uint64_t low_at = 0, low_end = 0;
     const uint64_t entry = find_entry(0, &low_at, &low_end);
     check(entry >= 2000000 && entry < (2000 + SLACK_MS) * 1000ULL, "SPI mode entry 2.0 s after power-on (all high 200 ms, all low 200 ms)");
-    int high_first = 1;
-    for (int i = 0; i < n_edges && edges[i].t <= entry; i++)
+    int high_first = 1, first_out = 0;
+    for (int i = 0; i < n_edges && edges[i].t <= entry; i++) {
         high_first &= edges[i].line == 7;
+        if (!first_out)
+            first_out = edges[i].out;
+    }
     check(high_first && first_out_from(0) >= 2000000 && entry - first_out_from(0) < 2000,
           "  pins inputs before it, straight to all high");
+    check(first_out == 1 << SOFTSPI_CS, "  CS driven high first (CLK then rises with CS high: no clock edge in a window)");
     static frame_t fr[256];
     const int nf = decode_spi(fr, 64, 0);
     int ok = nf == 15;
@@ -756,6 +787,31 @@ int main(void) {
     const char *trace_out = getenv("TRACE_OUT");
     if (trace_out)
         write_trace(trace_out, "rapidFIRE: power-on at the first P event, R1, mode D=1, then F4 R8 A1 E5 B7 L7 R1 R2");
+
+    printf("rapidFIRE under a signal storm (every sleep of the worker cut short again and again):\n");
+    static const int storm_changes[] = {20, 9, 44}; // E4 B1 L4
+    const uint64_t t_storm = now_us() - t0;
+    storm_on = 1;
+    pthread_t storm_tid;
+    const int storm_started = pthread_create(&storm_tid, NULL, storm_thread, NULL) == 0;
+    for (unsigned i = 0; i < ARRAY_SIZE(storm_changes); i++) {
+        analog_channel_set(storm_changes[i]);
+        sleep_ms(450);
+    }
+    storm_on = 0;
+    if (storm_started)
+        pthread_join(storm_tid, NULL);
+    const int nfs = decode_spi(fr, 256, t_storm);
+    uint64_t gap_storm = UINT64_MAX;
+    int bad_storm = 0, ok_storm = nfs == 6 * (int)ARRAY_SIZE(storm_changes);
+    for (int i = 0; i < nfs; i++) {
+        gap_storm = fr[i].min_gap < gap_storm ? fr[i].min_gap : gap_storm;
+        bad_storm += fr[i].data_bad;
+        ok_storm &= fr[i].bits == 40;
+    }
+    snprintf(what, sizeof(what), "%d frames, %d signals taken by the worker: every CS / CLK edge >= 100 us apart (shortest %llu us)",
+             nfs, (int)storm_hits, (unsigned long long)gap_storm);
+    check(storm_started && storm_hits > 1000 && ok_storm && gap_storm >= 100 && !bad_storm, what);
 
     printf("rapidFIRE, power-off in mid-command:\n");
     analog_channel_set(48); // L8

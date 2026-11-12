@@ -12,7 +12,7 @@ WORKER_CFLAGS = -O1 -g -std=gnu99 -DEMULATOR_BUILD -DHDZGOGGLE2=1 -D_GNU_SOURCE 
 	-I$(ROOT)/src -I$(ROOT)/src/core -I$(ROOT)/lib/log/include -I$(ROOT)/lib/lvgl -I$(ROOT)/lib/minIni/src
 WARN = -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers
 
-all: $(OUT)/test_module_worker $(OUT)/test_module_types
+all: $(OUT)/test_module_worker $(OUT)/test_module_types $(OUT)/test_settings_module
 
 $(OUT)/test_module_worker: test_module_worker.c $(SRC)/module.c $(SRC)/module.h $(SRC)/module_def.h
 	mkdir -p $(OUT)
@@ -29,12 +29,23 @@ $(OUT)/test_module_types: test_module_types.c $(TYPES_SRC) $(OUT)/steadyview_x.o
 	mkdir -p $(OUT)
 	$(CC) $(WORKER_CFLAGS) $(WARN) -o $@ test_module_types.c $(TYPES_SRC) $(OUT)/steadyview_x.o -lpthread
 
-test: $(OUT)/test_module_worker $(OUT)/test_module_types
+# settings_load() (src/core/settings.c) with the real minIni, as for the Goggle 1
+# emulator (setting.ini in the current directory)
+SETTINGS_CFLAGS = -O1 -g -std=gnu99 -DEMULATOR_BUILD -DHDZGOGGLE=1 -D_GNU_SOURCE \
+	-I$(ROOT)/src -I$(ROOT)/src/core -I$(ROOT)/lib/log/include -I$(ROOT)/lib/lvgl -I$(ROOT)/lib/minIni/src
+# (settings.c and minIni are upstream code: built without -Wall)
+$(OUT)/test_settings_module: test_settings_module.c $(ROOT)/src/core/settings.c $(ROOT)/src/core/settings.h
+	mkdir -p $(OUT)
+	$(CC) $(SETTINGS_CFLAGS) $(WARN) -c -o $(OUT)/test_settings_module.o test_settings_module.c
+	$(CC) $(SETTINGS_CFLAGS) -o $@ $(OUT)/test_settings_module.o $(ROOT)/src/core/settings.c $(ROOT)/lib/minIni/src/minIni.c
+
+test: $(OUT)/test_module_worker $(OUT)/test_module_types $(OUT)/test_settings_module
+	$(OUT)/test_settings_module
 	$(OUT)/test_module_worker
 	MODULE_TEST_BATCH1=1 $(OUT)/test_module_worker
 	$(OUT)/test_module_types
 
 clean:
-	rm -f $(OUT)/test_module_worker $(OUT)/test_module_types $(OUT)/steadyview_x.o
+	rm -f $(OUT)/test_module_worker $(OUT)/test_module_types $(OUT)/steadyview_x.o $(OUT)/test_settings_module $(OUT)/test_settings_module.o
 
 .PHONY: all test clean

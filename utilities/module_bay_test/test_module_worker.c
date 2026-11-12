@@ -11,10 +11,11 @@
 // for it; the pin release on power-off; the WiFi interlock; that no request blocks
 // its caller; the stored channels (Switch list, type round trips, built-in
 // receiver vs bay module on the Goggle 2, nothing stored while the bay is not
-// controlled); the source change; the pin check; and the SDIO half of the WiFi
-// interlock: bay_pins_busy() against stand-in files for /sys/module/xradio_wlan
-// and the sunxi_dump register answer (PG_CFG0), and the worker leaving the pins
-// alone while they are in the SDC1 function.
+// controlled); Module and Mode set together from the page (module_settings_set());
+// the source change; the pin check, also WiFi switched on while it reads; and the
+// SDIO half of the WiFi interlock: bay_pins_busy() against stand-in files for
+// /sys/module/xradio_wlan and the sunxi_dump register answer (PG_CFG0), and the
+// worker leaving the pins alone while they are in the SDC1 function.
 //
 // With MODULE_TEST_BATCH1=1 in the environment it runs as a batch 1 Goggle (no bay
 // power switch, the bay powered with the goggle): the app start counts as the
@@ -103,7 +104,11 @@ static void record(char op, int arg) {
     pthread_mutex_unlock(&ev_lock);
 }
 
-static void rec_init() { record('i', g_setting.module.type); } // takes the pins, sends no channel
+static int init_setting = -1; // g_setting.module.setting seen by the last init
+static void rec_init() {      // takes the pins, sends no channel
+    init_setting = g_setting.module.setting;
+    record('i', g_setting.module.type);
+}
 static void rec_close() { record('c', 0); }
 // a channel change as rapidFIRE sends it: frames of ~15 ms (not interruptible)
 // with abortable gaps between them
@@ -485,6 +490,31 @@ int main(void) {
     settle();
     check(g_setting.module.channel == 28, "Switch -> SteadyView X round trip: F4 kept");
 
+    printf("Module Bay page: Module and Mode set together (module_settings_set()):\n");
+    g_setting.module.setting = 0;
+    t = t_now();
+    module_settings_set(MODULE_STEADYVIEW, 3);
+    settle();
+    check(find_from('i', t, &e) && e.arg == MODULE_STEADYVIEW && init_setting == 3 && count('m', t, 1000000) == 0 &&
+              next_after('i', t, &e) && e.op == 'h',
+          "new Module with a Mode: one init that sees the new Mode, then the channel");
+    t = t_now();
+    module_settings_set(MODULE_STEADYVIEW, 1);
+    settle();
+    check(count('i', t, 1000000) == 0 && find_from('m', t, &e) && e.arg == 1 && next_after('m', t, &e) && e.op == 'h',
+          "same Module, new Mode: mode, then the channel, no init");
+    t = t_now();
+    module_settings_set(MODULE_STEADYVIEW, 1);
+    settle();
+    check(count('i', t, 1000000) + count('m', t, 1000000) + count('h', t, 1000000) == 0, "nothing changed: nothing sent");
+    t = t_now();
+    module_settings_set(MODULE_TYPES, 0);
+    settle();
+    check(g_setting.module.type == MODULE_NONE && module_status() == MODULE_STATUS_NONE && count('c', t, 1000000) == 1,
+          "a Module outside 0..4: None, pins released");
+    module_settings_set(MODULE_STEADYVIEW_X, 0);
+    settle();
+
     printf("Goggle 2 built-in receiver and Source > Analog Module:\n");
     g_setting.source.analog_module = SETTING_SOURCES_ANALOG_MODULE_INTERNAL;
     check(analog_channel_count() == 48 && analog_channel_tunable() && analog_channel_get() == 12,
@@ -534,6 +564,19 @@ int main(void) {
     settle();
     pc = module_pin_check_result();
     check(pc.seq == seq + 3 && pc.levels == -1 && pc.why && !pins_exported, "WiFi on: levels not read");
+    g_setting.wifi.enable = false;
+    module_wifi_changed();
+    // WiFi switched on while a check reads the pins (exported as GPIO inputs)
+    module_check_pins();
+    usleep(30000);
+    const int reading = pins_exported;
+    g_setting.wifi.enable = true;
+    waited = timed_call_ms(wifi_changed);
+    snprintf(what, sizeof(what), "WiFi on during a pin check: returns once the check let go of the pins (%llu ms)",
+             (unsigned long long)waited);
+    check(reading && !pins_exported && waited >= 40 && waited < 100 + SLACK_MS, what);
+    pc = module_pin_check_result();
+    check(pc.seq == seq + 4 && pc.levels == 5 && !pc.running, "  (that check read the pins before WiFi started)");
     g_setting.wifi.enable = false;
     module_wifi_changed();
 
