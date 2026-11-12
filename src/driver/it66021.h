@@ -18,7 +18,7 @@ void IT66021_edid();
 
 void IT66021_Set_Pclk(int inv, int dly);
 
-void IT66021_audio_config(bool hdmi_in_audio); // HDMI in audio (experimental): EDID SAD 48 kHz only
+void IT66021_audio_config(bool hdmi_in_audio); // HDMI in audio (experimental): EDID 48 kHz L-PCM only
 void IT66021_Mask_WR(uint8_t is_ring, uint8_t addr, uint8_t mask, uint8_t wdat);
 
 #ifdef __cplusplus
