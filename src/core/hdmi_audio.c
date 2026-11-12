@@ -13,6 +13,7 @@
 #include <log/log.h>
 #include <minIni.h>
 
+#include "driver/it66021.h"
 #include "driver/it66121.h"
 #include "record/appmsg.h"
 #include "ui/page_common.h"
@@ -67,6 +68,7 @@ void hdmi_audio_load(void) {
     cfg_out = ini_getl(HDMI_AUDIO_SECTION, "audio_out", 0, SETTING_INI) != 0;
     cfg_in = ini_getl(HDMI_AUDIO_SECTION, "audio_in", 0, SETTING_INI) != 0;
     IT66121_audio_config(cfg_out, IT66121_AUDIO_I2S);
+    IT66021_audio_config(cfg_in);
     if (cfg_out || cfg_in)
         LOGI("hdmi audio (experimental): audio_out=%d audio_in=%d", cfg_out, cfg_in);
 }

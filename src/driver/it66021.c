@@ -306,6 +306,18 @@ void IT66021_Set_CSMatrix(int cs) {
     }
 }
 
+/* ===== HDMI in audio (experimental, default off, docs/hdmi-audio.md) =====
+ * The EDID below already advertises basic audio (CEA byte 3 bit 6) and one
+ * Short Audio Descriptor at 0x8A-0x8C: L-PCM 2 ch, 32/44.1/48 kHz, 16/20/24 bit.
+ * The I2S2 capture path runs at 48 kHz only, so with [hdmi] audio_in=1 the
+ * descriptor is narrowed to 48 kHz (0x8B = 0x04) and the checksum adjusted. */
+static bool it66021_edid_48k_only = false;
+
+void IT66021_audio_config(bool hdmi_in_audio) {
+    it66021_edid_48k_only = hdmi_in_audio;
+}
+/* ===== end HDMI in audio ===== */
+
 void IT66021_edid() {
     // Declared as static to prevent 256-byte stack allocation overhead
     static const uint8_t edid[256] = {
@@ -362,7 +374,14 @@ void IT66021_edid() {
     I2C_L_Write(0x49, 0xc4, edid[0x7f]);
     I2C_L_Write(0x49, 0xc5, edid[0xff]);
     for (i = 0; i < 256; i++) {
-        I2C_L_Write(0x54, i, edid[i]);
+        uint8_t b = edid[i];
+        if (it66021_edid_48k_only) { // HDMI in audio (experimental): SAD rates 48 kHz only
+            if (i == 0x8b)
+                b = 0x04;
+            else if (i == 0xff)
+                b = (uint8_t)(edid[0xff] + (edid[0x8b] - 0x04));
+        }
+        I2C_L_Write(0x54, i, b);
     }
     I2C_L_Write(0x49, 0xc0, 0x24);
     usleep(2000);
