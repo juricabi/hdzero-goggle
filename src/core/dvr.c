@@ -10,6 +10,7 @@
 
 #include "../conf/targets.h"
 
+#include "core/audio_mixer.h"
 #include "core/msp_displayport.h"
 #include "core/settings.h"
 #include "driver/hardware.h"
@@ -47,32 +48,19 @@ void dvr_update_status() {
     pthread_mutex_unlock(&dvr_mutex);
 }
 
+// Audio routing is done by the audio mixer (core/audio_mixer.c, Audio page).
+// These two keep their call sites: line out off for HDMI in, and a full
+// re-apply of the mixer (record + headphone routing) at recording start and
+// on source switches. The mixer has replaced the single audio source, so
+// `source` is not used any more.
 void dvr_enable_line_out(bool enable) {
-    char buf[128];
-    if (enable) {
-        snprintf(buf, sizeof(buf), "%s out_on", AUDIO_SEL_SH);
-        system_exec(buf);
-        snprintf(buf, sizeof(buf), "%s out_linein_on", AUDIO_SEL_SH);
-        system_exec(buf);
-        snprintf(buf, sizeof(buf), "%s out_dac_off", AUDIO_SEL_SH);
-        system_exec(buf);
-    } else {
-        snprintf(buf, sizeof(buf), "%s out_off", AUDIO_SEL_SH);
-        system_exec(buf);
-    }
+    audio_mixer_set_line_out(enable);
 }
 
 void dvr_select_audio_source(uint8_t source) {
-    char buf[128];
-    char *audio_source[3] = {
-        "in_mic1",
-        "in_mic2",
-        "in_linein"};
-
-    if (source > 2)
-        source = 2;
-    snprintf(buf, sizeof(buf), "%s %s", AUDIO_SEL_SH, audio_source[source]);
-    system_exec(buf);
+    (void)source;
+    // synchronous like before: a recording that starts next has its routing
+    audio_mixer_apply_wait(1000);
 }
 
 // video input config

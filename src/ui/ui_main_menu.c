@@ -14,6 +14,7 @@
 #include "driver/screen.h"
 #include "lang/language.h"
 #include "ui/page_analog_rssi.h"
+#include "ui/page_audio.h"
 #include "ui/page_autoscan.h"
 #include "ui/page_clock.h"
 #include "ui/page_common.h"
@@ -50,7 +51,7 @@ static lv_obj_t *root_page;
  * To contain all menu pages.
  */
 
-#define PAGE_PACK_MAX_NUM 20 // Goggle 2: 19 pages + Module Bay
+#define PAGE_PACK_MAX_NUM 21 // Goggle 2: 19 pages + Module Bay + Audio
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
@@ -310,6 +311,7 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_power;
     page_packs[page_packs_count++] = &pp_fans;
     page_packs[page_packs_count++] = &pp_record;
+    page_packs[page_packs_count++] = &pp_audio;
     page_packs[page_packs_count++] = &pp_autoscan;
     if (g_setting.has_all_features) {
         page_packs[page_packs_count++] = &pp_elrs;

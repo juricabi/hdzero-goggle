@@ -8,6 +8,7 @@
 
 #include "../conf/ui.h"
 #include "common.hh"
+#include "core/audio_mixer.h"
 #include "player/media.h"
 #include "record/record_definitions.h"
 #include "ui/ui_style.h"
@@ -346,12 +347,16 @@ void mplayer_file(char *fname) {
     load_stars(fname);
     init_mplayer();
     media_init(fname);
+    // after media_init: its AW_MPI_SYS_Init has just reset the codec mixer
+    audio_mixer_set_playback(true);
     media_start();
     update_mplayer();
 }
 
 void mplayer_exit() {
     pthread_mutex_unlock(&lvgl_mutex);
+    // back to the live mix while the file's stream is still open: the line out keeps a source
+    audio_mixer_set_playback(false);
     if (media) {
         media_exit(media);
         media = NULL;

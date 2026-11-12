@@ -20,6 +20,7 @@ SDL_mutex *global_sdl_mutex;
 
 #include "bmi270/accel_gyro.h"
 #include "core/app_state.h"
+#include "core/audio_mixer.h"
 #include "core/common.hh"
 #include "core/elrs.h"
 #include "core/ht.h"
@@ -160,6 +161,7 @@ int main(int argc, char *argv[]) {
     // 1. Recall configuration
     settings_init();
     settings_load();
+    audio_mixer_init();
     language_init();
 #ifdef HDZGOGGLE2
     vclk_phase_init();
@@ -210,6 +212,9 @@ int main(int argc, char *argv[]) {
 
     // 7. Start threads
     g_bootup_sdcard_state = sdcard_mounted() ? 1 : 0;
+    // audio routing for every source (a source switch applies it again; the mixer's
+    // worker also undoes the reset of the record daemon started by rc.sh)
+    audio_mixer_apply();
     start_running();
     create_threads();
 
