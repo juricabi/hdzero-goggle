@@ -7,15 +7,21 @@
 // Static 3-bit channel code on the bay pins, active high: code n = channel n+1 of
 // the module's own band (Fat Shark style switch selection; also the "1-8" bay mode
 // of the Furious True-D).  The Mode list picks which SoC pin carries which bit,
-// because the bay wiring is not known (docs/module-bay.md):
-//   0  CLK/DAT/CS  bit0 = CLK (PG0), bit1 = DAT (PG1), bit2 = CS (PG2) (as before)
-//   1  DAT/CS/CLK  the rapidFIRE convention CH1 = DATA, CH2 = CS, CH3 = CLK
-//   2  CS/DAT/CLK  CS1 = NSS, CS2 = DATA, CS3 = CLK (ExpressLRS rapidFIRE backpack wiring)
+// because the bay wiring is not known (docs/module-bay.md): all six orders.  A
+// label gives the weight of each pin's bit, "PG0=4 PG1=1 PG2=2": PG1 is bit 0,
+// PG2 bit 1, PG0 bit 2.  The first three are the orders offered before, so their
+// setting.ini values keep their meaning.
 static const softspi_pin_t pin_orders[][3] = {
-    {SOFTSPI_CLK, SOFTSPI_DAT, SOFTSPI_CS},
-    {SOFTSPI_DAT, SOFTSPI_CS, SOFTSPI_CLK},
-    {SOFTSPI_CS, SOFTSPI_DAT, SOFTSPI_CLK},
+    // bit 0       bit 1        bit 2
+    {SOFTSPI_CLK, SOFTSPI_DAT, SOFTSPI_CS},  // PG0=1 PG1=2 PG2=4 (pkendall's order)
+    {SOFTSPI_DAT, SOFTSPI_CS, SOFTSPI_CLK},  // PG0=4 PG1=1 PG2=2 (rapidFIRE convention CH1 = DATA, CH2 = CS, CH3 = CLK)
+    {SOFTSPI_CS, SOFTSPI_DAT, SOFTSPI_CLK},  // PG0=4 PG1=2 PG2=1 (ELRS rapidFIRE backpack: CS1 = NSS, CS2 = DATA, CS3 = CLK)
+    {SOFTSPI_CLK, SOFTSPI_CS, SOFTSPI_DAT},  // PG0=1 PG1=4 PG2=2
+    {SOFTSPI_DAT, SOFTSPI_CLK, SOFTSPI_CS},  // PG0=2 PG1=1 PG2=4
+    {SOFTSPI_CS, SOFTSPI_CLK, SOFTSPI_DAT},  // PG0=2 PG1=4 PG2=1
 };
+#define SWITCH_MODE_NAMES "PG0=1 PG1=2 PG2=4\nPG0=4 PG1=1 PG2=2\nPG0=4 PG1=2 PG2=1\n" \
+                          "PG0=1 PG1=4 PG2=2\nPG0=2 PG1=1 PG2=4\nPG0=2 PG1=4 PG2=1"
 
 // At init the pins go from inputs straight to code 2 for 200 ms before the channel
 // code: a state that is not part of the rapidFIRE SPI set-up (all three high,
@@ -72,7 +78,7 @@ module_def_t switch_module = {
     .close = switch_close,
     .set_channel = switch_set_channel,
     .set_mode = switch_set_mode,
-    .mode_names = "CLK/DAT/CS\nDAT/CS/CLK\nCS/DAT/CLK",
+    .mode_names = SWITCH_MODE_NAMES,
     .boot_ms = 0,
     .boot_resend_ms = 0,
 };
