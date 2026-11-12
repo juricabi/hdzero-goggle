@@ -28,9 +28,16 @@ their meaning comes from the Allwinner driver (`sound/soc/sunxi/sun8iw16-codec.c
 * Shared: `ADC input gain control` (analog, every ADC input), `ADC volume`
   (digital), `lineout volume` (analog, after the L+R sum, so it never reaches the
   ADC).
-* The output mixer can be fed into the ADC (`LADC input Mixer l_output mixer Switch`,
-  `RADC input Mixer r_output mixer Switch`). This is the only way to get per-source
-  levels onto the recording, and then the recording is the headphone mix.
+* The output mixers can be fed into the ADC (`LADC input Mixer l_output mixer Switch`,
+  `RADC input Mixer r_output mixer Switch`): the left ADC takes the left output
+  mixer, the right ADC the right one. This is the only way to get per-source levels
+  onto the recording (As Heard). It is not the headphone signal: the recording is
+  stereo and taken before the L+R sum and before `lineout volume`, while the
+  headphones get left + right of both mixers (mono). A source that is in both output
+  mixers (the mics, which feed both, or a mono A/V signal) reaches the line out from
+  both, so it is about 6 dB hotter in the headphones than in each recorded channel
+  (if the hardware sums; the driver calls it OMIX_LR_SUM, not measured). The
+  headphone volume does not change the recording.
 * The DAC joins through `Left/Right Output Mixer DACL/DACR Switch`. The line out is
   mono: both LINEOUT muxes take the sum of the left and right output mixers (as the
   old firmware and libmedia_mpp set them).
@@ -75,7 +82,7 @@ the new path for the few milliseconds of the batch instead of leaving a gap.
 | Playback Volume   | `playback` 0..31      | `lineout volume` while a DVR file plays                            |
 | DVR Audio         | `dvr_mode` 0/1        | 0 As Heard: ADC fed from the output mixers; 1 Custom: direct inputs |
 | Record Mic/Line In/A/V In | `dvr_mic`, `dvr_line_in`, `dvr_av` | Custom: `L/RADC input Mixer MIC1/MIC2/LINEIN` switches |
-| Record Level      | `dvr_level` 0..7      | `ADC input gain control` (-4.5..+6 dB); `ADC volume` stays 160 (0 dB) |
+| Record Level      | `dvr_level` 0..7      | `ADC input gain control` (-4.5..+6 dB); `ADC volume` stays 160 (see below) |
 | Analog RX Audio (Goggle 2, BoxPro) | `rx_audio` 0/1 | not a codec control: the RTC6715's audio output |
 
 "Record Audio" on the Record Option page still decides whether the DVR records
@@ -128,8 +135,9 @@ line out 27, so playback was audible, but only the left DAC channel (every sourc
 switch had turned both DAC switches off), with the live A/V monitor still mixed in,
 and the DAC switch and volume 27 stayed after playback.
 Now, while a file plays: live sources out of the output mixer, DACL -> left and
-DACR -> right output mixer, `DAC volume` 152 (-6 dB, because the line out adds left
-and right: a mono recording keeps the old level instead of +6 dB), line out =
+DACR -> right output mixer, `DAC volume` 152 (8 steps of 0.75 dB = 6 dB below the
+160 of before, because the line out adds left and right: a mono recording keeps the
+old level instead of +6 dB), line out =
 Playback Volume (also when Headphones is 0 or the source is HDMI in). Afterwards the
 live mix is restored.
 
@@ -141,12 +149,19 @@ live mix is restored.
   In As Heard mode that sum goes into the ADC, so keep mixed hot sources at 0 dB or
   below, or lower Record Level (down to -4.5 dB). Nothing in this path limits;
   whether it clips audibly has not been measured.
-* Not trustworthy dB scales: the BSP gives `lineout volume` the -4.5 dB/1.5 dB scale
-  of the mixer gains (amixer would show up to +42 dB) and the preamps 0..14 dB in
-  2 dB steps. The V536 analog registers have the layout of the A64's, whose manual
-  (mainline `sun50i-codec-analog.c`) gives line out 0..1 = mute, 2..31 = -43.5..0 dB,
-  and preamp 0 = 0 dB, 1..7 = 24..42 dB. The page therefore shows raw steps for
-  those three sliders; a step on a real goggle should settle it.
+* What the page shows in dB, and why: only the values whose dB scale the BSP driver
+  and the mainline driver of the same analog block (A64, `sun50i-codec-analog.c`,
+  from the A64 manual) agree on: the three output mixer gains and the ADC input gain
+  (Record Level), register 0..7 = -4.5..+6 dB in 1.5 dB steps. Everything else is
+  shown in raw steps: the BSP gives `lineout volume` the -4.5 dB/1.5 dB scale of the
+  mixer gains (amixer would show up to +42 dB) and the preamps 0..14 dB in 2 dB
+  steps, while the A64 layout is line out 0..1 = mute, 2..31 = -43.5..0 dB and preamp
+  0 = 0 dB, 1..7 = 24..42 dB. A step on a real goggle should settle it.
+* `ADC volume` and `DAC volume` (digital, 0.75 dB steps) stay at 160, the value
+  libmedia_mpp sets and the old firmware recorded and played with. By the BSP's own
+  TLV (-119.25 dB at 0) that is +0.75 dB; by the A64 layout (0 = mute, 1 = -119.25 dB)
+  it is 0 dB. Neither is shown on the page; the docs and code only rely on "same as
+  before" and on relative steps (playback: 8 steps = 6 dB less).
 * Defaults when `[mixer]` is missing (taken over from `[record] audio_source`, so
   the DVR records exactly what it did before):
   * DVR Audio Custom with only the old source (Mic / Line In / A/V In) = the old
@@ -169,6 +184,85 @@ live mix is restored.
 * BoxPro: same codec and the same three inputs as before (the old page offered
   Mic / Line In / A/V In there too), internal receiver like Goggle 2. Same mixer,
   smaller rows.
+
+## Differences from the old firmware
+
+For a unit that is updated and never opens the Audio page, `utilities/audio_mixer/
+test_mixer.py` checks that recording, headphones (sources and gains), line out power
+and the analog receiver's audio switch are what the old firmware produced, for every
+old Audio Source, after a source switch, with HDMI in and at recording start. What
+differs:
+
+* Booting straight into HDZero (no source switch since power-on). The old firmware
+  left the record daemon's mixer in place until the first source switch: line out
+  27 with only the (idle) left DAC connected, so the headphones were silent, and A/V
+  (+6 dB, line out 31) only came after the first switch to any source. Now the A/V
+  level applies from boot, i.e. the state the old firmware reached after any switch.
+  Kept on purpose: the old behaviour depended on whether a source had been switched
+  since power-on (and on when the record daemon initialised, see below), and the
+  Audio page needs one state to show. A unit with nothing on the AV-in jack / module
+  bay hears the same as before after any switch: LINEIN's noise floor at +6 dB.
+  To get the old silence, set A/V In to Off (or Headphones to Off).
+* The record daemon's mixer reset (boot, SD check, SD format, DVR playback): the old
+  firmware kept it until the next source switch or recording start (line out 27, the
+  line out on even with HDMI in, the mic into the left ADC); now it is undone within
+  about 2 s.
+* DVR playback: both DAC channels, live sources muted, Playback Volume; before it was
+  the left DAC only with the live mix and line out 27, which stayed after playback.
+* HDMI in: line out off as before; the old `out_off` also set the LINEOUT muxes to
+  their first item, now they stay at OMIX_LR_SUM (no effect while the line out is
+  off).
+* Changes are click-free where the batch can make them so (see the batch order
+  above); the old scripts switched one control per amixer process.
+
+## Audio page layout
+
+The page has its own columns (`conf/ui.h` `UI_AUDIO_*`, per target): label, two
+button columns (arrow + button, the sliders span both), value, without column gaps.
+They are sized for the longest translation at the target's font (Montserrat 24 on
+the goggles, 18 on the BoxPro; label column 316 / 236 px, visible button text
+160 / 126 px, value 100 / 72 px) and checked with emulator screenshots in English,
+German, Spanish, Russian, Chinese and Japanese on all three targets. Two Spanish
+and one Japanese strings were shortened for it ("Ganancia Línea", "Volumen
+Reproducción", "Selección"; "モニター" for As Heard). A `_Static_assert` keeps the
+columns inside the page; new translations must stay within these widths.
+
+## Testing on a goggle
+
+The host test covers the routing logic; these need the hardware. Before updating,
+note the old Audio Source and, if possible, keep a short DVR clip and listen to
+the headphones in each source, to compare with afterwards.
+
+1. Update, boot, do not open the Audio page. `/mnt/app/setting.ini` has a `[mixer]`
+   section with `version=1`; `/tmp/audio_mixer.cmd` exists. Log: `audio mixer:
+   migrated from record/audio_source=N`.
+2. Record a clip in HDZero and, on Goggle 2 / BoxPro, with the built-in analog
+   receiver: the same source as before is recorded at the same level (Mic, Line In
+   with an external mic: Line In Boost 4 as before, A/V In).
+3. Analog receiver (Goggle 2, BoxPro), old Audio Source Mic or Line In: switch to
+   the built-in receiver; the headphones must not get receiver audio or hiss
+   ("Analog RX Audio" = Off). Old source A/V In: receiver audio as before. Toggle
+   Analog RX Audio, leave the menu: it follows. The Analog RSSI page stays silent.
+4. Headphones after a source switch: A/V (AV-in jack or module bay) as loud as before
+   (A/V In +6.0 dB, Headphones 31). Booting straight into HDZero now also has it
+   (documented difference).
+5. HDMI in: headphones silent; record a clip: the recording has the selected source.
+6. Dial a slider (e.g. Headphones) quickly: the value follows without lag; listen for
+   clicks or drop-outs while turning A/V In from Off to +6 dB and back, while switching
+   DVR Audio As Heard <-> Custom during a recording, and when a DVR file starts and
+   stops playing. Pull the power within 1 s of a dial step: the last second may be
+   lost, a released slider never.
+7. Line out volume and preamp scales: step Headphones 31 -> 1 and the boosts 0 -> 7
+   and note the level; this decides whether the raw steps can be shown in dB.
+8. As Heard with Mic at 0 dB: the recording is stereo (the mic in both channels),
+   the headphones about 6 dB louder than one recorded channel; Headphones does not
+   change the recording level.
+9. Record daemon reset: start a recording after an SD repair or format on the
+   Storage page, or play a DVR file and return: within about 2 s the log shows
+   `codec changed by someone else` and `amixer contents` matches
+   `/tmp/audio_mixer.cmd` again (line out 31, not 27; Lineout off with HDMI in).
+10. Playback: both channels, Playback Volume applies, the live sources come back
+    after leaving the player.
 
 ## Checking without hardware
 
