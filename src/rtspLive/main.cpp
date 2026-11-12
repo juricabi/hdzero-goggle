@@ -146,7 +146,9 @@ bool disk_checkFile(const char* sPath)
         return false;
 	}
 
-	stat(sPath, &st);
+	if(stat(sPath, &st) != 0) {
+        return false; // st is not filled in: do not test garbage
+	}
 	return S_ISREG(st.st_mode);
 }
 
