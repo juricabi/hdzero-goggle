@@ -25,8 +25,11 @@ extern "C" {
 #include <stdbool.h>
 
 void hdmi_audio_load(void);           // read [hdmi] from setting.ini, configure the IT66121 driver
-bool hdmi_audio_out_enabled(void);
+bool hdmi_audio_out_enabled(void);    // the switch as stored
 bool hdmi_audio_in_enabled(void);
+bool hdmi_audio_out_active(void);     // in effect since this start
+bool hdmi_audio_in_active(void);
+const char *hdmi_audio_out_fault(void); // on at this start but kept off: the reason, NULL otherwise
 // persist + apply at once (Audio page): HDMI out audio on the running IT66121, the route; the
 // 48 kHz-only EDID of audio_in from the next start
 void hdmi_audio_set(bool out, bool in);

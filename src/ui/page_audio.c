@@ -52,38 +52,39 @@ typedef struct {
 
 static const row_t rows[] = {
     HEADING("Headphones"),
-    SLIDER(AUDIO_MIXER_HEADPHONES, "Volume", "Headphone volume. It does not change the recording"),
-    SLIDER(AUDIO_MIXER_MIC, "Mic", "Built-in mic in the headphones. 0 is off"),
-    SLIDER(AUDIO_MIXER_LINE_IN, "Line In", "Line In jack (external mic) in the headphones. 0 is off"),
+    SLIDER(AUDIO_MIXER_HEADPHONES, "Volume", "Headphone volume. Does not affect recording"),
+    SLIDER(AUDIO_MIXER_MIC, "Mic", "Goggle mic, heard in your headphones"),
+    SLIDER(AUDIO_MIXER_LINE_IN, "Line In", "Line In jack (ext. mic), heard in headphones"),
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
-    SLIDER(AUDIO_MIXER_AV, "A/V In", "AV in jack, analog module or receiver in the headphones. 0 is off"),
+    SLIDER(AUDIO_MIXER_AV, "A/V In", "AV jack, module or receiver (needs Built-in RX Audio On)"),
 #else
-    SLIDER(AUDIO_MIXER_AV, "A/V In", "AV in jack or analog module in the headphones. 0 is off"),
+    SLIDER(AUDIO_MIXER_AV, "A/V In", "AV jack or analog module, heard in headphones"),
 #endif
-    // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()); greyed and skipped while
-    // HDMI In Audio is off. All targets have HDMI in.
-    SLIDER(AUDIO_MIXER_HDMI, "HDMI In", "HDMI in audio in the headphones. 0 is off"),
+    // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()); greyed while HDMI In Audio
+    // is not in effect (selectable: its hint says why). All targets have HDMI in.
+    SLIDER(AUDIO_MIXER_HDMI, "HDMI In", "HDMI in audio, heard in headphones"),
     SLIDER(AUDIO_MIXER_PLAYBACK, "Playback Volume", "Headphone volume while a DVR file plays"),
 
     // the ADC: the DVR, the WiFi stream audio and HDMI out audio all take it
     HEADING("Recording (DVR, WiFi Stream, HDMI Out)"),
-    YES_NO(AUDIO_MIXER_REC_MIX, "Record What I Hear", "Yes: records the headphone mix at the levels above"),
+    YES_NO(AUDIO_MIXER_REC_MIX, "Record Headphone Mix", "Yes: record exactly what you hear above"),
     RECORD_SOURCE(AUDIO_MIXER_REC_MIC, "Record Mic"),
     RECORD_SOURCE(AUDIO_MIXER_REC_LINE_IN, "Record Line In"),
     RECORD_SOURCE(AUDIO_MIXER_REC_AV, "Record A/V In"),
     SLIDER(AUDIO_MIXER_DVR_LEVEL, "Record Level", "Level of the recording, the stream and HDMI out"),
 
     HEADING("Inputs"),
-    SLIDER(AUDIO_MIXER_MIC_BOOST, "Mic Boost", "Mic preamp, for the headphones and the recording"),
-    SLIDER(AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost", "Line In preamp, for the headphones and the recording"),
+    SLIDER(AUDIO_MIXER_MIC_BOOST, "Mic Boost", "Mic gain for headphones and recording"),
+    SLIDER(AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost", "Line In gain for headphones and recording"),
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
     // audio output of the built-in analog receiver, one of the sources of A/V In
-    ON_OFF(ROW_SWITCH, AUDIO_MIXER_RX_AUDIO, "Analog RX Audio", "Audio of the built-in analog receiver on A/V In"),
+    ON_OFF(ROW_SWITCH, AUDIO_MIXER_RX_AUDIO, "Built-in RX Audio", "Audio of the built-in analog receiver on A/V In"),
 #endif
 
+    // both take effect at the next start only (core/hdmi_audio.h)
     HEADING("HDMI Audio (experimental)"),
-    ON_OFF(ROW_HDMI_OUT, AUDIO_MIXER_FIELD_COUNT, "HDMI Out Audio", "HDMI out carries the recorded audio"),
-    ON_OFF(ROW_HDMI_IN, AUDIO_MIXER_FIELD_COUNT, "HDMI In Audio", "Hear and record HDMI in audio. Restart once after switching on"),
+    ON_OFF(ROW_HDMI_OUT, AUDIO_MIXER_FIELD_COUNT, "HDMI Out Audio", "Send the recorded audio to HDMI out. Restart to apply"),
+    ON_OFF(ROW_HDMI_IN, AUDIO_MIXER_FIELD_COUNT, "HDMI In Audio", "Hear HDMI in audio. Restart to apply"),
 
     {.type = ROW_BACK, .field = AUDIO_MIXER_FIELD_COUNT, .name = "Back"},
 };
@@ -91,9 +92,17 @@ static const row_t rows[] = {
 #define ROW_COUNT ((int)ARRAY_SIZE(rows))
 
 // hints of the Record source switches
-#define HINT_IN_MIX     "In What I Hear: recorded at its headphone level"
-#define HINT_DIRECT_YES "Recorded at full level, heard or not"
-#define HINT_DIRECT_NO  "Not recorded. Yes: at full level, heard or not"
+#define HINT_IN_MIX     "Recorded via the mix, at its headphone level"
+#define HINT_DIRECT_YES "Recorded even if its headphone level is Off"
+#define HINT_DIRECT_NO  "Not recorded. Yes: record it directly"
+// hints of the HDMI In level while HDMI In Audio is not in effect
+#define HINT_HDMI_OFF     "Off: switch on HDMI In Audio at the bottom"
+#define HINT_HDMI_RESTART "Restart the goggle to use HDMI In Audio"
+// HDMI Out Audio switched on, but kept off at this start (core/hdmi_audio.h: the reason follows)
+#define HINT_HDMI_FAULT "Off at this start"
+// value column of the HDMI rows: the switch differs from what is in effect, or it failed
+#define MARK_RESTART "Restart"
+#define MARK_ERROR   "Error"
 
 /*
  * Own column layout (conf/ui.h): indent | label | button | button | spacer | value. Sliders span
@@ -151,45 +160,82 @@ static void update_slider(int r) {
     lv_label_set_text(sliders[r].label, buf);
 }
 
-static const char *row_hint(const row_t *row) {
+// The HDMI In level works only while HDMI In Audio is in effect (switched on before this start).
+static bool hdmi_level_usable(const row_t *row) {
+    return !(row->type == ROW_SLIDER && row->field == AUDIO_MIXER_HDMI) || hdmi_audio_in_active();
+}
+
+// A Record source that is recorded through the mix: its own Yes/No does not matter then.
+static bool in_mix(const row_t *row) {
+    return is_record_source(row) && audio_mixer_recorded_via_mix(row->field);
+}
+
+// HDMI Out Audio was on at this start but stayed off (the reason, translated), NULL otherwise.
+static const char *hdmi_out_fault(void) {
+    return hdmi_audio_out_enabled() ? hdmi_audio_out_fault() : NULL;
+}
+
+// The switch differs from what is in effect: it applies at the next start.
+static bool hdmi_restart_pending(const row_t *row) {
+    if (row->type == ROW_HDMI_OUT)
+        return hdmi_audio_out_enabled() != hdmi_audio_out_active() && !hdmi_out_fault();
+    if (row->type == ROW_HDMI_IN)
+        return hdmi_audio_in_enabled() != hdmi_audio_in_active();
+    return false;
+}
+
+static void row_hint(const row_t *row, char *buf, size_t size) {
+    const char *text = row->hint;
     if (is_record_source(row)) {
-        if (audio_mixer_recorded_via_mix(row->field))
-            return HINT_IN_MIX;
-        return audio_mixer_get(row->field) ? HINT_DIRECT_YES : HINT_DIRECT_NO;
+        if (in_mix(row))
+            text = HINT_IN_MIX;
+        else
+            text = audio_mixer_get(row->field) ? HINT_DIRECT_YES : HINT_DIRECT_NO;
+    } else if (!hdmi_level_usable(row)) {
+        text = hdmi_audio_in_enabled() ? HINT_HDMI_RESTART : HINT_HDMI_OFF;
+    } else if (row->type == ROW_HDMI_OUT && hdmi_out_fault()) {
+        snprintf(buf, size, "%s: %s", _lang(HINT_HDMI_FAULT), _lang(hdmi_out_fault()));
+        return;
     }
-    return row->hint;
+    snprintf(buf, size, "%s", text ? _lang(text) : "");
 }
 
 static void update_hint(void) {
+    char buf[256] = "";
     const int sel = pp_audio.p_arr.cur;
-    const char *text = NULL;
     if (sel >= 0 && sel < sel_count)
-        text = row_hint(&rows[sel_row[sel]]);
-    lv_label_set_text(hint, text ? _lang(text) : "");
+        row_hint(&rows[sel_row[sel]], buf, sizeof(buf));
+    lv_label_set_text(hint, buf);
 }
 
 static void update_rows(void) {
+    char buf[64];
     for (int sel = 0; sel < sel_count; sel++) {
         const int r = sel_row[sel];
         const row_t *row = &rows[r];
         switch (row->type) {
         case ROW_SLIDER:
             update_slider(r);
-            if (row->field == AUDIO_MIXER_HDMI) {
-                const bool on = hdmi_audio_in_enabled();
-                slider_enable(&sliders[r], on);
-                if (on)
-                    lv_obj_add_flag(pp_audio.p_arr.panel[sel], FLAG_SELECTABLE);
-                else
-                    lv_obj_clear_flag(pp_audio.p_arr.panel[sel], FLAG_SELECTABLE);
-            }
+            // (greyed, but selectable: its hint says how to switch it on)
+            slider_enable(&sliders[r], hdmi_level_usable(row));
             break;
         case ROW_SWITCH:
+            // a source recorded through the mix: recorded, so Yes, greyed (the row never shows
+            // "No" next to "Mix"); its own setting comes back when it leaves the mix
+            btn_group_set_sel(&switches[r], (in_mix(row) || switch_value(row)) ? 0 : 1);
+            btn_group_enable(&switches[r], !in_mix(row));
+            if (marks[r])
+                lv_label_set_text(marks[r], in_mix(row) ? _lang("Mix") : "");
+            break;
         case ROW_HDMI_OUT:
         case ROW_HDMI_IN:
             btn_group_set_sel(&switches[r], switch_value(row) ? 0 : 1);
-            if (marks[r])
-                lv_label_set_text(marks[r], audio_mixer_recorded_via_mix(row->field) ? _lang("Mix") : "");
+            buf[0] = 0;
+            if (row->type == ROW_HDMI_OUT && hdmi_out_fault())
+                snprintf(buf, sizeof(buf), "#FFA000 %s#", _lang(MARK_ERROR));
+            else if (hdmi_restart_pending(row))
+                snprintf(buf, sizeof(buf), "#FFA000 %s#", _lang(MARK_RESTART));
+            lv_label_set_text(marks[r], buf);
             break;
         default:
             break;
@@ -243,9 +289,11 @@ static void create_switch(int r, int sel) {
         lv_obj_set_style_pad_left(b->btn, UI_AUDIO_BTN_PAD, 0);
         lv_obj_set_style_pad_right(b->btn, 0, 0);
     }
-    if (is_record_source(row)) {
+    // value column: "Mix" of a Record source, "Restart" / "Error" (orange) of the HDMI switches
+    if (is_record_source(row) || row->type == ROW_HDMI_OUT || row->type == ROW_HDMI_IN) {
         marks[r] = lv_label_create(list);
         lv_label_set_text(marks[r], "");
+        lv_label_set_recolor(marks[r], true);
         lv_obj_set_style_text_font(marks[r], UI_PAGE_TEXT_FONT, 0);
         lv_obj_set_style_text_color(marks[r], lv_color_hex(UI_AUDIO_HEADING_COLOR), 0);
         lv_obj_set_style_pad_top(marks[r], UI_PAGE_TEXT_PAD, 0);
@@ -431,6 +479,8 @@ static void page_audio_on_click(uint8_t key, int sel) {
 
     switch (row->type) {
     case ROW_SLIDER:
+        if (!hdmi_level_usable(row))
+            break; // (greyed: the hint says why)
         if (focused == sel) {
             release_slider(true);
         } else {
@@ -441,12 +491,15 @@ static void page_audio_on_click(uint8_t key, int sel) {
         }
         break;
     case ROW_SWITCH:
+        if (in_mix(row))
+            break; // (greyed: recorded through the mix whatever it says)
         audio_mixer_set(row->field, !switch_value(row));
         audio_mixer_save();
         update_rows();
         audio_mixer_apply();
         break;
     case ROW_HDMI_OUT:
+        // stored only: in effect from the next start (core/hdmi_audio.h)
         hdmi_audio_set(!hdmi_audio_out_enabled(), hdmi_audio_in_enabled());
         update_rows();
         break;

@@ -104,10 +104,10 @@ extern "C" {
 // spacer, value; section headings span the row. The rows scroll in a window of UI_AUDIO_VIEW_H with
 // the hint line below it. Every translation fits (utilities/audio_mixer/check_strings.py).
 #define UI_AUDIO_COL_INDENT               171 // no column gaps: labels where the other pages have them
-#define UI_AUDIO_COL_LABEL                420
+#define UI_AUDIO_COL_LABEL                400
 #define UI_AUDIO_COL_BUTTON               152
 #define UI_AUDIO_COL_SPACER               0
-#define UI_AUDIO_COL_VALUE                100
+#define UI_AUDIO_COL_VALUE                120 // "Mix", "Restart", "Error", "+6.0 dB" in every language
 #define UI_AUDIO_GRID_MAX_W               995 // page view width - UI_STYLE_SUBMENU_PAD_LEFT - room for the scroll bar
 #define UI_AUDIO_ARROW_W                  36
 #define UI_AUDIO_BTN_PAD                  8
@@ -265,10 +265,10 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_ANALOG_RSSI_ROWS               40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
 // Audio page, as on the goggles
 #define UI_AUDIO_COL_INDENT               112
-#define UI_AUDIO_COL_LABEL                310
+#define UI_AUDIO_COL_LABEL                300
 #define UI_AUDIO_COL_BUTTON               120
 #define UI_AUDIO_COL_SPACER               0
-#define UI_AUDIO_COL_VALUE                80
+#define UI_AUDIO_COL_VALUE                90
 #define UI_AUDIO_GRID_MAX_W               742
 #define UI_AUDIO_ARROW_W                  28
 #define UI_AUDIO_BTN_PAD                  6

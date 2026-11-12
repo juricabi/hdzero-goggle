@@ -50,6 +50,7 @@ typedef struct {
 static pthread_mutex_t ha_lock = PTHREAD_MUTEX_INITIALIZER; // UI, HDMI-in detect, ELRS and peripheral threads
 static bool cfg_out = false;
 static bool cfg_in = false;
+static bool boot_out, boot_in; // [hdmi] at start-up (hdmi_audio_load())
 static hdmi_audio_route_t route = HDMI_AUDIO_ROUTE_NONE; // the route the app wants
 static bool line_out_hdmi = false;                       // hdmi_audio_line_out(true) is in effect
 static long req_seq = 0;                                 // number of the request in HDMIA_REQ_FILE
@@ -113,6 +114,8 @@ static void hdmi_audio_request(void) { // new request: write it, send it, check 
 void hdmi_audio_load(void) {
     cfg_out = ini_getl(HDMI_AUDIO_SECTION, "audio_out", 0, SETTING_INI) != 0;
     cfg_in = ini_getl(HDMI_AUDIO_SECTION, "audio_in", 0, SETTING_INI) != 0;
+    boot_out = cfg_out;
+    boot_in = cfg_in;
     IT66121_audio_config(cfg_out, IT66121_AUDIO_I2S);
     IT66021_audio_config(cfg_in);
     if (cfg_out || cfg_in)
@@ -125,6 +128,18 @@ bool hdmi_audio_out_enabled(void) {
 
 bool hdmi_audio_in_enabled(void) {
     return cfg_in;
+}
+
+bool hdmi_audio_out_active(void) {
+    return boot_out;
+}
+
+bool hdmi_audio_in_active(void) {
+    return boot_in;
+}
+
+const char *hdmi_audio_out_fault(void) {
+    return NULL;
 }
 
 static void hdmi_audio_apply_locked(bool hdmi_in_shown) {
