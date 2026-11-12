@@ -46,6 +46,8 @@ progress_bar_t progress_bar;
 
 static lv_obj_t *menu;
 static lv_obj_t *root_page;
+static lv_obj_t *root_section;          // the scrolling list of entries
+static lv_obj_t *more_above, *more_below; // chevrons: the list goes on above / below
 
 /**
  * To contain all menu pages.
@@ -219,6 +221,30 @@ void submenu_click(void) {
     }
 }
 
+// The chevrons follow the list's scroll position (only when it does not fit).
+static void show_more_marks(void) {
+    lv_obj_update_layout(root_section);
+    if (lv_obj_get_scroll_top(root_section) > 0)
+        lv_obj_clear_flag(more_above, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(more_above, LV_OBJ_FLAG_HIDDEN);
+    if (lv_obj_get_scroll_bottom(root_section) > 0)
+        lv_obj_clear_flag(more_below, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(more_below, LV_OBJ_FLAG_HIDDEN);
+}
+
+static lv_obj_t *create_more_mark(const char *symbol, lv_align_t align) {
+    lv_obj_t *mark = lv_label_create(root_page);
+    lv_label_set_text(mark, symbol);
+    lv_obj_set_style_text_font(mark, UI_MENU_ENTRY_FONT, 0);
+    lv_obj_set_style_text_color(mark, lv_color_hex(TEXT_COLOR_DISABLE), 0);
+    lv_obj_add_flag(mark, LV_OBJ_FLAG_FLOATING); // over the list, not in its layout
+    lv_obj_align(mark, align, -12, align == LV_ALIGN_TOP_RIGHT ? 2 : -2);
+    lv_obj_add_flag(mark, LV_OBJ_FLAG_HIDDEN);
+    return mark;
+}
+
 void menu_nav(uint8_t key) {
     static int8_t selected = 0;
     LOGI("menu_nav: key = %d,sel = %d", key, selected);
@@ -235,6 +261,7 @@ void menu_nav(uint8_t key) {
     lv_event_send(entry, LV_EVENT_CLICKED, NULL);
     // more entries than fit: keep the selected one wholly on screen
     lv_obj_scroll_to_view(entry, LV_ANIM_OFF);
+    show_more_marks();
 }
 
 static void menu_reinit(void) {
@@ -357,9 +384,10 @@ void main_menu_init(void) {
     root_page = lv_menu_page_create(menu, "aaa");
 
     lv_obj_t *section = lv_menu_section_create(root_page);
+    root_section = section;
     // The entries do not fit (Goggle 1: 20, Goggle 2: 21, BoxPro: 20): scrolled only by menu_nav()
     // (lv_obj_scroll_to_view keeps the selected entry whole on screen), with a thin scroll bar
-    // as on the Audio page, so that the list shows that there is more.
+    // as on the Audio page and a chevron where the list goes on, so that it shows there is more.
     lv_obj_add_flag(section, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(section, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(section, LV_SCROLLBAR_MODE_ON);
@@ -391,6 +419,10 @@ void main_menu_init(void) {
     lv_event_send(lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), 0), LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(lv_menu_get_sidebar_header(menu), LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(lv_menu_get_cur_sidebar_page(menu), LV_OBJ_FLAG_SCROLLABLE);
+
+    more_above = create_more_mark(LV_SYMBOL_UP, LV_ALIGN_TOP_RIGHT);
+    more_below = create_more_mark(LV_SYMBOL_DOWN, LV_ALIGN_BOTTOM_RIGHT);
+    show_more_marks();
 
     progress_bar.bar = lv_bar_create(lv_scr_act());
     lv_obj_set_size(progress_bar.bar, UI_MENU_PROG_BAR_SIZE);
