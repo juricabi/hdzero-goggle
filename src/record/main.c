@@ -246,10 +246,39 @@ inline static bool record_isArecording(RecordContext_t *recCtx) {
     return record_isGoing(recCtx->vv) && recCtx->params.enableAudio;
 }
 
+/*
+ * Users of the audio input (AI) device. A user that stops may disable the device only when no
+ * other user holds it: ask aidev_heldByOthers(). Register further users in the enum and table.
+ */
+typedef enum {
+    AIUSER_recording,  // recording with audio (ai2aenc, recCtx->aa)
+    AIUSER_loopback,   // AI -> AO loop (ai2ao, recCtx->ao)
+    AIUSER_liveStream, // live stream audio (live_audio.c)
+    AIUSER_NUM
+} AiUser_e;
+
+static bool aiuser_recording(RecordContext_t *recCtx) { return (recCtx->vv != NULL) && record_isArecording(recCtx); }
+static bool aiuser_loopback(RecordContext_t *recCtx) { return (recCtx->ao != NULL) && ai2ao_playing(recCtx->ao); }
+static bool aiuser_liveStream(RecordContext_t *recCtx) { return liveaudio_running(&recCtx->liveAudio); }
+
+static bool (*const aiUsers[AIUSER_NUM])(RecordContext_t *recCtx) = {
+    [AIUSER_recording] = aiuser_recording,
+    [AIUSER_loopback] = aiuser_loopback,
+    [AIUSER_liveStream] = aiuser_liveStream,
+};
+
+static bool aidev_heldByOthers(RecordContext_t *recCtx, AiUser_e self) {
+    for (int i = 0; i < AIUSER_NUM; i++) {
+        if ((i != (int)self) && aiUsers[i](recCtx)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void record_stop(RecordContext_t *recCtx) {
     if (recCtx->params.enableAudio) {
-        bool aoplay = ai2ao_playing(recCtx->ao);
-        ai2aenc_stop(recCtx->aa, !aoplay && !liveaudio_running(&recCtx->liveAudio));
+        ai2aenc_stop(recCtx->aa, !aidev_heldByOthers(recCtx, AIUSER_recording));
     }
 
     vi2venc_stop(recCtx->vv, !record_isGoing(recCtx->vvLive));
@@ -834,8 +863,7 @@ static inline void live_run(RecordContext_t *recCtx) {
     }
 
     // live stream audio: runs while rtspLive reads the audio track
-    liveaudio_run(&recCtx->liveAudio, recCtx->confFile,
-                  record_isArecording(recCtx) || ai2ao_playing(recCtx->ao));
+    liveaudio_run(&recCtx->liveAudio, recCtx->confFile, aidev_heldByOthers(recCtx, AIUSER_liveStream));
 }
 
 void record_checkConf(RecordContext_t *recCtx, char *confSet) {
@@ -913,7 +941,7 @@ void main_loop(RecordContext_t *recCtx) {
             break;
         }
         case AIO_cmdSTOP:
-            ai2ao_stop(recCtx->ao, !record_isArecording(recCtx) && !liveaudio_running(&recCtx->liveAudio));
+            ai2ao_stop(recCtx->ao, !aidev_heldByOthers(recCtx, AIUSER_loopback));
             break;
         case LIVE_cmdSTART:
             recCtx->enableLive = true;
@@ -1006,19 +1034,19 @@ int main(int argc, char *argv[]) {
     }
 
     recCtx.ao = ai2ao_initSys();
+    avshare_init();
     if (!liveaudio_init(&recCtx.liveAudio)) {
         LOGE("live audio init failed");
     }
-    avshare_init();
 
     main_loop(&recCtx);
 
 failed:
     LOGD("exit ...");
 
-    record_stop(&recCtx);
-    liveaudio_stop(&recCtx.liveAudio, recCtx.ao != NULL && ai2ao_playing(recCtx.ao));
+    liveaudio_stop(&recCtx.liveAudio, aidev_heldByOthers(&recCtx, AIUSER_liveStream));
     liveaudio_deinit(&recCtx.liveAudio);
+    record_stop(&recCtx);
     ai2ao_deinitSys(recCtx.ao);
     ai2aenc_deinitSys(recCtx.aa);
     vi2live_deinitSys(recCtx.vvLive);
