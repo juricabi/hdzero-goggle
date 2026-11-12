@@ -36,13 +36,14 @@ static const char *const field_key[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_DVR_LINE_IN] = "dvr_line_in",
     [AUDIO_MIXER_DVR_AV] = "dvr_av",
     [AUDIO_MIXER_DVR_LEVEL] = "dvr_level",
+    [AUDIO_MIXER_RX_AUDIO] = "rx_audio",
 };
 
 static pthread_mutex_t mixer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static audio_mixer_settings_t mixer;
 static audio_mixer_context_t context = {.line_out = true, .playback = false};
 
-static int clamp_field(audio_mixer_field_t field, int value) {
+static int clamp_field(audio_mixer_field_t field, long value) {
     if (value < 0)
         return 0;
     if (value > audio_mixer_max(field))
@@ -53,19 +54,21 @@ static int clamp_field(audio_mixer_field_t field, int value) {
 void audio_mixer_init(void) {
     pthread_mutex_lock(&mixer_mutex);
 
+    // The old single-source setting (0 = Mic, 1 = Line In, 2 = A/V In) stays in [record]:
+    // a setting.ini without [mixer], or a field missing from it, is taken over from it.
+    const long audio_source = ini_getl("record", "audio_source", 0, SETTING_INI);
+    audio_mixer_settings_t defaults;
+    audio_mixer_defaults_from_audio_source(&defaults, audio_source);
+
     if (ini_getl(AUDIO_MIXER_SECTION, "version", 0, SETTING_INI) < AUDIO_MIXER_VERSION) {
-        // First start with the mixer: take over the old single-source setting.
-        const int audio_source = ini_getl("record", "audio_source", 0, SETTING_INI);
-        audio_mixer_defaults_from_audio_source(&mixer, audio_source);
+        mixer = defaults;
         for (int i = 0; i < AUDIO_MIXER_FIELD_COUNT; i++)
             ini_putl(AUDIO_MIXER_SECTION, field_key[i], mixer.value[i], SETTING_INI);
         ini_putl(AUDIO_MIXER_SECTION, "version", AUDIO_MIXER_VERSION, SETTING_INI);
-        LOGI("audio mixer: migrated from record/audio_source=%d", audio_source);
+        LOGI("audio mixer: migrated from record/audio_source=%ld", audio_source);
     } else {
-        audio_mixer_settings_t defaults;
-        audio_mixer_defaults_from_audio_source(&defaults, 0);
         for (int i = 0; i < AUDIO_MIXER_FIELD_COUNT; i++) {
-            const int value = ini_getl(AUDIO_MIXER_SECTION, field_key[i], defaults.value[i], SETTING_INI);
+            const long value = ini_getl(AUDIO_MIXER_SECTION, field_key[i], defaults.value[i], SETTING_INI);
             mixer.value[i] = clamp_field(i, value);
         }
     }
@@ -161,9 +164,8 @@ void audio_mixer_set_playback(bool active) {
     audio_mixer_apply();
 }
 
-bool audio_mixer_av_in_use(void) {
-    return mixer.value[AUDIO_MIXER_AV] > 0 ||
-           (mixer.value[AUDIO_MIXER_DVR_MODE] == AUDIO_MIXER_DVR_CUSTOM && mixer.value[AUDIO_MIXER_DVR_AV]);
+bool audio_mixer_rx_audio(void) {
+    return mixer.value[AUDIO_MIXER_RX_AUDIO] != 0;
 }
 
 static void db_str(int tenths, char *buf, size_t size) {

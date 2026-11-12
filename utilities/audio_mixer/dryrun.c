@@ -17,7 +17,7 @@
 
 static const char *const keys[AUDIO_MIXER_FIELD_COUNT] = {
     "mic", "line_in", "av", "mic_boost", "line_in_boost", "headphones",
-    "playback", "dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av", "dvr_level"};
+    "playback", "dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av", "dvr_level", "rx_audio"};
 
 int main(int argc, char *argv[]) {
     audio_mixer_settings_t settings;

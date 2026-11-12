@@ -53,6 +53,7 @@ writes it to `/tmp/audio_mixer.cmd` and runs `amixer -q -s < /tmp/audio_mixer.cm
 | DVR Audio         | `dvr_mode` 0/1        | 0 As Heard: ADC fed from the output mixers; 1 Custom: direct inputs |
 | Record Mic/Line In/A/V In | `dvr_mic`, `dvr_line_in`, `dvr_av` | Custom: `L/RADC input Mixer MIC1/MIC2/LINEIN` switches |
 | Record Level      | `dvr_level` 0..7      | `ADC input gain control` (-4.5..+6 dB); `ADC volume` stays 160 (0 dB) |
+| Analog RX Audio (Goggle 2, BoxPro) | `rx_audio` 0/1 | not a codec control: the RTC6715's audio output |
 
 "Record Audio" on the Record Option page still decides whether the DVR records
 audio at all. The old "Audio Source" row is gone: the same thing is DVR Audio =
@@ -63,9 +64,16 @@ The mixer is applied at boot, when a recording starts and on every source switch
 leaving the menu to HDZero, while a DVR file plays and after it, and again 4 s and
 12 s after the record daemon (re)starts. HDMI in keeps the old rule: line out off.
 
-The internal analog receiver (RTC6715 on Goggle 2 and BoxPro) gets its audio output
-enabled whenever the A/V input is used: A/V level above 0, or Custom with Record
-A/V In = Yes (every `rtc6715.init(1, ...)` call).
+The built-in analog receiver (RTC6715 on Goggle 2 and BoxPro) has an audio output
+of its own, switched by the receiver itself: the "Analog RX Audio" row
+(`[mixer] rx_audio`), used by every `rtc6715.init(1, ...)` for the live picture
+(source change and head-tracker wake-up). It is independent of the A/V In level:
+the AV-in jack and the module bay share the codec's LINEIN with the receiver, and
+their audio keeps reaching the headphones whatever the receiver does. The Analog
+RSSI page keeps the receiver's audio off, as before. Migrated from the old
+setting: on only if the old Audio Source was A/V In (the old
+`rtc6715.init(1, audio_source == A/V In)`, upstream commit 2ee4309); a fresh
+install has it off, like the old default (Mic).
 
 ### libmedia_mpp resets part of the mixer
 

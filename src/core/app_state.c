@@ -94,7 +94,7 @@ void app_switch_to_analog(bool is_av_in) {
     } else if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_EXTERNAL) {
         rtc6715.init(0, 0);
     } else {
-        rtc6715.init(1, audio_mixer_av_in_use());
+        rtc6715.init(1, audio_mixer_rx_audio());
         rtc6715.set_ch(g_setting.source.analog_channel - 1);
     }
 

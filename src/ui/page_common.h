@@ -78,7 +78,7 @@ extern "C" {
 #define RIGHT_BUTTON_IMG "right_button.png"
 #define ALERT_IMG        "alert.png"
 
-#define MAX_PANELS 13 // the audio mixer page has 13 rows
+#define MAX_PANELS 14 // the audio mixer page has up to 14 rows
 
 #define FLAG_SELECTABLE LV_OBJ_FLAG_USER_1
 #define STATE_DISABLED  LV_STATE_USER_1

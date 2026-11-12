@@ -41,6 +41,10 @@ static const item_t items[] = {
     SLIDER(AUDIO_MIXER_MIC, "Mic"),
     SLIDER(AUDIO_MIXER_LINE_IN, "Line In"),
     SLIDER(AUDIO_MIXER_AV, "A/V In"),
+#if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
+    // audio output of the built-in analog receiver, one of the sources of A/V In
+    TOGGLE(AUDIO_MIXER_RX_AUDIO, "Analog RX Audio", "On", "Off", 1),
+#endif
     SLIDER(AUDIO_MIXER_MIC_BOOST, "Mic Boost"),
     SLIDER(AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost"),
     SLIDER(AUDIO_MIXER_HEADPHONES, "Headphones"),
@@ -54,6 +58,7 @@ static const item_t items[] = {
 };
 
 #define ITEM_COUNT ((int)ARRAY_SIZE(items))
+_Static_assert(ARRAY_SIZE(items) <= MAX_PANELS, "one select panel per row");
 
 static lv_coord_t col_dsc[] = {UI_AUDIO_COLS};
 static lv_coord_t row_dsc[] = {UI_AUDIO_ROWS};

@@ -36,6 +36,7 @@ static const uint8_t field_max[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_DVR_LINE_IN] = 1,
     [AUDIO_MIXER_DVR_AV] = 1,
     [AUDIO_MIXER_DVR_LEVEL] = AUDIO_MIXER_DVR_LEVEL_MAX,
+    [AUDIO_MIXER_RX_AUDIO] = 1,
 };
 
 int audio_mixer_max(audio_mixer_field_t field) {
@@ -44,14 +45,15 @@ int audio_mixer_max(audio_mixer_field_t field) {
     return field_max[field];
 }
 
-void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, int audio_source) {
+void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, long audio_source) {
     uint8_t *v = settings->value;
 
-    // same clamping as the old dvr_select_audio_source()
-    if (audio_source < 0)
-        audio_source = 0;
-    if (audio_source > 2)
-        audio_source = 2;
+    // The old firmware passed the value to dvr_select_audio_source(uint8_t), which records
+    // A/V In for anything above 2, and compared it with A/V In (2) for the receiver audio.
+    const int old_value = (int)audio_source;
+    uint8_t dvr_source = (uint8_t)audio_source;
+    if (dvr_source > 2)
+        dvr_source = 2;
 
     // Headphones: what the old firmware did (out_on): A/V at +6 dB, line out 31, no mic.
     v[AUDIO_MIXER_MIC] = 0;
@@ -67,9 +69,13 @@ void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, in
 
     // DVR: exactly the one source of the old "Audio Source" setting, straight into the ADC.
     v[AUDIO_MIXER_DVR_MODE] = AUDIO_MIXER_DVR_CUSTOM;
-    v[AUDIO_MIXER_DVR_MIC] = audio_source == 0;
-    v[AUDIO_MIXER_DVR_LINE_IN] = audio_source == 1;
-    v[AUDIO_MIXER_DVR_AV] = audio_source == 2;
+    v[AUDIO_MIXER_DVR_MIC] = dvr_source == 0;
+    v[AUDIO_MIXER_DVR_LINE_IN] = dvr_source == 1;
+    v[AUDIO_MIXER_DVR_AV] = dvr_source == 2;
+
+    // Built-in analog receiver audio: the old rtc6715.init(1, audio_source == A/V In)
+    // (off with the old default, Mic).
+    v[AUDIO_MIXER_RX_AUDIO] = old_value == 2;
 }
 
 typedef struct {

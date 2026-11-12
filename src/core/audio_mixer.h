@@ -19,31 +19,26 @@ extern "C" {
 #include <stdint.h>
 
 typedef enum {
-    AUDIO_MIXER_SRC_MIC = 0, // codec MIC1: built-in microphone
-    AUDIO_MIXER_SRC_LINE_IN, // codec MIC2: "Line In" jack (external microphone)
-    AUDIO_MIXER_SRC_AV,      // codec LINEIN: AV-in jack, module bay, internal analog receiver
-    AUDIO_MIXER_SRC_COUNT
-} audio_mixer_source_t;
-
-typedef enum {
     AUDIO_MIXER_DVR_AS_HEARD = 0, // DVR records the headphone mix
     AUDIO_MIXER_DVR_CUSTOM = 1,   // DVR records the selected sources directly
 } audio_mixer_dvr_mode_t;
 
 // Fields of the [mixer] section of setting.ini
 typedef enum {
-    AUDIO_MIXER_MIC = 0,      // mix level, 0 = off, 1..8 = -4.5..+6 dB
-    AUDIO_MIXER_LINE_IN,      // mix level
-    AUDIO_MIXER_AV,           // mix level
-    AUDIO_MIXER_MIC_BOOST,    // MIC1 preamp 0..7
+    AUDIO_MIXER_MIC = 0,       // mix level, 0 = off, 1..8 = -4.5..+6 dB
+    AUDIO_MIXER_LINE_IN,       // mix level
+    AUDIO_MIXER_AV,            // mix level
+    AUDIO_MIXER_MIC_BOOST,     // MIC1 preamp 0..7
     AUDIO_MIXER_LINE_IN_BOOST, // MIC2 preamp 0..7
-    AUDIO_MIXER_HEADPHONES,   // line-out volume 0..31, 0 = off
-    AUDIO_MIXER_PLAYBACK,     // line-out volume during DVR playback 0..31, 0 = off
-    AUDIO_MIXER_DVR_MODE,     // audio_mixer_dvr_mode_t
-    AUDIO_MIXER_DVR_MIC,      // custom DVR mode: record the mic, 0/1
-    AUDIO_MIXER_DVR_LINE_IN,  // custom DVR mode: record line in, 0/1
-    AUDIO_MIXER_DVR_AV,       // custom DVR mode: record A/V, 0/1
-    AUDIO_MIXER_DVR_LEVEL,    // ADC input gain 0..7 = -4.5..+6 dB
+    AUDIO_MIXER_HEADPHONES,    // line-out volume 0..31, 0 = off
+    AUDIO_MIXER_PLAYBACK,      // line-out volume during DVR playback 0..31, 0 = off
+    AUDIO_MIXER_DVR_MODE,      // audio_mixer_dvr_mode_t
+    AUDIO_MIXER_DVR_MIC,       // custom DVR mode: record the mic, 0/1
+    AUDIO_MIXER_DVR_LINE_IN,   // custom DVR mode: record line in, 0/1
+    AUDIO_MIXER_DVR_AV,        // custom DVR mode: record A/V, 0/1
+    AUDIO_MIXER_DVR_LEVEL,     // ADC input gain 0..7 = -4.5..+6 dB
+    AUDIO_MIXER_RX_AUDIO,      // audio output of the built-in analog receiver (RTC6715), 0/1;
+                               // not a codec control (Goggle 2 and BoxPro only)
     AUDIO_MIXER_FIELD_COUNT
 } audio_mixer_field_t;
 
@@ -61,7 +56,8 @@ typedef struct {
     bool playback; // DVR playback is running
 } audio_mixer_context_t;
 
-// Load the [mixer] settings; a setting.ini without them is migrated from [record] audio_source.
+// Load the [mixer] settings; a setting.ini without them is migrated from [record] audio_source,
+// and so is every field missing from the section.
 void audio_mixer_init(void);
 
 int audio_mixer_get(audio_mixer_field_t field);
@@ -80,8 +76,9 @@ void audio_mixer_record_daemon_restarted(void);
 void audio_mixer_set_line_out(bool enable);
 void audio_mixer_set_playback(bool active);
 
-// True when the A/V input is used by the mix or the DVR (internal analog receiver audio must be on).
-bool audio_mixer_av_in_use(void);
+// Audio output of the built-in analog receiver: the audio_on of every rtc6715.init(1, ...)
+// for the live picture (Goggle 2 and BoxPro; the Analog RSSI page keeps it off).
+bool audio_mixer_rx_audio(void);
 
 // Human readable value of a field ("Off", "-4.5 dB", "27", ...)
 void audio_mixer_value_str(audio_mixer_field_t field, int value, char *buf, size_t size);
@@ -90,7 +87,7 @@ void audio_mixer_value_str(audio_mixer_field_t field, int value, char *buf, size
 size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const audio_mixer_context_t *context, char *buf, size_t size);
 
 // Defaults for a setting.ini that still has the old [record] audio_source (0 = Mic, 1 = Line In, 2 = A/V In).
-void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, int audio_source);
+void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, long audio_source);
 
 #ifdef __cplusplus
 }

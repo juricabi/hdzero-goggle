@@ -100,9 +100,9 @@ extern "C" {
 #define UI_VERSION_ROWS                   60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               160, 160, 160, 160, 160, 160, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
-// audio mixer page (13 rows)
+// audio mixer page (13 rows, 14 on Goggle 2)
 #define UI_AUDIO_COLS                     160, 180, 180, 160, 100, 160, LV_GRID_TEMPLATE_LAST
-#define UI_AUDIO_ROWS                     54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 50, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_ROWS                     54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 50, LV_GRID_TEMPLATE_LAST
 #define UI_AUDIO_PAD_TOP                  96 // = UI_STYLE_SUBMENU_PAD_TOP
 #define UI_AUDIO_KNOB_PAD                 20
 #define UI_VERSION_RELEASE_NOTES_MIN_SIZE 600
@@ -248,9 +248,9 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_VERSION_ROWS                   40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
-// audio mixer page (13 rows)
+// audio mixer page (14 rows)
 #define UI_AUDIO_COLS                     106, 120, 120, 106, 66, 106, LV_GRID_TEMPLATE_LAST
-#define UI_AUDIO_ROWS                     36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 34, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_ROWS                     36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 34, LV_GRID_TEMPLATE_LAST
 #define UI_AUDIO_PAD_TOP                  50
 #define UI_AUDIO_KNOB_PAD                 14
 #define UI_VERSION_RELEASE_NOTES_MIN_SIZE 600

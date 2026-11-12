@@ -148,7 +148,7 @@ static void detect_motion(bool is_moving) {
             }
             if (g_hw_stat.source_mode == SOURCE_MODE_AV) {
                 if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL) {
-                    rtc6715.init(1, audio_mixer_av_in_use());
+                    rtc6715.init(1, audio_mixer_rx_audio());
                     rtc6715.set_ch(g_setting.source.analog_channel - 1);
                 } else {
                 }
