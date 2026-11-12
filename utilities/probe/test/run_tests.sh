@@ -267,9 +267,9 @@ stopped_now() { # 0 if the fake app is stopped right now
     for p in $(app_pids); do [ "$(awk '{ print $3 }' "/proc/$p/stat" 2> /dev/null)" = T ] && return 0; done
     return 1
 }
-dirs_released() {
-    d=$(cat "$R/sys/class/gpio/gpio192/direction" "$R/sys/class/gpio/gpio193/direction" "$R/sys/class/gpio/gpio194/direction" | tr '\n' ' ')
-    case "$d" in "in in in " | "   ") return 0 ;; esac
+dirs_released() { # never exported (killed during the checks), or all back to input
+    dr=$(cat "$R/sys/class/gpio/gpio192/direction" "$R/sys/class/gpio/gpio193/direction" "$R/sys/class/gpio/gpio194/direction" | tr '\n' ' ')
+    case "$dr" in "in in in " | "") return 0 ;; esac
     return 1
 }
 nwrites() { [ "$(grep -c . "$M/soc_writes")" -eq "$1" ]; }
