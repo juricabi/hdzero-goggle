@@ -1,8 +1,49 @@
 # Module bay wiring mod: what to build, why, and how to check it
 
+## First: is the PG bank 1.8 V or 3.3 V? Settle it before you solder
+
+The three pins of the mod, **PG0-PG2**, belong to port G of the V536 SoC. Port G has
+its own supply, VCC-PG, which the SoC allows at 1.8 V or at 3.3 V. Which one the HDZero
+goggle uses is not documented, and **the evidence points to 1.8 V**:
+
+* The official Goggle 1 system configuration (`sys_config.fex` inside
+  `Recovery/HDZG_OS.bin` of the recovery package `HDZEROGOGGLE_Rev20250319.zip`) lists
+  the PMIC's regulators in `[regulator0]`. `vcc-pg` is on **`axp2101_bldo1`** (line
+  1636 of that file), together with `vcc18-pc`, `vcc18-lcd`, `vcc18-dsi`, `vcc18-hdmi`,
+  `vcc18-cmbcsi0`, `vcc18-cmbcsi1`, `vcc18-pf` and `vcc18-wifi`: every load on that
+  regulator whose name carries a voltage is a 1.8 V load. The 3.3 V supplies are
+  elsewhere (`vcc-io`, `vcc33-pc`, `vcc-pa`, `vcc-pd` on `dcdc1`, which the file sets to
+  3.3 V; `vcc-pf` on `aldo4`, 3.3 V). `vcc-pg` appears on no other regulator.
+* The file does not set bldo1's voltage: `;bldo1_vol = 1001800` (1.8 V, on) in
+  `[power_sply]` (line 47) and `;pc_bias = "axp233:bldo1:1800"` in `[gpio_bias]` (line
+  27) are both commented out. The voltage then comes from the PMIC's default or the boot
+  loader, which the file does not show.
+* One name points the other way: `[wlan]` gives the WiFi chip's I/O supply as
+  `wlan_io_regulator = "vcc33-wifi"` (line 1190), a name that no regulator in
+  `[regulator0]` carries.
+
+So: **probably 1.8 V, unproven.** Names are not a measurement, and nobody has measured
+a goggle. [analysis]
+
+**How it is settled, with nothing soldered:** Module Bay > **Check Pins** (checklist
+step 3). It shows the bank supply as the SoC itself reports it (PIO_POW_VAL bit 6:
+below 2.0 V shows as "1.8 V" in orange, above 2.5 V as "3.3 V"; "? V" if the register
+could not be read). If it cannot tell, the pin finder with a meter (step 4).
+
+**What it decides:**
+
+| Check Pins shows | what to build | why |
+|---|---|---|
+| "Pins … , 3.3 V" | **path R**: a 4.7 kΩ resistor in each wire (section 2) | a 3.3 V high reaches a 5 V True-D's input in practice, not by guarantee (section 3) |
+| "Pins … , 1.8 V" (orange) | **path S**: the same resistors plus the LM339 level shifter of section 5, or no mod | resistors alone are **safe** at 1.8 V (section 2: at most 0.62 mA into a pin's clamp), but they **do not work**: a 1.8 V high (at most 1.98 V) is far below the 3.0 V a 5 V ATmega needs, so the True-D would never see a high, i.e. no clock and no command |
+| "Pins … , ? V" | nothing yet: the pin finder (step 4) | |
+
+## How to read this page
+
 This is the one page to follow for the hardware side of module bay control
-(firmware side: [module-bay.md](module-bay.md)). Nothing here has been tried on a
-real goggle. Every statement carries one of three marks:
+(firmware side: [module-bay.md](module-bay.md); flashing the goggle:
+[first-flash.md](first-flash.md)). Nothing here has been tried on a real goggle. Every
+statement carries one of three marks:
 
 * **[analysis]**: worked out from datasheet numbers or from the code; no hardware
   involved;
@@ -18,20 +59,21 @@ search-engine snippet (weak).
 
 ## Short version
 
-1. The mod is three wires from three SoC pins of the goggle (PG0-PG2, which are
-   also the WiFi chip's bus) to the channel pins 1-3 of the module socket. Put a
-   **4.7 kΩ resistor in each wire, soldered at the goggle-side connector pin**.
-   Nothing else on the bay board protects those pins. [analysis]
-2. Before choosing any Module type: **Module Bay > Check Pins**. "PG bank 3.3 V":
-   resistors alone are enough. "PG bank 1.8 V" (shown in orange): a 5 V module
-   cannot see the goggle's high level; build the level shifter of section 5 or
-   stop. [analysis]
-3. Follow the checklist of section 8 in its order. Every step says what you should
-   read and when to stop.
+1. Settle the bank voltage first (the box above): Check Pins, before any soldering.
+2. **Path R (3.3 V)**: three wires from three SoC pins of the goggle (PG0-PG2, which are
+   also the WiFi chip's bus) to the channel pins 1-3 of the module socket, with a
+   **4.7 kΩ resistor in each wire, soldered at the goggle-side connector pin**. Nothing
+   else on the bay board protects those pins. **Path S (1.8 V)**: the same resistors,
+   then the LM339 shifter of section 5 between them and the socket. [analysis]
+3. Follow the checklist of section 8 from step 1 to step 26. Every step says what you
+   should read and at what number to stop.
 4. True-D: MOD 1.17, `BAY:RAPIDFIRE`, goggle Module = **rapidFIRE**. Never put a
    True-D with the stock firmware (3.9D), MOD 1.15 or MOD 1.16 in `BAY:AUTO` into
    a wired bay. [analysis]
-5. Fly with WiFi off. Module control pauses while WiFi is on. [analysis, sim]
+5. With a wired bay, never: touch the goggle-side connector with a probe while the
+   goggle is on; insert or remove a module while the goggle is on; plug a USB cable into
+   a True-D while it sits in the bay. [analysis]
+6. Fly with WiFi off. Module control pauses while WiFi is on. [analysis, sim]
 
 ## 1. The three wires
 
@@ -55,7 +97,8 @@ connector pin is. From the code's roles and the standard rapidFIRE wiring (CS3 =
 CLK, CS2 = DATA, CS1 = NSS: ExpressLRS, (b)) the mod presumably connects **PG0 →
 socket pin 1 (CS3, clock), PG1 → pin 2 (CS2, data), PG2 → pin 3 (CS1, chip
 select)**. [hw] for the actual connector pins: nobody has checked continuity on a
-goggle.
+goggle. Checklist step 20 checks the order after the mod; the pin finder (step 4) can
+check it before.
 
 **The stock bay board does nothing on these pins.** Socket pins 1-3 are not
 connected on a stock bay board. An open-source clone of the Goggle 1 bay board
@@ -87,10 +130,13 @@ the Goggle 2's bay connector at all is unknown. [hw]
 | RTC6715 receiver chip (the "dumb" modules' channel pins) | V_IH 0.7 × V_IO, V_IL 0.3 × V_IO, internal pull-ups of unstated strength, logic abs. max 5 V | RichWave datasheet, (a) |
 | clamp diode forward drop | 0.3 V taken as the worst case (a lower drop means more current) | [analysis] |
 
-**PG bank: 1.8 V or 3.3 V is not established.** The official images put `vcc-pg`
-on a PMIC rail named with 1.8 V loads, which points to 1.8 V, but do not set its
-voltage (d). The SoC reports it: PIO_POW_VAL (0x0300B348) bit 6 = 1: below 2.0 V, 0:
-above 2.5 V (V536 datasheet p. 888, (a)). **Check Pins** shows it.
+The final review re-derived every current on this page from the ATmega328P and LM339
+datasheets; the V536 rows could not be re-fetched for that review and rest on the
+earlier reading of the datasheet.
+
+**PG bank: 1.8 V or 3.3 V** is the question of the box at the top. The SoC reports
+it: PIO_POW_VAL (0x0300B348) bit 6 = 1: below 2.0 V, 0: above 2.5 V (V536 datasheet
+p. 888, (a)). **Check Pins** shows it.
 
 ### What can push current into PG0-PG2, with and without the resistor
 
@@ -110,6 +156,13 @@ into VCC-PG. [analysis] for every number; when each case can happen is from the 
 | goggle high into an **unpowered module** (its clamp to its 0 V rail): (VCC − 0.3) / R | ≤ one rapidFIRE frame after a bay power-off (< 40 ms in the host test) [sim]; SteadyView's mode set, 70 ms by design | 0.64 mA | 0.32 mA | mA to tens of mA, can half-power the module's MCU |
 | **True-D on USB, goggle off**: bootloader pulse into an unpowered goggle: (5 − 0.3) / R | 100 ms per reset, (b) | 1.0 mA | 1.0 mA | tens of mA into the goggle's unpowered rail |
 | module pull-ups (True-D `BAY:1-8` / `STEP`, 20-50 kΩ) into a goggle input: (5 − VCC − 0.3) / (R_PU + R) | whenever the module is powered, also with Module = None | ≤ 57 µA | ≤ 117 µA | ≤ 70 / 145 µA |
+
+**Never plug the True-D's USB in while it sits in a wired bay.** The "True-D on USB"
+row is 1.0 mA, exactly at the design limit, at every reset, and a PC opening the port
+resets the module. While a PC flashes it, the bootloader holds D13 as an output for the
+whole session (furiousdfw `docs/bay-standards.md` 5.4), and the module's USB 5 V may also
+reach bay pin 9 (furiousdfw `docs/bench-test.md` step 7 measures whether it does on a
+given unit), which would put the PC's 5 V onto the goggle's bay supply. [analysis]
 
 With the **no-LED bootloader** (furiousdfw `bootloader/`, flashed once with an ISP
 programmer) and MOD 1.17 the True-D never drives a bay pin outside an ISP session
@@ -137,7 +190,8 @@ are 1 kΩ inside some modules, on their own receiver-chip lines (bay pin researc
 * **The WiFi bus**: soldered at the goggle-side connector pin with < 5 mm of stub,
   the resistor hides the wire and the module from the bus: at the 25-50 MHz SDIO
   clock the bus sees about 4.7 kΩ (≤ 0.7 mA peaks at 3.3 V) instead of 10-20 cm of
-  wire and a module input. [analysis]; that WiFi keeps working with the mod [hw].
+  wire and a module input. [analysis]; that WiFi keeps working with the mod [hw]
+  (checklist step 21).
 * **Nothing found argues for another value.** No published design puts series
   resistors between goggle and module at all (bay pin research, (b)/(d)); the
   True-D project checked 4.7 kΩ from the module side and keeps it (furiousdfw
@@ -150,8 +204,8 @@ A module that passes the pins straight to an RTC6715 receiver chip reads a low
 only below 0.3 × V_IO ≈ **1.0 V** (3.3 V V_IO), against internal pull-ups whose
 strength the datasheet does not give (a). Through 4.7 kΩ the low stays below
 1.0 V only if that pull-up is above ~11 kΩ (3.3 V × 4.7 / (4.7 + R_int) ≤ 1.0 V).
-[analysis]; the real value [hw]: check "low ≤ 1.0 V" at the module side (checklist
-step 16). The True-D is different: an AVR input, low below 1.5 V.
+[analysis]; the real value [hw]: check "low ≤ 1.0 V" at the module side (the note in
+checklist step 20). The True-D is different: an AVR input, low below 1.5 V.
 
 ## 3. The honest margin at 3.3 V
 
@@ -166,7 +220,7 @@ exactly: V_OH ≥ VCC-PG − 0.2 V (a).
 So a 3.3 V bank drives a True-D's input high **in practice, not by guarantee**.
 [analysis] The module's supply is the bay's 5 V (pin 9); its tolerance is not
 documented (d), and whether the True-D's ATmega runs directly from it or from a
-regulator is not known (d). Measure the bay supply (checklist step 12); at 5.25 V
+regulator is not known (d). Measure the bay supply (checklist step 2); at 5.25 V
 or more the guaranteed margin is gone, and the typical one shrinks by ~0.05 V per
 0.1 V of supply. [analysis]
 
@@ -174,8 +228,10 @@ or more the guaranteed margin is gone, and the typical one shrinks by ~0.05 V pe
 
 * The goggle never drives PG0-PG2 while WiFi is enabled, while the WiFi driver
   (`xradio_wlan`) is loaded, or while PG_CFG0 shows any of them in the SDIO
-  function; it releases them (inputs, unexported) before the WiFi page starts WiFi,
-  and waits for a running Check Pins to finish. [analysis, sim]
+  function (checked again every 5 s); it releases them (inputs, unexported) before
+  the WiFi page starts WiFi, and waits for a running Check Pins to finish. WiFi does
+  not start while module control still holds the pins: the WiFi page waits up to 3 s
+  for their release and otherwise refuses with a message. [analysis, sim]
 * The module still sees the SDIO traffic on its pins. A rapidFIRE listener (True-D
   MOD 1.17 `BAY:RAPIDFIRE`) accepts only checksummed frames and switches its
   receiver off for 200 ms on a pin storm (furiousdfw, [sim]). A module that reads a
@@ -186,6 +242,8 @@ or more the guaranteed margin is gone, and the typical one shrinks by ~0.05 V pe
   clamps, limited only by the SoC's drive (the resistor is on the module side, not
   between SoC and WiFi chip). This applies to pkendall64's code as much as to this
   firmware; only with Module = None is it ruled out. [hw]
+* Checklist steps 5, 21 and 25 check that WiFi still connects: after Check Pins, with
+  the mod, and with module control running.
 
 ## 5. If Check Pins says 1.8 V
 
@@ -199,8 +257,8 @@ module in.
 ### The option: one LM339 comparator per goggle (all three lines)
 
 Chosen because it needs **only the bay's 5 V and GND** (both on the bay board, (b)
-from the clone), puts **no clamp, pull-up or accelerator on the SDIO bus**, and its
-input pins tolerate 36 V whether the comparator is powered or not.
+from the clone), puts **no clamp, pull-up or accelerator on the SDIO bus**, and
+**TI's** LM339 is rated for inputs up to 36 V whether it is powered or not (below).
 
 Per line (three times; the LM339's fourth comparator is spare):
 
@@ -216,19 +274,39 @@ goggle connector pin (PG0/1/2)
    spare comparator: IN+ to GND, IN− to the reference, output open
 ```
 
-Parts a hobbyist can get anywhere: LM339N (DIP-14) or LM339 in SO-14 (any maker),
-1/8 W resistors 3 × 4.7 kΩ, 3 × 1 MΩ, 3 × 10 kΩ, 3 × 1 kΩ, 1 × 4.7 kΩ + 1 × 1 kΩ
-(1 %) for the reference, optionally 3 × 18 kΩ; one 100 nF ceramic capacitor (a
-second one on the reference is good practice). Build it on a scrap of perfboard,
-insulate it with Kapton, and place it where neither the module nor a screw head
-can press on it; whether the HDZero bay has room for it is [hw].
+Parts: **an LM339 made by Texas Instruments** (LM339N, DIP-14, in a DIP-14 socket on
+the board; or LM339D, SO-14), not any maker's (below); 1/8 W resistors 3 × 4.7 kΩ,
+3 × 1 MΩ, 3 × 10 kΩ, 3 × 1 kΩ, 1 × 4.7 kΩ + 1 × 1 kΩ (1 %) for the reference,
+optionally 3 × 18 kΩ; one 100 nF ceramic capacitor (a second one on the reference is
+good practice). Build it on a scrap of perfboard, insulate it with Kapton, and place
+it where neither the module nor a screw head can press on it; whether the HDZero bay
+has room for it is [hw].
 
-LM339 numbers (TI SLCS006Z, non-B, (a)): supply 2-36 V; input voltage range −0.3 to
-36 V on either input, also above the supply ("either or both inputs can go to 30 V
-without damage"); common-mode range 0 to VCC − 1.5 V (25 °C), VCC − 2.0 V (full
-temperature); input bias 25 nA typ, 250 nA max, flowing out of the pin; output open
-collector, V_OL ≤ 400 mV at 4 mA, sinks ≥ 6 mA (16 mA typ) at V_OL 1.5 V, output
-short to ground unlimited; response 1.3 µs (5 mV overdrive), 0.3 µs (TTL step).
+LM339 numbers (TI SLCS006Z, non-B, (a)): supply 2-36 V; absolute maximum input
+voltage −0.3 to 36 V on either input, given "with respect to network ground" and with
+no condition on the supply, so also above VCC and with VCC = 0 ("either or both inputs
+can go to 30 V without damage"); common-mode range 0 to VCC − 1.5 V (25 °C), VCC −
+2.0 V (full temperature); input bias 25 nA typ, 250 nA max, flowing out of the pin;
+output open collector, V_OL ≤ 400 mV at 4 mA, sinks ≥ 6 mA (16 mA typ) at V_OL 1.5 V,
+output short to ground unlimited; response 1.3 µs (5 mV overdrive), 0.3 µs (TTL step).
+
+**Why TI's part.** The design needs inputs that may sit above an unpowered VCC: with
+the bay switched off (batch 2 hardware) and WiFi running, the SDIO host drives CLK /
+CMD / D0 at VCC-PG into R1 and the comparator inputs while the comparator has no
+supply. TI's absolute maximum ratings give the input range against ground,
+independent of VCC. The final review found this only in TI's LM339 datasheet (other
+makers' sheets were not re-read for this page). For another maker's LM339, check its
+datasheet for all three before you use it:
+
+* the absolute-maximum input voltage: stated against GND (for example −0.3 to 36 V),
+  not as "VCC + 0.3 V";
+* the behaviour with VCC unpowered: inputs of at least 2.5 V while VCC = 0 must be
+  allowed;
+* input clamp diodes: none from the inputs to VCC. With such a diode an unpowered
+  comparator takes (VCC-PG − 0.6 V) / 4.7 kΩ ≈ 0.26 mA per line from the SDIO bus and
+  feeds it into the bay's unpowered 5 V rail.
+
+If the datasheet does not state all three, use TI's part.
 
 **How it behaves** [analysis for all; nothing built, [hw]]:
 
@@ -243,7 +321,9 @@ short to ground unlimited; response 1.3 µs (5 mV overdrive), 0.3 µs (TTL step)
   R2 lifts IN+ to the goggle pin's clamp (~2.1 V), output high: the module reads
   all three lines high, as from an unconnected bay with pull-ups (code 7). The
   goggle pin takes (5 − 2.1) V / 1 MΩ ≈ 3 µA into its clamp: inside its 10 µA
-  leakage figure. IN+ at 2.1 V is inside the common-mode range (≤ 3.0 V).
+  leakage figure. IN+ at 2.1 V is inside the common-mode range (≤ 3.0 V). If the SoC
+  has its internal pull-down (80-120 kΩ) on a pin, IN+ sits at 0.37-0.53 V instead and
+  that output is low: harmless, and checklist step 18 shows it.
 * **The True-D bootloader pulse never reaches the goggle**: D13 now meets the
   comparator's output, not PG0. D13 high against an output low: (5 − 0.4) V / 1 kΩ
   = 4.6 mA, within the LM339's sink and the AVR's 40 mA (and only if the goggle
@@ -256,11 +336,11 @@ short to ground unlimited; response 1.3 µs (5 mV overdrive), 0.3 µs (TTL step)
   module sees slow garbage while WiFi runs (as it would without the shifter).
   **WiFi with this shifter is expected to work as well as with the plain mod;
   neither is tested.** [analysis, hw]
-* **Bay unpowered** (batch 2 switches the bay): the comparator is unpowered; its
-  inputs have no specified clamp to its supply (36 V input range regardless of
-  VCC), so the goggle pin sees 4.7 kΩ + 1 MΩ to a 0 V rail: ≤ 2 µA; the module sees
-  only open-collector outputs and pull-ups to the unpowered rail. No back-feeding
-  either way. [analysis]
+* **Bay unpowered** (batch 2 switches the bay): the comparator is unpowered; TI's
+  inputs have no clamp to the supply (36 V input range regardless of VCC), so the
+  goggle pin sees 4.7 kΩ + 1 MΩ to a 0 V rail: ≤ 2 µA; the module sees only
+  open-collector outputs and pull-ups to the unpowered rail. No back-feeding either
+  way. [analysis]
 * **Speed.** ≤ ~1.3 µs comparator delay plus the output rise through 10 kΩ ×
   ~25 pF = 0.25 µs, against ≥ 100 µs rapidFIRE levels: fine. SteadyView X (8.7 µs
   UART bits) gets ~1 µs of skew between falling and rising edges: probably fine,
@@ -301,13 +381,13 @@ short to ground unlimited; response 1.3 µs (5 mV overdrive), 0.3 µs (TTL step)
   3.3 V ESP drives it directly in the ExpressLRS backpack, so 3.2-3.3 V highs work
   (c). Whether its pins tolerate 5 V is unknown (d): use R5.
 * **Foxeer Wildfire**: levels, pull-ups and whether it ever drives these pins are
-  unknown (d): checklist steps 4-5 first; use R5 unless it measures as a 5 V part.
+  unknown (d): checklist steps 7-11 first; use R5 unless it measures as a 5 V part.
 
 ## 6. The 9-pin module socket, pin by pin
 
 Pin 1 is the channel-pin end, pin 9 the +5 V end. Some projects number from the
-other end: **identify the pins by +5 V and GND with a meter, not by number.**
-Grades from the bay pin research.
+other end: **identify the pins by +5 V and GND with a meter, not by number**
+(checklist steps 2 and 7). Grades from the bay pin research.
 
 | pin | what the HDZero bay does | what a module may put there |
 |---|---|---|
@@ -318,7 +398,7 @@ Grades from the bay pin research.
 | 5 | audio left, always mixed into recordings (b) | audio (rapidFIRE 6.5 MHz carrier audio) (b) |
 | 6 | audio right (b) | audio (6.0 MHz) (b) |
 | 7 | official board unknown, probably GND; the clone leaves it open (b)/(d) | GND (rapidFIRE, SteadyView) (b) |
-| 8 | **GND** (pkendall64's wiki; the clone, (b)) | **differs by vendor**: GND on rapidFIRE (b); **RSSI output on the SteadyView, lift its pin 8** as the wiki shows (b); tied to +5 V on one old DIY design (FS-SkyRF, by its schematic's pin order, not verified physically: it would short the bay's 5 V) (b); RSSI on C5VRX (b); **True-D and Wildfire unknown** (d): checklist step 4 |
+| 8 | **GND** (pkendall64's wiki; the clone, (b)) | **differs by vendor**: GND on rapidFIRE (b); **RSSI output on the SteadyView, lift its pin 8** as the wiki shows (b); tied to +5 V on one old DIY design (FS-SkyRF, by its schematic's pin order, not verified physically: it would short the bay's 5 V) (b); RSSI on C5VRX (b); **True-D and Wildfire unknown** (d): checklist step 7 |
 | 9 | +5 V from the goggle, switched on batch 2 goggles (b); current rating unknown (d) | supply in |
 
 A SteadyView with pin 8 lifted still works in an HDZero bay: it gets GND from pin 7
@@ -336,115 +416,364 @@ Weak evidence (forum posts seen only as search snippets), but cheap to prevent:
 * A forum post describes a "fried 5V voltage regulator BEC inside the HDZero
   goggles" (snippet).
 
-So: inspect the bay and the module (checklist steps 1-2 and 7), cover screw heads
+So: inspect the bay and the module (checklist steps 6, 7 and 14), cover screw heads
 and exposed solder points facing the module with **Kapton tape**, and route the mod
 wires (and a shifter board) clear of the screws and of where the module presses on
 the board, as pkendall64's wiki says. [analysis]
 
 ## 8. The checklist
 
-In this order. Each step: what to do, what you should read, **stop if**. Stop means:
-do not go on until the cause is found and fixed. You need a multimeter (diode mode
-and min/max hold help), a current-limited 5 V bench supply for step 5, and an LED
-with 1 kΩ for step 6.
+Read it once to the end before you start. Then do the steps in order, 1 to 26. Each
+step says what to do, what you should read, and **stop if**: the reading at which you
+do not go on.
 
-**A. Bay and module on the bench (goggle off, module out)**
+**Rules for every step**
 
-1. **Bay socket, stock, no module, goggle off.** Pin 8 to GND: 0 Ω. Record pin 7
-   to GND. Pins 1, 2, 3: open to everything. Pin 9 to pin 8: not a short. *Stop
-   if* pin 9 is shorted to GND, or pins 1-3 are connected to anything on a stock
-   board.
-2. **Bay mechanics.** Look for screw heads and solder points that a module could
-   touch; tape them with Kapton. *Stop if* anything metallic can touch the module.
-3. **Module, unpowered: pins 7-9.** Pin 8 to pin 9: must not be ~0 Ω. Pin 8 to pin
-   7: 0 Ω or open are fine. *Stop if* pin 8 shows a resistance to pin 7 that is
-   neither (an output the HDZero would short to GND: lift that pin, as for a
-   SteadyView), or pin 8 is tied to pin 9.
-4. **Module, unpowered: pins 1-3.** Diode mode, red lead on the pin, black on GND:
-   1.6-2.0 V means an LED on that pin. Also record each pin's resistance to GND
-   and to pin 9 (True-D: what is on D11-D13 is not known, (d)). *Stop if* an LED
-   (it would defeat 4.7 kΩ), or a resistance below ~10 kΩ to GND or 5 V (a pull
-   resistor that would load the goggle pin in every mode).
-5. **Module on a 5 V bench supply** (current limit ~0.5 A; + on pin 9, − on the
-   ground pin(s) step 3 identified, never on an RSSI pin 8),
-   after its boot: each of pins 1-3 open, then with 10 kΩ to GND. ~1 V under load:
-   internal pull-up (fine). Unchanged 5 V or 3.3 V: a push-pull driver. 0 V both
-   times: a plain input (True-D `BAY:RAPIDFIRE`: expect this). *Stop if* a driver:
-   never wire that module without the resistors, and for a True-D it means the wrong
-   firmware or mode.
-6. **Bootloader pulse.** LED + 1 kΩ from pin 1 to GND (or the meter's min/max hold
-   on pin 1), power the module up. A 0.1 s flash: **stock bootloader**, the pulse
-   is there (that pin is D13; with the resistors it is harmless). No flash: the
-   **no-LED bootloader** (or none). *Stop if* the flash lasts seconds: stock 3.9D /
-   MOD 1.15 / 1.16 AUTO firmware, not usable in a wired bay.
-7. **True-D revision and firmware.** V3 from before V3.5: check the clearance
-   between its two boards (section 7). Flash MOD 1.17 out of the goggle, set
-   `BAY:RAPIDFIRE` in its menu. *Stop if* the boards can touch, or the firmware is
-   not MOD 1.17.
+* **Stop** means: switch everything off (goggle and bench supply) and do not go on
+  until the cause is found and fixed. After a fix with the soldering iron on the bay
+  board, start again at step 16; after any other fix, repeat the step that stopped you.
+* **Never put a probe, a clip or a wire on the goggle-side 2×10 connector, its pins or
+  the resistors at it while the goggle is on.** Those are the SoC's own pins; a probe
+  that slips can short one to its neighbour. Attach clip leads there only with the
+  goggle off; then switch on, read, and switch off before you move them. With the
+  goggle on, measure only in the **holes of the 9-pin module socket** with the bay
+  empty: push thin probe tips into the holes, never lay them across the socket's top.
+* **Insert or remove a module only with the goggle off.**
+* **Never plug a USB cable into a True-D while it sits in a wired bay** (section 2),
+  and never flash it there.
+* Ohm readings: wait 5 s for the value to settle (capacitors charge). "OL" (over range)
+  counts as above every limit on this page.
+* Switch everything off at once if the module gets too hot to keep a finger on its
+  case for 5 s, or if anything smells.
+* **Your path**: **R** (resistors) if step 3 showed 3.3 V, **S** (shifter) if it showed
+  1.8 V. Where a step has a block for each path, do only yours.
 
-**B. The mod (goggle off)**
+**You need**: a multimeter (DC volts, ohms, diode test) with thin probe tips that fit
+into the module socket's holes; two insulated mini hook clips (steps 4 and 23, both
+optional); a current-limited bench supply, 5.0 V, with a limit you can set to 0.1 A and
+0.5 A (step 10); two 10 kΩ resistors and an LED with a 1 kΩ resistor (steps 11-12);
+Kapton tape; a fine-tip soldering iron; three 4.7 kΩ resistors (5 % or better) and thin
+enamelled or insulated wire; for path S also the parts of section 5 and a DIP-14
+socket. A monitor on the goggle's HDMI out helps you read the menu while your hands are
+on the meter.
 
-8. Resistors at the goggle-side connector pins (< 5 mm stub), wires to socket
-   pins 1-3, routed clear of the screws, insulated. Each wire end to end: 4.7 kΩ
-   ± 5 %; between the wires and from each to GND and to pin 9: > 1 MΩ (no module).
-   *Stop if* any reading is off.
+### A. Before any soldering: the PG bank voltage (goggle on, bay empty)
 
-**C. Goggle on, no module**
+1. **Set up.** Flash this firmware and do the checks of the untouched goggle first
+   ([first-flash.md](first-flash.md), sections 1-4). Leave the bay empty. Module Bay:
+   Module = **None** (the default; the Status line says "Off, bay pins untouched": with
+   None the goggle never touches the bay pins). WiFi Module: Enable = Off, then Apply
+   Settings (click it, then click again to confirm). Power: AnalogRX Power = **On**
+   (only batch 2 goggles have this row; on a batch 1 goggle the bay is always powered).
+2. **The socket's pins and the bay supply, in the socket holes.** Meter on DC volts.
+   Of the two holes at each end of the socket, find the pair that reads 4.75-5.25 V:
+   the hole at the red lead (for a positive reading) is **pin 9** (+5 V), the one at the
+   black lead **pin 8** (GND); the hole at the far end of the row is **pin 1**. Write the
+   voltage down (section 3 uses it). Then holes 1, 2 and 3 to hole 8, one at a time
+   (on a stock board they are not connected). Switch the goggle off and mark pin 1 on
+   the bay board (a dot of paint marker).
+   *Stop if* no end pair reads 4.75-5.25 V, or any of holes 1-3 reads above 0.5 V.
+3. **Check Pins, twice.** Goggle on. Module Bay > Check Pins (hint: "Click to read the
+   3 bay pins (read only)"), click. The row shows "Reading...", then for example
+   "Pins 1 1 0, 3.3 V": the levels of PG0, PG1 and PG2 in that order (1, 0, or
+   "toggling" for a pin that changed during the 100 ms read) and the PG bank voltage.
+   Wait 5 s and click again. Write both results down. The levels mean nothing yet (no
+   wire is fitted; they depend on the SoC's internal pull resistors); the voltage
+   decides:
+   * both "3.3 V": **path R**;
+   * both "1.8 V" (orange): **path S** (the resistors and the shifter of section 5), or
+     no mod;
+   * both "? V": step 4 decides.
 
-9. Flash the goggle firmware. Module Bay: **Module = None** (the default; with None
-   the goggle never touches the pins, as stock). WiFi off.
-10. **Check Pins.** "PG bank 3.3 V": go on. "PG bank 1.8 V" (orange): *stop*, build
-    section 5 first (and repeat steps 8-10 with it). "PG bank ?": measure instead,
-    with WiFi on (a V2 Expansion Module on the Goggle 1), the DC voltage of the PG1
-    or PG2 wire to GND: ~1.8 V or ~3.3 V.
-11. Each wire, goggle side of the resistor, to GND: ≤ VCC-PG (the pins are inputs).
-    *Stop if* above VCC-PG + 0.3 V.
-12. **Bay supply.** Power > AnalogRX Power = On (bay powered), no module: pin 9 to
-    pin 8: 4.75-5.25 V; write it down (section 3). *Stop if* outside that range.
+   If the row says "Not read: …" instead: "set Module to None first" → Module = None
+   (step 1); "switch WiFi off first" → WiFi as in step 1; "pins in use by WiFi" →
+   switch the goggle off and on with WiFi off; then click again.
+   *Stop if* the two reads show different voltages (one 1.8 V, the other 3.3 V), or the
+   row still says "Not read: no GPIO access" on both of 2 clicks after a fresh boot.
+4. **Only if step 3 showed "? V": the pin finder.** (Otherwise go on with step 5. The
+   same procedure can also confirm, before you solder, which connector pin is PG0, PG1
+   and PG2; step 20 checks the order after the mod anyway.) `utilities/probe/
+   bay_gpio_pattern.sh` drives PG0, PG1, PG2 high one after the other
+   (`utilities/probe/README.md`, part 3); here you read them with clip leads, one
+   connector pin per boot:
+   * goggle off; bay empty; WiFi off (the script refuses while the WiFi driver is
+     loaded); copy the script to the SD card root and name it `develop.sh`;
+   * goggle still off: attach a hook clip (meter red lead) to the leg of one of the
+     three connector pins of pkendall64's photos, so that it touches nothing else; push
+     a short piece of solid wire into socket hole 8 and clip the black lead to it; with
+     the meter on ohms, the clip must read above 10 Ω to hole 8 and to hole 9 (it touches
+     no ground or supply pin; with the bay board in, the SoC's protection diodes can make
+     a signal pin read anything from a few hundred Ω upward, which is fine); then switch
+     the meter to DC volts;
+   * power on and listen: 10 s all low, then 1 beep → PG0 high for 10 s, 2 beeps → PG1,
+     3 beeps → PG2; three rounds, about 3 minutes; 4 long beeps: finished (the goggle
+     app then starts). One long beep right after boot means refused: nothing was driven,
+     the reason is in `bay_gpio_N.txt` on the card;
+   * note after how many beeps your pin goes high and the voltage; power off; move the
+     clip to the next pin; repeat for all three; finally delete `develop.sh` from the
+     card.
 
-**D. Module in, goggle passive (Module = None)**
+   Highs of 3.0-3.6 V: **path R**. Highs of 1.6-2.0 V: **path S**.
+   *Stop if* the clip reads 10 Ω or less to hole 8 or hole 9 with the goggle off (it
+   touches a ground or supply pin, or you cannot place it on that pin alone: then do not
+   run this step at all); a pin never reads above 0.5 V in all three rounds (not a PG
+   pin: check against the photos); or a high reads between 2.0 V and 3.0 V, or above
+   3.6 V.
+5. **WiFi after Check Pins.** (Skip it if your goggle has no WiFi.) WiFi Module: Enable =
+   On, Apply Settings; connect your phone or PC as you usually do. It must connect within
+   60 s. Then Enable = Off, Apply Settings.
+   If it does not connect: switch the goggle off and on (WiFi then starts at boot,
+   before any Check Pins) and wait 60 s. If it connects now, the pins that Check Pins
+   left as GPIO inputs were not handed back to WiFi: a firmware problem, not a wiring
+   one. Note it, report it, from now on reboot before you use WiFi after a Check Pins,
+   and go on.
+   *Stop if* WiFi does not connect within 60 s after the fresh boot either.
 
-13. Module in the bay, bay powered, **Check Pins**. True-D `BAY:RAPIDFIRE`: no
-    pull-ups, the lines float: any reading, "~" possible. `BAY:1-8` / `STEP`:
-    1 1 1. Multimeter across each resistor: ≤ 0.3 V (≤ 64 µA). Goggle side of
-    each resistor: ≤ VCC-PG + 0.6 V. *Stop if* more than 1 V across a resistor
-    (> 0.2 mA: something drives), or the goggle side is above VCC-PG + 0.6 V.
-14. **Bay power cycle.** Power > AnalogRX Power = Auto, switch the source away from
-    analog and back (the bay goes off and on), meter in min/max hold across the
-    pin-1 resistor. Stock bootloader: a peak of ≤ ~1.7 V (3.3 V bank: 5 − 3.3 V)
-    for 0.1 s, then 0; no-LED bootloader, or the section 5 shifter: nothing. Then
-    Check Pins again: as in
-    step 13. *Stop if* the goggle side ever exceeds VCC-PG + 0.6 V, or the reading
-    lasts seconds.
+### B. The module on the bench (module out of the goggle)
 
-**E. The goggle drives (first time)**
+For a True-D, furiousdfw `docs/bench-test.md` steps 1-7 are the same checks in more
+detail; its readings count here too.
 
-15. Module = **Switch**, Mode "PG0=1 PG1=2 PG2=4". A True-D in `BAY:RAPIDFIRE`
-    ignores static codes, so nothing changes on it; a "dumb" module changes channel.
-    Status must show "Active" (2.0 s after bay power-on).
-16. Dial **CH8** (all three high), measure the module side of each resistor: ≥ 3.0
-    V for a 5 V module (True-D; ~3.3 V expected), ≥ 2.31 V for a 3.3 V module.
-    Dial **CH1** (all low): ≤ 1.5 V for an AVR module, **≤ 1.0 V for a "dumb"
-    RTC6715 module**. Goggle side while high: the PG bank voltage. *Stop if* any
-    level misses its limit: for a True-D at 3.0-3.2 V, see section 3 before going
-    on.
-17. Module = the real type: True-D MOD 1.17 → **rapidFIRE**; dial a few channels
-    and watch the module follow ("Active R1" etc.). *Stop if* it does not: wiring
-    order (section 1), or [hw] items of section 9.
-18. **WiFi on**: status "Paused while WiFi is on"; WiFi must connect as before the
-    mod. **WiFi off**: "Active" again within ~2 s. *Stop if* WiFi no longer works
-    with the mod: the stub or the wiring loads the SDIO bus; shorten the stub, or
-    remove the mod.
+6. **Look at the module.** Write down its version marking (True-D V3, V3.5 …). On a
+   True-D V3 from before V3.5, look at the gap between its two boards: nothing metal of
+   one may touch the other (step 7 also tests it electrically). Put Kapton tape over the
+   back of the module, the side that faces the bay board.
+7. **Unpowered: ground, +5 V and pin 8.** Ohms (or continuity) from the **shield** (the
+   outer metal body of an antenna socket, or the USB socket's shell) to each module pin:
+   the pins that read 1 Ω or less are the module's ground (expect pin 7 and/or pin 8).
+   The end pin next to them is pin 9 (+5 V); the pin at the other end is pin 1. Then:
+   * pin 9 to the shield: above 100 Ω after 5 s, also while you press the module's two
+     boards gently together;
+   * pin 8 to the shield: 1 Ω or less (ground: fine) or above 1 MΩ (not connected:
+     fine).
+
+   *Stop if* no pin reads 1 Ω or less to the shield; pin 9 reads 100 Ω or less to the
+   shield; or pin 8 reads between 1 Ω and 1 MΩ to the shield (pin 8 carries a signal
+   that the bay's ground would short: lift that pin as for a SteadyView, section 6, and
+   repeat this step).
+8. **Unpowered: pins 1, 2, 3.** For each: diode test, red lead on the pin, black on the
+   shield; then ohms from the pin to the shield and from the pin to pin 9, each with both
+   lead polarities. Write everything down (True-D: what sits on D11-D13 is not known,
+   (d)).
+   *Stop if* a diode reading is 1.5-2.2 V (an LED on that pin: it would load the line far
+   more than 4.7 kΩ can drive), or a pin reads below 10 kΩ to the shield or to pin 9 in
+   both polarities (a pull resistor that would load the goggle pin in every mode).
+9. **True-D only: MOD 1.17 and BAY:RAPIDFIRE, before any powered test.** Out of any
+   goggle, on USB only: flash `release/1.17/TrueD-MOD-1.17.hex` with its verify
+   (furiousdfw `docs/bench-test.md` step 4), then Settings → BAY = `RAPIDFIRE`. Unplug
+   the USB cable. Steps 10-12 then test the firmware that will run in the bay.
+   *Stop if* the boot screen does not show "MOD 1.17", or Settings does not show
+   `BAY:RAPIDFIRE`.
+10. **Bench supply, current-limited.** Set the supply to 5.0 V with the current limit at
+    **0.1 A**, output off. Connect − to a ground pin found in step 7 and + to pin 9,
+    never to pin 8 or any other pin. Output on, and read the supply's display:
+    * the voltage stays below 1.0 V for 2 s with the current at the 0.1 A limit: a short;
+    * otherwise (the module may draw more than 0.1 A and hold the supply at its limit at
+      a few volts: that is no short) switch off, set the limit to **0.5 A**, switch on:
+      expect 4.9-5.1 V. Write down the current.
+
+    (A True-D can instead run from its USB cable alone for steps 11-12, out of any
+    goggle, as bench-test.md step 7 does; never USB and the bench supply together.)
+    *Stop if* the voltage stays below 1.0 V for 2 s at the 0.1 A limit, or the supply is
+    still at its limit with 0.5 A (voltage below 4.75 V).
+11. **Powered: do pins 1-3 only listen?** Wait 2 s after power-on (the bootloader's
+    time). For each of pins 1, 2, 3, meter on DC volts between the pin and ground:
+    (a) with 10 kΩ from the pin to ground, then (b) with 10 kΩ from the pin to pin 9.
+
+    | reading | means |
+    |---|---|
+    | (a) below 0.2 V | no pull-up: a plain input (True-D in `BAY:RAPIDFIRE`: expect this) |
+    | (a) 0.2-2.0 V | an internal pull-up of 15 kΩ or more (True-D in `BAY:1-8` or `STEP`: 0.8-1.7 V); fine with the resistors |
+    | (a) above 2.0 V | an output driving high, or a pull-up below 15 kΩ |
+    | (b) within 0.3 V of the supply | not driven low (expected) |
+    | (b) below 1.0 V | an output driving low |
+
+    *Stop if* (a) reads above 2.0 V or (b) below 1.0 V on any pin: never wire that
+    module; for a True-D it means the wrong firmware or mode.
+12. **Bootloader pulse on pin 1.** Supply off. Connect the LED with its 1 kΩ in series
+    from pin 1 to ground (anode toward pin 1). Supply on and watch the LED. One flash of
+    about 0.1 s: the **stock bootloader** (its pulse on D13; harmless with the resistors,
+    and the shifter of path S keeps it from the goggle entirely). No flash: the **no-LED
+    bootloader** (furiousdfw `bootloader/`) or none. Supply off, disconnect everything.
+    *Stop if* the LED stays lit for more than 1 s (D13 driven for seconds: the 3.9D /
+    MOD 1.15 / MOD 1.16 `BAY:AUTO` behaviour, not usable in a wired bay).
+
+### C. Building the mod (goggle off, bay board out of the goggle)
+
+13. **Bay board out; readings before you solder.** Goggle off and unplugged. Take the bay
+    board out of the goggle (it plugs into the goggle with its 2×10 connector); touch a
+    grounded metal part first, and work on an antistatic or plain wooden surface. Find
+    the three connector pins of pkendall64's photos. Meter on ohms; write every value
+    down:
+    * socket pins 1, 2, 3: to each other and to socket pins 4-9;
+    * socket pin 9 to pin 8; socket pin 7 to pin 8 (1 Ω or less: ground; above 1 MΩ:
+      not connected);
+    * each of the three connector pins: to every pin next to it on the connector (in its
+      row and in the other row, diagonals included) and to socket pins 1-9. On a board
+      like the open clone all of these read above 1 MΩ.
+
+    *Stop if* any of socket pins 1-3 reads 1 MΩ or less to anything (this board uses
+    them, and the mod's assumptions do not hold); pin 9 reads 100 Ω or less to pin 8; or
+    one of the three connector pins reads 1 kΩ or less to socket pin 8 or 9 (it is a
+    ground or supply pin, not a signal: wrong pin).
+14. **Bay mechanics.** With the board out, cover every screw head and exposed solder
+    point that faces the module with Kapton tape (section 7). Plan where the wires (and,
+    path S, the shifter board) will go: clear of the screws and of where the module
+    presses on the board (pkendall64's wiki).
+15. **Build.**
+    *Path R*: one 4.7 kΩ resistor per line, one lead soldered straight to the connector
+    pin's leg, the resistor body within 5 mm of the pin; from its other lead a thin
+    wire to socket pin 1, 2 or 3 as in the wiki's photos (the wire labelled Pin 1 to
+    socket pin 1, and so on). Insulate the resistors and joints with Kapton; route the
+    wires as planned in step 14.
+    *Path S*: build the shifter of section 5 on perfboard with a DIP-14 socket, the
+    **LM339 not yet inserted**, and without R5 for a 5 V module (True-D). Solder R1
+    (4.7 kΩ) at each connector pin as in path R (within 5 mm); a wire from each R1's
+    other lead to its comparator's IN+ on the board; a wire from each comparator's R4
+    to socket pin 1, 2 or 3 (the line of the wiki's Pin 1 wire to socket pin 1, and so
+    on); the board's +5 V to socket pin 9's leg and its ground to pin 8's leg. Insulate
+    the board with Kapton and place it as planned.
+16. **Check the mod: board still out, no module, ohms.** Every reading of step 13 that
+    the table below does not cover must be as it was (within 10 %, or still above 1 MΩ).
+
+    *Path R*:
+
+    | from | to | expect |
+    |---|---|---|
+    | each connector pin | its own socket pin | 4.45-4.95 kΩ |
+    | each connector pin | the two other socket pins of 1-3, socket pins 4-9, its neighbours on the connector | above 1 MΩ (or as in step 13, if it was lower there) |
+    | socket pins 1, 2, 3 | each other, and socket pins 4-9 | above 1 MΩ |
+
+    *Path S* (LM339 still out of its socket; values without R5):
+
+    | from | to | expect |
+    |---|---|---|
+    | each connector pin | its R1's other lead (the comparator's IN+) | 4.45-4.95 kΩ |
+    | each connector pin | socket pin 9 | 0.9-1.1 MΩ (R1 + R2) |
+    | each connector pin | everything else: the other connector pins, socket pins 1-8 | 0.9 MΩ or more (or as in step 13, if it was lower there) |
+    | each of socket pins 1-3 | its comparator's output pad | 0.95-1.05 kΩ (R4) |
+    | each of socket pins 1-3 | socket pin 9 | 10.4-11.6 kΩ (R4 + R3); with R5: 5 kΩ or more |
+    | socket pins 1, 2, 3 | each other | 20-24 kΩ (two R4 + two R3); with R5: 5 kΩ or more |
+    | each of socket pins 1-3 | socket pins 4-8 | 5 kΩ or more |
+    | socket pin 9 | socket pin 8 | 5.4-6.0 kΩ (the reference divider) if step 13 read above 1 MΩ there; lower if it did not |
+
+    Path S, then: insert the LM339 (its pin 1 at the socket's notch, board still out) and
+    measure socket pin 9 to pin 8 again: it settles over a few seconds (the 100 nF
+    charges), typically at a few kΩ.
+    *Stop if* any reading is outside its range, or (path S) pin 9 to pin 8 reads below
+    1 kΩ with the LM339 in.
+17. **Bay board back in.** Goggle off. Board in, screws in; check that no wire is pinched
+    and the Kapton is in place. Then, in the socket holes, socket pin 9 to pin 8.
+    *Stop if* it reads 100 Ω or less (path S: below 1 kΩ) after 5 s.
+
+### D. Goggle on, bay empty, after the mod
+
+18. **Check Pins again.** Power on: bay empty, Module = None, WiFi off, AnalogRX Power =
+    On. Check Pins twice. The voltage must be the one of step 3. Levels: path R: any (the
+    wires float); path S: expect "Pins 1 1 1" (R2 pulls each pin up through 1 MΩ; a 0
+    means the SoC has a pull-down on that pin: note it).
+    *Stop if* the voltage differs from step 3 (1.8 V against 3.3 V).
+19. **Idle levels in the socket holes** (Module = None: the goggle drives nothing).
+    Meter on DC volts: holes 1, 2, 3 to hole 8, and hole 9 to hole 8.
+    *Path R*: each of holes 1-3 between 0 V and 3.6 V (whatever the SoC's input pull
+    makes of the unloaded wire).
+    *Path S*: each of holes 1-3 at 4.5-5.3 V (the comparator outputs are high; with R5:
+    3.0-3.4 V), or at 0.5 V or less where step 18 read a 0.
+    *Stop if* hole 9 to 8 is outside 4.75-5.25 V; path R: any of holes 1-3 reads above
+    3.6 V (something feeds the wire, such as a bridge to +5 V); path S: any reads between
+    0.5 V and 4.5 V (with R5: between 0.5 V and 3.0 V, or above 3.4 V).
+20. **The goggle drives, bay empty: order and levels.** Module Bay: Module = **Switch
+    (Fat Shark)**, Mode = **Wiring A (standard)** (bit weights PG0 = 1, PG1 = 2, PG2 = 4;
+    module-bay.md has the table of all six wirings). Source page: Analog. The Module Bay
+    Status line then shows "Sending CH…". Set each channel of the table with the dial
+    (turn it to the channel, click to confirm; this needs Input > roller = Switch
+    channel, the default), wait 3 s, and measure holes 1, 2, 3 to hole 8:
+
+    | channel | hole 1 (PG0) | hole 2 (PG1) | hole 3 (PG2) |
+    |---|---|---|---|
+    | CH1 | low | low | low |
+    | CH2 | high | low | low |
+    | CH3 | low | high | low |
+    | CH5 | low | low | high |
+    | CH8 | high | high | high |
+
+    Path R: high = 3.0-3.6 V, low = 0.5 V or less. Path S: high = 4.5-5.3 V (with R5:
+    3.0-3.4 V), low = 0.5 V or less. Path R with highs of 3.0-3.2 V: within the limits,
+    but with a bay supply above 5.0 V (step 2) the True-D's guaranteed margin is gone
+    (section 3); it works only by its typical threshold.
+    *Stop if* any pattern differs from the table (the wires are crossed: put them in this
+    order), or any level is outside its range.
+    *Note for a "dumb" module* (RTC6715 pins, section 2), not for a True-D: its low must
+    stay at 1.0 V or less against its own pull-ups, which the empty bay cannot show. For
+    such a module, between steps 23 and 24: Module = Switch, CH1, a clip lead attached
+    with the goggle off on the wire end at socket pin 1, 2 or 3 (path R), one pin per
+    boot; *stop if* a low reads above 1.0 V. A True-D in `BAY:RAPIDFIRE` has no pull-ups:
+    the empty-bay levels are the levels it sees.
+21. **Module None, then WiFi with the mod.** Module = None (Status "Off, bay pins
+    untouched"). WiFi on: it must connect within 60 s. Then WiFi off.
+    If it does not connect: switch the goggle off and on (WiFi starts at boot, before any
+    module control) and wait 60 s. If it connects now, the pins are not handed back to
+    WiFi after module control let go of them: a firmware problem; note it, report it,
+    from now on reboot before you use WiFi after module control, and go on.
+    *Stop if* WiFi does not connect within 60 s after the fresh boot either, although it
+    did in step 5: the mod loads the SDIO bus; shorten the stubs at the connector pins to
+    under 5 mm, or remove the mod.
+
+### E. The module in the bay
+
+22. **Insert the module.** Goggle off. Check the Kapton on the module's back. True-D:
+    MOD 1.17 and `BAY:RAPIDFIRE` (step 9), USB cable unplugged. Insert it. Module Bay is
+    still at Module = None.
+23. **The module, goggle passive.** Power on. The goggle starts as before, and the
+    True-D's screen lights up (the bay is powered: AnalogRX Power = On). Module Bay >
+    Check Pins: path R: any levels, "toggling" included (in `BAY:RAPIDFIRE` the True-D
+    has no pull-ups, so the lines float); path S: as in step 18.
+    Optional, path R, only if you can attach clip leads to both leads of a resistor at
+    the connector with the goggle off: goggle off, clips across the pin-1 resistor, meter
+    on DC volts; goggle on, read after 5 s; goggle off; the same for the other two
+    resistors. Expected: near 0 V.
+    *Stop if* the True-D's screen stays dark for more than 5 s after power-on (measure the
+    bay supply: module out, goggle on, hole 9 to hole 8), the goggle does not reach its
+    menu within 60 s, or (optional reading) more than 0.5 V across a resistor (more than
+    0.1 mA flows: something drives or pulls hard).
+24. **Module = rapidFIRE.** Module Bay: Module = **rapidFIRE** (leave Mode as it is; the
+    True-D ignores it). Source: Analog. The Status line shows "Waiting for the module to
+    boot" right after a bay power-on, then "Sending" and the channel. Within 6 s the
+    True-D shows the goggle's channel. Change the channel 5 times with the dial, two
+    bands included: each time the True-D follows within 2 s. Batch 2 goggles, also: set
+    Power > AnalogRX Power = Auto, switch the source to HDZero and back to Analog (the
+    bay goes off and on): the Status shows "Waiting for bay power", then "Waiting for the
+    module to boot", then "Sending" again, and the True-D boots and gets its channel
+    within 6 s; set AnalogRX Power back as you want it.
+    (L band: by band and channel the True-D gets the right channel; an ELRS VTX
+    frequency on L band ends up 29 MHz off, because the True-D's L1-L8 are 5333-5613 MHz
+    and the goggle's table has 5362-5621 MHz.)
+    *Stop if* the True-D ever shows a channel the goggle did not send (this must never
+    happen: Module = None, write down the sequence, report it), or it misses 3 changes in
+    a row (Module = None; then the [hw] items of section 9).
+25. **WiFi with module control.** WiFi on: the Status shows "Paused while WiFi is on";
+    WiFi connects within 60 s. WiFi off: the Status returns to "Sending" within about
+    6 s (the SDIO check runs every 5 s).
+    *Stop if* WiFi does not connect within 60 s (it did in step 21: the module loads the
+    bus); the WiFi page refuses to start WiFi because the bay pins were not released
+    within 3 s (Module = None, report it); or the Status still shows "Paused while WiFi
+    is on" or "Paused, pins in use by WiFi" 15 s after WiFi off (reboot with WiFi off,
+    report it).
+26. **Flying.** WiFi off: module control pauses while WiFi is on, and the module sees the
+    SDIO traffic as noise. Insert and remove the module only with the goggle off. Before
+    another module goes into the wired bay: Module = None, then steps 6-12 for that
+    module, then steps 22-25 with its Module type.
 
 ## 9. What the firmware guarantees, and what is unproven
 
 **Goggle firmware** (src/module/, host tests in `utilities/module_bay_test`, 136
-checks, all pass):
+checks at 2989f32, all pass):
 
 * Module = None (the default after flashing): no pin is ever touched, through boot,
   power cycles, source changes, WiFi on / off, standby and wake. Exactly stock.
-  Check Pins, a click, exports them as GPIO inputs for 100 ms and never drives.
-  [analysis, sim]
+  Check Pins, a click, sets them to GPIO inputs, reads them for 100 ms and never
+  drives; afterwards they stay GPIO inputs (function 0), unexported. Whether WiFi then
+  gets them back is checked in steps 5 and 21. [analysis, sim]
 * Every type: the pins stay inputs until 2.0 s after every bay power-on (and after
   the app start on batch 1 hardware). The time counts from the goggle's power-on
   command to the DM5680 co-processor; the real switch-on follows it after an
@@ -458,12 +787,14 @@ checks, all pass):
   every sleep short [sim]. Typical 13.5-14.8 ms per frame on a PC [sim]; on the
   goggle not measured [hw].
 * Pins inputs again within one frame after a bay power-off, WiFi on or a Module
-  change. [sim]
+  change. [sim] WiFi does not start while module control still holds the pins: the
+  WiFi page waits up to 3 s for their release and otherwise refuses. [analysis]
 
 **Unproven, only hardware can settle it** [hw]:
 
 * the Goggle 2 bay routing: whether PG0-PG2 reach its bay connector at all;
-* the PG bank voltage, 3.3 V or 1.8 V, on each goggle (Check Pins);
+* the PG bank voltage, 3.3 V or 1.8 V, on each goggle (Check Pins; the official
+  sys_config points to 1.8 V, see the top of this page);
 * the official bay board: what it carries on socket pins 1-3 and 7 and on the
   goggle connector, and which connector pin is which PG pin;
 * the True-D board's loads on D11-D13 (an LED on D13, pull resistors, protection
@@ -476,8 +807,9 @@ checks, all pass):
 **Foxeer Wildfire.** Its manual (search-result transcriptions, snippet) lists a
 setting **FS SWITCH (ON / OFF)**, so the Fat Shark three-pin code is the likely
 interface and **Switch** the likely Module type, absolute or stepped and pin order
-unverified; its pins' levels and pull-ups are unknown (d): steps 3-6 first, then
-Check Pins with FS SWITCH off and on, then Switch with each pin order (module-bay.md).
+unverified; its pins' levels and pull-ups are unknown (d): steps 7-12 first (step 9
+does not apply), then in the bay (step 23) Check Pins with FS SWITCH off and on, then
+Switch with each wiring, Wiring A to Wiring F (module-bay.md).
 Separately, HDZero issue #108 (issue body read) reports a bad picture from a
 Wildfire in the HDZero goggle that was fine in an HDO2, cause unknown; it predates
 and is unrelated to this mod.
