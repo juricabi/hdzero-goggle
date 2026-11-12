@@ -4,6 +4,7 @@
 // shared ring and delivers raw AAC access units (ADTS header removed) for MPEG4GenericRTPSink.
 
 #include <FramedSource.hh>
+#include <stdint.h>
 
 struct AdtsHeader {
     unsigned profile;       // audio object type - 1 (1 = AAC-LC)
@@ -20,6 +21,18 @@ Boolean aacParseAdtsHeader(unsigned char const* data, unsigned len, AdtsHeader& 
 unsigned aacSamplingFrequency(unsigned sfIndex);
 // 2-byte AudioSpecificConfig as the 4 hex digits of the SDP "config=" parameter.
 void aacConfigString(unsigned audioObjectType, unsigned sfIndex, unsigned channelConfig, char* out /* >= 5 bytes */);
+
+// CLOCK_MONOTONIC in microseconds (the clock of the ring timestamps)
+uint64_t liveMonotonicUs();
+
+// What the record process produces on the audio track, as seen by this process. Every audio
+// source, and the format check at DESCRIBE, read the same ring: the state is process-wide.
+namespace LiveAudioTrack {
+    // an audio frame was seen in the ring: its format is the track's format
+    void noteFrame(AdtsHeader const& hdr);
+    // the track's format, if a frame was seen (and the track has not been given up since)
+    Boolean format(AdtsHeader& hdr);
+}
 
 class LiveAudioSource: public FramedSource {
 public:

@@ -47,6 +47,42 @@ Boolean aacParseAdtsHeader(unsigned char const* p, unsigned len, AdtsHeader& hdr
     return True;
 }
 
+uint64_t liveMonotonicUs() {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+}
+
+//----------------------------------------------------------------------------------------------
+namespace {
+struct TrackState {
+    Boolean known;
+    AdtsHeader hdr;
+};
+TrackState gTrack = {False, {0, 0, 0, 0, 0, 0}};
+}
+
+void LiveAudioTrack::noteFrame(AdtsHeader const& hdr) {
+    if (!gTrack.known || (hdr.profile != gTrack.hdr.profile) || (hdr.sfIndex != gTrack.hdr.sfIndex) ||
+        (hdr.channelConfig != gTrack.hdr.channelConfig)) {
+        char config[8];
+        aacConfigString(hdr.profile + 1, hdr.sfIndex, hdr.channelConfig, config);
+        printf("[MEDIA SERVER]live audio: AAC object type %u, %u Hz, %u channels, config=%s\n",
+               hdr.profile + 1, aacSamplingFrequency(hdr.sfIndex), hdr.channelConfig, config);
+    }
+    gTrack.known = True;
+    gTrack.hdr = hdr;
+}
+
+Boolean LiveAudioTrack::format(AdtsHeader& hdr) {
+    if (!gTrack.known) {
+        return False;
+    }
+    hdr = gTrack.hdr;
+    return True;
+}
+
+//----------------------------------------------------------------------------------------------
 LiveAudioSource* LiveAudioSource::createNew(UsageEnvironment& env) {
     return new LiveAudioSource(env);
 }
@@ -101,20 +137,18 @@ void LiveAudioSource::deliverFrame() {
             continue;
         }
 
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        uint64_t nowUs = (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
-        if (nowUs > ts + AUDIO_MAX_AGE_US) {
-            ++fNbDropped;
-            continue;
-        }
-
         AdtsHeader hdr;
         if (!aacParseAdtsHeader(fBuffer, (unsigned)len, hdr) || hdr.frameLength > (unsigned)len || hdr.numRawBlocks != 1) {
             if ((fNbDropped++ % 100) == 0) {
                 printf("[MEDIA SERVER]live audio: unexpected frame (len=%d, %02x %02x %02x)\n",
                        len, fBuffer[0], fBuffer[1], fBuffer[2]);
             }
+            continue;
+        }
+        LiveAudioTrack::noteFrame(hdr);
+
+        if (liveMonotonicUs() > ts + AUDIO_MAX_AGE_US) {
+            ++fNbDropped;
             continue;
         }
         if (fHaveExpectedFormat &&
