@@ -1,7 +1,8 @@
 #!/bin/bash
 # Audio timestamps and lip sync with imperfect encoder timestamps (record_stubs.c knobs):
 #   ideal    capture times as pts on CLOCK_MONOTONIC
-#   jitter   audio pts 0..8 ms late (MPP stamps PCM chunks when its capture thread reads them)
+#   jitter   audio pts 0..8 ms late (MPP stamps PCM chunks when its capture thread reads them):
+#            the jitter must go, the mean lateness (4 ms) stays
 #   foreign  video pts on another clock: video is stamped on arrival, 15 ms late (stub latency)
 #   offset   foreign, with [live] audio_offset_ms=15 to make up for it
 # Checked: audio RTP timestamps advance by one AAC frame (1024 at 48 kHz), the A/V offset of the
@@ -21,7 +22,7 @@ for case in ideal jitter foreign offset; do
     envs=()
     expect=0
     case $case in
-        jitter) envs=(LAT_AUDIO_JITTER_US=8000) ;;
+        jitter) envs=(LAT_AUDIO_JITTER_US=8000); expect=4 ;; # the stamps are 4 ms late on average
         foreign) envs=(LAT_VIDEO_CLOCK=foreign); expect=-15 ;;
         offset) envs=(LAT_VIDEO_CLOCK=foreign); extra=(audio_offset_ms=15) ;;
     esac

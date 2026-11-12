@@ -51,7 +51,9 @@ muxer only. So **during live streaming there is no audio unless a recording with
 running, and never with Record Audio off**. Nothing feeds the audio side of the ring:
 `avshare_addAudio()` (record) and `avshare_readAudio()` (rtspLive) are unused leftovers
 (`addAudio` expects TS PES fragments; `readAudio` computes `tv_usec = ts*100/9` without a modulo).
-Input routing (`audio_sel.sh`, applied when entering video mode) is unchanged by this work.
+Input routing is not touched by this work: the stream carries whatever the DVR's audio path
+captures on AI device 0 (on this branch the `audio_sel.sh` routing applied when entering video
+mode; with the audio mixer work on another branch, its DVR mix).
 
 ### The shared ring (`src/record/avshare.c` writer, `src/rtspLive/stream/avshare.c` reader)
 
@@ -73,19 +75,27 @@ Writer and reader keep their own slot index. The writer never overwrites a fille
 next slot is not free the frame is dropped (`avshare_add()` may leave the first slots of a
 multi-slot frame behind) and video then drops everything until the next I frame. When the reader
 finds its slot free it scans for any filled slot. Writing to a reader that is not connected
-returns -3 and resets the writer to slot 0.
+returns -3 and resets the writer to slot 0. The record process clears the connect bytes when it
+starts, rtspLive when it first attaches; nothing cleared them when rtspLive died.
 
 Defects found on the way (fixed where the new path relies on them):
 - rtspLive `avshare_connect()`/`avshare_disconnect()` indexed by media *type* (1/2) instead of
   index (0/1): disconnecting video reset the **audio** headers, connecting audio wrote out of
   bounds. Fixed.
-- No memory barriers between writing a slot and flipping `wflag` (ARM is weakly ordered). Added.
+- No memory barriers between writing a slot and flipping `wflag`, nor between seeing a slot
+  filled and reading it (ARMv7 is weakly ordered and does not order loads behind a control
+  dependency). Added on both sides, for every slot, also on the audio-off path (`avshare_add()`,
+  `avshare_readFrame()`): an acquire after each `wflag` test, a release before each flip.
 - Video timestamps truncated to 32 bit by `avshare_add(..., uint32_t millis, ...)`. Now 64 bit.
 - `audioStreamSize` / `largeStreamSize` macros are not parenthesized (`1 * 1024`). The new code
   parenthesizes its uses.
 - `disk_checkFile()` (record `disk.c` and rtspLive `main.cpp`) tested `st_mode` after a failed
   `stat()`: a missing `/data/confs/record.conf` could be taken as present (stack garbage) and the
-  process then ran on built-in defaults (rtspLive: multicast, H.265, no `[live] audio`). Fixed.
+  process then ran on built-in defaults (rtspLive: multicast, H.265, no `[live] audio`). Fixed;
+  likewise the `readlink("/proc/self/exe")` result used to find `<exe dir>/confs/record.conf`,
+  which was not NUL-terminated (same effect, seen in the host tests).
+- A stale connect byte (rtspLive killed by `killall` in `wlan_stop.sh`, SIGKILL, a crash) kept
+  the live video encoder running until the next stream or a reboot. Fixed (see 2.).
 
 ### live555 in `lib/live`
 
@@ -101,10 +111,14 @@ file), `ADTSAudioStreamDiscreteFramer` (*adds* ADTS headers).
 
 - `[wifi] stream_audio` in `setting.ini`, default `false` (`src/core/settings.{c,h}`).
 - WiFi Module, page System: **Stream Audio On/Off** between SSH and Apply Settings
-  (`src/ui/page_wifi.c`). Applying the WiFi settings (also done once after boot) writes
-  `[live] audio=0|1` into the record conf **before** rtspLive is (re)started.
+  (`src/ui/page_wifi.c`, translated in `mkapp/app/language/*.ini`). Applying the WiFi settings
+  (also done once after boot) writes `[live] audio=0|1` into the record conf **before** rtspLive
+  is (re)started.
 - `[live] audio` is read by rtspLive at start (`conf_loadLiveParams()`) and by `record` when the
   audio reader connects (`conf_loadLiveAudio()`). Shipped `record.conf` has `audio=0`.
+- `[live] audio_offset_ms` (shipped `0`, -500..500): added to the stream's audio timestamps,
+  positive delays the audio. Only needed if the video pts clock turns out not to be
+  CLOCK_MONOTONIC on a goggle (see "Timestamps" and 4.). Read at each start of the audio chain.
 
 ### `record` (`src/record/live_audio.{c,h}`, hooks in `main.c`)
 
@@ -112,34 +126,69 @@ file), `ADTSAudioStreamDiscreteFramer` (*adds* ADTS headers).
   (and `[live] audio=1`), a **dedicated AI -> AENC chain** (`ai2aenc` instance of its own, AAC,
   ADTS, `[ai]`/`[aenc]` conf) starts, independent of recording and of Record Audio. It stops 3 s
   after the reader goes away (DESCRIBE and SETUP each connect, the delay avoids a restart in
-  between); a failed start is retried after 5 s.
-- The chain captures from the same `[ai] device` as recording, so whatever input routing/mixer
-  settings the main app applies to the codec (`audio_sel.sh`, applied on source selection) are
-  what the stream carries. HDMI-in does not select an input (out of scope here).
-- Recording with audio and live audio can run at the same time (two AI channels on the device).
-  Stopping either no longer disables the AI device while the other uses it (`record_stop()`,
-  `AIO_cmdSTOP`).
+  between); a failed start is retried after 5 s; a running chain that produces no frame for 2 s
+  is stopped and started again.
+- The chain captures from the same `[ai] device` as recording: the stream carries whatever the
+  DVR's audio path captures (input routing / mixer settings the main app applies to the codec).
+  HDMI-in does not select an input (out of scope here).
+- Users of the AI device: recording with audio, the AI -> AO loop and the stream audio can run
+  at the same time (channels on one device). `aidev_heldByOthers(recCtx, self)` in `main.c`
+  answers whether a user other than `self` holds the device; every place that stops a user asks
+  it before disabling the device (`record_stop()`, `AIO_cmdSTOP`, the live audio poll, exit).
+  Further users register an `AiUser_e` entry and one line in its table.
 - `liveaudio_onFrame()` queues each ADTS frame **with its header** via the new
   `avshare_addAudioFrame()`: all or nothing (a frame never ends up half in the ring), slots
   published in order behind a barrier. Ring full -> the frame is dropped and counted.
-- Timestamps: `liveclock_stamp()` turns encoder pts (us) into **CLOCK_MONOTONIC us**. MPP stamps
-  captured audio with `CDX_GetSysTimeUsMonotonic()` (seen in `audioHw_AI_CapThread`); a pts that
-  is up to 1 s in the past is taken as the capture time as it is, any other clock is anchored to
-  the arrival of the first frame and then follows the encoder pts; it re-anchors if the stamps
-  leave [now - 2 s, now + 0.2 s]. Live video frames (`vvLive_onFrame()`) get the same treatment,
-  so both media share one clock.
+- Reader liveness: rtspLive holds a write lock on `/tmp/live.pid` while it runs
+  (`already_running()`, also in earlier versions); the kernel drops it however the process ends.
+  `avshare_connected()` ignores a connect byte while nobody holds that lock (checked with
+  `F_GETLK` at most every 500 ms, only while a byte is set; without the pid file the byte is
+  trusted as before). So a killed or crashed rtspLive no longer leaves the live video encoder or
+  the audio chain running. The shared layout is unchanged; an old rtspLive or an old record on
+  the other side works as before.
+
+#### Timestamps
+
+All ring timestamps are **CLOCK_MONOTONIC us**, the clock rtspLive turns into wall-clock
+presentation times.
+
+- `liveclock_stamp()` maps an encoder pts: MPP stamps captured audio with
+  `CDX_GetSysTimeUsMonotonic()` minus the chunk duration (seen in `audioHw_AI_CapThread`); a pts
+  up to 1 s in the past is taken as the capture time as it is, any other clock is anchored to the
+  arrival of the first frame and then follows the encoder pts (re-anchored if the stamps leave
+  [now - 2 s, now + 0.2 s]). Live video frames (`vvLive_onFrame()`) get the same treatment.
+  At each stream start the record log says per medium which case it is:
+  `live video: pts clock looks like CLOCK_MONOTONIC, frame captured 15.2 ms before it reached the ring`
+  or `live video: pts clock is not CLOCK_MONOTONIC (now - pts = ... ms): stamped on arrival, ...`.
+  The video pts is the V4L2 buffer timestamp (`libmpp_vi.so` calls no clock); if it is not
+  CLOCK_MONOTONIC on a goggle, video is stamped late by its capture-to-encoder latency and lags
+  the audio by that much: `[live] audio_offset_ms` makes up for it.
+- Audio: the presentation time of each AAC frame comes from a **sample counter** (1024 samples
+  per raw block, rate from the ADTS header) anchored to the first capture time, not from the
+  per-chunk capture stamps (which jitter with the capture thread): the RTP clock advances by
+  exactly one frame per frame. It follows the mean capture time slowly (at most 20 us per frame,
+  below one RTP tick at 48 kHz, for drift between the codec's sample clock and CLOCK_MONOTONIC)
+  and re-anchors when the capture times are more than 15 ms off for 8 frames in a row (lost
+  samples, clock step), not on one late chunk. Then `[live] audio_offset_ms` is added.
 
 ### `rtspLive`
 
 - `[live] audio=1`: the session gets an `AACLiveAudioServerMediaSubsession` (`track2`) and the video
   subsession switches to `LiveNalVideoSource` + `Live{H264,H265}VideoStreamDiscreteFramer`. With
-  `audio=0` the server builds exactly the session it built before (same classes, same source).
+  `audio=0` the server builds exactly the session it built before (same classes, same source;
+  SDP and packets checked identical to 8364a43, see 3.).
 - Audio: `LiveAudioSource` reads one frame at a time (`avshare_readMediaFrame()`), checks and strips
   the ADTS header, delivers the raw AAC access unit with presentation time = ring timestamp
   converted to wall clock (`avshare_timestampToTimeval()`: one process-wide CLOCK_MONOTONIC ->
   gettimeofday offset, so audio and video stay consistent and RTCP sender reports, which pair
-  wall clock with RTP time, are right). Frames older than 1 s (a paused or stalled reader) are
-  skipped, so the audio never lags.
+  wall clock with RTP time, are right). Frames older than 1 s are skipped: a paused or stalled
+  reader can be up to 1 s behind (the ring holds about 1.2 s of audio), then it skips the backlog.
+  The timestamps stay right in either case; a player that syncs on them plays in sync, one that
+  plays audio as it arrives can lag by that much.
+- It polls the ring paced by the frame duration: after a frame it sleeps until 4 ms before the
+  next one is due, then polls every 2 ms (about 90 wake-ups/s instead of 500). The record side
+  already blocks on the encoder (`AW_MPI_AENC_GetStream()`, 100 ms timeout); the ring has no wait
+  primitive. Video keeps its 1 ms polling (both paths, as before).
 - Payload: RFC 3640 `MPEG4-GENERIC`, mode `AAC-hbr`, one AU per RTP packet, RTP clock = sample
   rate. SDP for the shipped conf:
   ```
@@ -149,87 +198,99 @@ file), `ADTSAudioStreamDiscreteFramer` (*adds* ADTS headers).
   ```
   `config` is the AudioSpecificConfig built from the **first ADTS header the encoder actually
   produces** (object type = profile + 1, frequency index, channel configuration; AAC-LC 48 kHz
-  stereo = `1190`). The subsession waits for it at DESCRIBE (nested event loop, like the H.264
-  subsession waits for SPS/PPS); frames in another format later are dropped.
-- **No audio frame within 2.5 s** (chain failed, setting off on the record side): the audio
-  subsession returns no RTP sink, live555 leaves it out of the SDP and the client gets the
-  video-only session; the next DESCRIBE tries again.
+  stereo = `1190`); frames in another format later are dropped by the sources that announced it.
+- **Waiting for the first audio frame at DESCRIBE.** live555 asks a subsession for its SDP lines
+  twice per DESCRIBE and does not keep a NULL answer, and DESCRIBEs of different clients nest
+  (the wait runs a nested event loop). So there is one wait per process: one 2.5 s deadline
+  shared by all waiting DESCRIBEs (each with its own done flag, all return together), and a
+  timeout is remembered for 10 s, during which DESCRIBEs leave the audio track out at once
+  (`sdpLines()` returns no lines without opening a source). A DESCRIBE is delayed at most 2.5 s,
+  and at most once per 10 s; with audio flowing it is not delayed (only the very first DESCRIBE
+  waits for the chain to start, ~0.3 s). The track format is process-wide (`LiveAudioTrack`),
+  noted from every frame any source or the check sees.
+- **When the audio goes away.** An audio source that has waited 6 s for a frame (longer than
+  one record retry period) gives the track up process-wide: the next DESCRIBE checks again (one
+  bounded wait) and leaves the track out if no audio comes. Frames seen again announce it again.
+  A client that already set the track up keeps it and gets audio again when it comes back.
 - Video with audio on: each ring frame (`avshare_readMediaFrame()`) is split into NAL units, start
-  codes removed, every NAL carries the frame's own timestamp; the RTP marker is set on the last
-  VCL NAL of a frame only (`nalUnitEndsAccessUnit()` override). Same 1 ms polling as before; no
-  NAL waits for the next frame, so this path is one frame *faster* than the parser path.
+  codes removed, every NAL carries the frame's own timestamp. The RTP marker is set on the **last
+  NAL unit of a ring frame that holds a picture** (a VCL NAL unit): the access unit is what shares
+  the timestamp, so a trailing SEI (H.265 suffix SEI, end of sequence) gets it; a ring frame
+  without a picture (the parameter sets queued before an I frame) ends nothing. No NAL waits for
+  the next frame, so this path is one frame *faster* than the parser path.
 - Ring reader (`src/rtspLive/stream/avshare.c`): media attached/connected per media with a user
   count (`avshare_startMedia()` / `avshare_stopMedia()`; `avshare_start()`/`avshare_stop()` are the
   video case, unchanged in effect), connect resets that media's slots, frame-by-frame reader with
-  resync, release of orphan slots and recovery from partial frames, `avshare_peekAudio()`.
+  resync, release of orphan slots, `avshare_peekAudio()`. A frame the writer gave up half-way is
+  dropped when the next frame start appears, or when it has not grown for 100 ms: otherwise its
+  slots stay taken and an I frame larger than the rest of the ring (above ~280 KiB) stays partial
+  behind it, frame after frame.
+- Exit: rtspLive clears its connect bytes at exit, on SIGTERM/SIGINT/SIGHUP (then dies of the
+  signal as before) and in the SIGSEGV handler.
 - Multicast mode: audio is not supported (logged), video only as before.
 
 ### Behaviour summary
 
 | Situation | Stream |
 |---|---|
-| Stream Audio off | video only, unchanged path |
+| Stream Audio off | video only, unchanged path (SDP and packets as before) |
 | On, audio chain runs | video (NAL path) + AAC, shared clock |
-| On, no audio frame (chain failed / not producing) | video only (track left out of SDP), DESCRIBE takes up to 2.5 s longer |
+| On, no audio frame (chain failed / not producing) | video only (track left out of SDP); a DESCRIBE waits at most 2.5 s, at most once per 10 s |
+| On, audio stops for good while streaming | record restarts / retries the chain; after 6 s rtspLive gives the track up: new DESCRIBEs get video only until audio is back |
 | On, Record Audio off | audio present (live chain does not depend on it) |
-| On, recording with audio at the same time | both chains run; start/stop of one does not stop the other |
+| On, recording with audio / AI->AO loop at the same time | all run; start/stop of one does not stop the others or disable the device under them |
 | Client paused / slow | ring holds ~1.2 s of audio, then drops new frames; reader skips frames older than 1 s |
+| rtspLive killed / crashed | record stops the live video encoder within ~0.5 s and the audio chain 3 s later |
 | Several clients | one shared source per track (`reuseFirstSource`), the ring has one reader per media |
 
-## 3. Tests run on the build host
+## 3. Tests on the build host
 
-All host tests are in the session scratchpad (`rtsp/test/`), nothing of it is in the tree.
+`utilities/live_audio_test/` (not part of the firmware build): `run_all.sh` builds and runs
+everything; `common.sh` says what it needs (`LIVE555`: a built host live555 for the native
+rtspLive and openRTSP; `TOOLCHAIN`: the buildroot SDK for the ARM runs; ffmpeg with libx264,
+libx265, python3, qemu-arm). The programs use the goggle's fixed paths and IPC keys
+(`/tmp/live.pid`, `/tmp/record.pid`, SysV shm 0x568066, message queues): one test at a time.
 
-- Cross builds (Release, `-Werror`): Goggle, Goggle 2, BoxPro build; the only warnings are the two
-  pre-existing `liblog.so` linker warnings. New files also compiled natively with
-  `-Wall -Wextra`: no warnings.
-- Ring unit test (`ring_test.c`): both avshare implementations linked into one x86 binary
-  (globals renamed with objcopy), sharing the real SysV segment. 7186 checks, 0 failures, also
-  under ASan/UBSan: 2000 ADTS frames of 157..3012 bytes (1..3 slots) across many wrap-arounds;
-  overrun (writer stalls after 29 frames, 71 whole frames dropped, no partial frame, queued frames
-  read back intact and in order, then normal operation); peek; reader reconnect while the writer
-  index is elsewhere; video partial-frame recovery with the legacy writer (18 whole frames, the
-  partial one dropped, resync on the next I frame); legacy `avshare_start()`/`readFrame()` path;
-  ~200 000 frames with concurrent writer/reader threads (0 corrupt/out of order, every queued
-  frame read); monotonic -> wall clock conversion.
-- End to end: the **real rtspLive** built natively against live555 2023.06.14 (same classes as
-  the 2022.12.01 prebuilt), fed by a stand-in for `record` that uses the real `avshare.c`,
-  `live_audio.c` and `confparser.c` with the MPP chain stubbed (H.264 file at 30 fps with SPS/PPS
-  before each I frame, ADTS file AAC-LC 48 kHz stereo in real time, both cut from one timeline
-  with aperiodic flash/beep markers). Clients: ffprobe, ffmpeg (UDP and TCP), openRTSP.
-  - Stream Audio on: SDP exactly as above (`config=1190`), ffprobe sees `h264` + `aac (LC) 48000 Hz
-    stereo`, a 15 s ffmpeg capture holds 450-451 video and 705-706 audio packets that decode without errors.
-  - Lip sync: flash -> beep offset in the capture is 20.7..21.8 ms (UDP and TCP) once the client
-    has the RTCP sender reports, against 21.5 ms in the source files themselves (AAC encoder delay
-    of the test file), i.e. < 1 ms error. Before the first sender report (about 2.5 s, live555
-    does not send one while the RTP-Info timestamp is preset) ffmpeg aligns the tracks by their
-    first packets: 35 ms off in these runs, then it corrects.
-  - Latency, capture -> reception at the client (includes the 15 ms the stand-in adds as encoder
-    delay): audio-on video path 15.6..17.9 ms; audio off 49.3..51.4 ms; unmodified server from the
-    base commit 49.1..50.8 ms. The byte-stream parser of the old path holds each frame until the
-    next one (33 ms at 30 fps); the NAL path does not.
-  - Stream Audio off: SDP identical to the base commit's server apart from the `o=` session id,
-    same capture (452 packets).
-  - No audio frames although rtspLive has audio on: `no audio frame within 2500 ms, audio track
-    not announced`, video-only SDP, captures complete normally.
-  - Two concurrent ffmpeg clients: both get both tracks. Record side: the audio chain starts on the
-    first DESCRIBE, survives DESCRIBE -> SETUP and later sessions, stops 3 s after the last reader,
-    0 frames dropped over ~2000 frames.
-  - openRTSP (live555 client, the stack VLC uses) receives both tracks; its `-4` MP4 writer counts
-    SPS/PPS as video samples, so that file is not usable for a timing measurement.
+- `record_host`: the **real** `src/record/main.c` main loop, `live_audio.c`, `avshare.c`,
+  `confparser.c`, `gogglemsg.c` over `record_stubs.c` (MPP VI/VENC/AI/AENC/AO, muxer, SD card),
+  driven by goggle messages (`gmsg`: record start/stop, AI->AO loop on/off, quit) and fed in real
+  time from `gen_media.sh` media (moving pattern, 2 Mbit/s, 4 slices per picture, I frames over
+  one ring slot; flash + beep markers at aperiodic instants). Knobs: audio pts 0..J us late,
+  video pts on a foreign clock, an SEI NAL at the end of every frame, a failing AI chain. The stub
+  AI device reports any disable while another channel uses it and a device left enabled.
+- `rtspLive`: the real `src/rtspLive` native against host live555 2023.06.14 (same classes as
+  the prebuilt 2022.12.01), or the cross-built binary with the prebuilt library under qemu-arm.
+- Clients: ffprobe, ffmpeg captures, `rtsp_describe.py` (timed DESCRIBEs, overlapping),
+  `rtsp_rtp.py` (RTP over RTSP/TCP: markers per access unit, NAL types, timestamp steps).
 
-Not covered on the host: the MPP AI/AENC chain itself (two AI channels at once, the encoder's
-real ADTS output, its real timestamps), the Allwinner encoder's NAL layout, WiFi throughput, the
-live555 2022.12.01 binaries at run time, the UI page.
+| Test | Result (this branch) |
+|---|---|
+| `ring_test` (x86, and ARM under qemu-arm) | 7254 checks, 0 failures: frames of 1..3 slots across wrap-arounds, overrun (whole frames dropped), peek, reconnect, partial-frame recovery, I frames of 40 slots (recover at the 2nd I frame; never without the 100 ms rule), legacy path, 200 000 frames with concurrent threads, a dead reader's stale flag ignored |
+| `t_describe.sh` (no audio produced) | first DESCRIBE 2.91 s (video start + 2.5 s), within the retry period 0.002 s, after it 2.51 s; three DESCRIBEs at +0 / +1.0 / +1.5 s all done at +2.51 s; was 5.1..5.4 s each, and LIFO |
+| `t_describe.sh` (audio produced) | first DESCRIBE 0.56 s, then 0.002 s |
+| `t_kill.sh` (quit / TERM / KILL while streaming) | live video encoder stopped after 0.12 / 0.12 / 0.07 s, audio chain after 3.00 / 3.04 / 2.98 s, nothing written afterwards, a new rtspLive streams both tracks; was: never stopped |
+| `t_share.sh` | recording with audio and AI->AO loop started/stopped while streaming, a stream during a recording: no device misuse, largest gap in the stream audio 21 ms |
+| `t_e2e.sh` H.264 / H.265, on / off / trailing SEI | ffprobe tracks, 10 s captures without decode errors, RTP marker on the last packet of every access unit (on the SEI when there is one), none inside, audio RTP steps 1024 |
+| `t_avsync.sh` | lip sync error against the source files: 0.0 ms; audio pts 0..8 ms late: 4.0 ms = the mean lateness (24.9..25.5 ms, was 4.9 ms mean, 21.5..28.9), RTP steps all 1024 +-1 (were 842..1083); video pts on a foreign clock: -15.1 ms (the stub latency), logged; with `audio_offset_ms=15`: -0.1 ms |
+| `t_audio_fail.sh` | chain dies at +6 s: track given up, DESCRIBE at +14 s video-only (2.50 s), record restarts and retries, back at +18 s: DESCRIBE at +28 s with audio (0.002 s), the streaming client has audio again |
+| `t_cpu.sh` (host) | rtspLive with audio 1375 -> 1066 wake-ups/s, 3.8 -> 3.0 % CPU; audio off 970..994 |
+| `t_off_identical.sh` | Stream Audio off: SDP (but `o=`) and RTP packets (marker, size, payload header, timestamp steps) identical to the 8364a43 rtspLive, H.264 and H.265 |
+| `t_arm.sh` | the shipped ARM rtspLive (live555 2022.12.01) under qemu-arm: `t_e2e.sh` 38/38, `t_describe.sh` 12/12 (2.82 s / 2.51 s / overlap +2.51 s / 0.57 s with audio), `t_kill.sh` 15/15 |
+
+Not testable without a goggle: the MPP AI/AENC chain itself (two or three AI channels at once,
+its real ADTS output and timestamps, chunk sizes, capture jitter), the VI pts clock, the
+Allwinner encoder's NAL layout, the camera-to-goggle latency, memory ordering on the Cortex-A7
+(x86 and qemu-arm on x86 are both TSO), WiFi throughput, CPU load on the goggle, the UI page.
 
 ### Known limitations
 
 - Multicast mode (`[live] multicast=1`): video only.
-- Two AI channels at once (recording with audio + stream audio) is supported by the MPP AI device
-  model (channel list per device) but was not run on hardware; `AW_MPI_AI_SetPubAttr()` is
-  called again by whichever chain starts second.
-- DESCRIBE waits for the first AAC frame (normally a few hundred ms; 2.5 s if none comes).
-- "Stream Audio" has no translations yet (falls back to English).
+- DESCRIBE waits for the first AAC frame (normally a few hundred ms; 2.5 s, once per 10 s, if
+  none comes).
+- Recording with audio while streaming encodes the same PCM twice. One encoder for both was not
+  done: the recording chain runs only while recording, with its own codec and pts bases, and the
+  stream would have to switch encoders at every recording start/stop (gap or overlap, timeline
+  re-anchor, possible format change) to save one AAC-LC encoder while both run.
 
 ## 4. Testing on a goggle
 
@@ -240,11 +301,37 @@ live555 2022.12.01 binaries at run time, the UI page.
    `live audio: AAC object type 2, 48000 Hz, 2 channels, config=1190`.
 3. Play: `ffplay -rtsp_transport tcp -fflags nobuffer -flags low_delay rtsp://192.168.2.122:8554/hdzero`
    or VLC "Open Network Stream" with the same URL (`vlc --network-caching=300 rtsp://192.168.2.122:8554/hdzero`).
-   Check sound from the selected input (mic / line in), lip sync (clap in front of the camera with
-   the goggle mic near it; the camera->goggle link latency adds to what the stream shows), latency
-   unchanged, CPU (`top`).
-4. Repeat with Record Audio off; while recording with audio (both the recording and the stream
-   have sound; stop/start recording during streaming: the stream audio keeps going).
-5. Stream Audio Off: SDP video-only as on the previous firmware.
-6. Long run (30 min) for A/V drift: `ffmpeg -rtsp_transport udp -i rtsp://192.168.2.122:8554/hdzero -t 1800 -c copy long.mkv`.
-7. Same on Goggle V1 (WiFi module) and BoxPro.
+   Check sound from the selected input, latency unchanged, CPU (`top`).
+4. **Pts clock and lip sync** (decides whether `[live] audio_offset_ms` is needed):
+   1. Put an empty file `RECORD.log` in the root of the SD card and reboot: the record process
+      then logs to it (`mkapp/app/script/rc.sh`).
+   2. On a PC: `WORK=/tmp/lat utilities/live_audio_test/gen_media.sh`, then play
+      `/tmp/lat/media/source_ref.mkv` full screen in front of the HDZero camera (`mpv --fs`), the
+      PC's audio output into the goggle's line in (no acoustic delay), Record Audio source line in.
+      The file itself has its beeps 21.3 ms after the flashes (AAC encoder delay):
+      `python3 utilities/live_audio_test/avsync.py /tmp/lat/media/source_ref.mkv` prints it.
+   3. With the PC on the goggle's WiFi: `ffmpeg -rtsp_transport tcp -i rtsp://192.168.2.122:8554/hdzero -t 40 -c copy -f nut cap.nut`
+      and `python3 utilities/live_audio_test/avsync.py cap.nut 5`: mean beep - flash in ms.
+   4. On the goggle: `grep "pts clock" /mnt/extsd/RECORD.log`: one `live video:` and one
+      `live audio:` line per stream start.
+   5. Expected: both `looks like CLOCK_MONOTONIC`, and (mean - 21.3 ms) close to minus the
+      camera-to-goggle video latency (screen + camera + link: a few ms up to about one frame),
+      the same as a DVR recording of the same scene (`avsync.py` on the .ts file). If the video
+      line says `is not CLOCK_MONOTONIC`, or the stream's beep comes clearly earlier than the
+      recording's (by more than a frame), set `audio_offset_ms=<that many ms>` under `[live]` in
+      `/mnt/app/app/record/confs/record.conf`, stop streaming for 5 s (the chain restarts and
+      reads it), and repeat 3. (A firmware update restores the shipped conf.)
+5. Repeat 3 with Record Audio off; while recording with audio (both the recording and the stream
+   have sound; stop/start recording during streaming: the stream audio keeps going); with the
+   AI->AO monitor on.
+6. Without audio: with Stream Audio On and rtspLive running (it reads `[live] audio` at start),
+   set `audio=0` under `[live]` in record.conf and restart `record` (it reads the key when the
+   reader connects): `time ffprobe ...` takes at most ~2.5 s more than with audio, a second one
+   right after it none; the SDP is video-only. Set it back and restart `record`.
+7. WiFi off while a client streams, and `killall -9 rtspLive` while a client streams: `top`
+   shows no live encoding left in `record` after ~3 s (RECORD.log: `stream reader gone ...`,
+   `stopped (... frames ...)`); the next stream works.
+8. Stream Audio Off: SDP video-only as on the previous firmware.
+9. Long run (30 min) for A/V drift: `ffmpeg -rtsp_transport udp -i rtsp://192.168.2.122:8554/hdzero -t 1800 -c copy long.mkv`,
+   `avsync.py` on its first and last minutes (cut with `ffmpeg -ss`).
+10. Same on Goggle V1 (WiFi module) and BoxPro.
