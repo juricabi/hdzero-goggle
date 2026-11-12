@@ -34,20 +34,23 @@ typedef struct {
     int btn0_value;   // toggles: field value of the left button
 } item_t;
 
+#define SLIDER(f, n)             {.type = ITEM_SLIDER, .field = (f), .name = (n)}
+#define TOGGLE(f, n, b0, b1, v0) {.type = ITEM_TOGGLE, .field = (f), .name = (n), .btn0 = (b0), .btn1 = (b1), .btn0_value = (v0)}
+
 static const item_t items[] = {
-    {ITEM_SLIDER, AUDIO_MIXER_MIC, "Mic"},
-    {ITEM_SLIDER, AUDIO_MIXER_LINE_IN, "Line In"},
-    {ITEM_SLIDER, AUDIO_MIXER_AV, "A/V In"},
-    {ITEM_SLIDER, AUDIO_MIXER_MIC_BOOST, "Mic Boost"},
-    {ITEM_SLIDER, AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost"},
-    {ITEM_SLIDER, AUDIO_MIXER_HEADPHONES, "Headphones"},
-    {ITEM_SLIDER, AUDIO_MIXER_PLAYBACK, "Playback Volume"},
-    {ITEM_TOGGLE, AUDIO_MIXER_DVR_MODE, "DVR Audio", "As Heard", "Custom", AUDIO_MIXER_DVR_AS_HEARD},
-    {ITEM_TOGGLE, AUDIO_MIXER_DVR_MIC, "Record Mic", "Yes", "No", 1},
-    {ITEM_TOGGLE, AUDIO_MIXER_DVR_LINE_IN, "Record Line In", "Yes", "No", 1},
-    {ITEM_TOGGLE, AUDIO_MIXER_DVR_AV, "Record A/V In", "Yes", "No", 1},
-    {ITEM_SLIDER, AUDIO_MIXER_DVR_LEVEL, "Record Level"},
-    {ITEM_BACK, AUDIO_MIXER_FIELD_COUNT, "Back"},
+    SLIDER(AUDIO_MIXER_MIC, "Mic"),
+    SLIDER(AUDIO_MIXER_LINE_IN, "Line In"),
+    SLIDER(AUDIO_MIXER_AV, "A/V In"),
+    SLIDER(AUDIO_MIXER_MIC_BOOST, "Mic Boost"),
+    SLIDER(AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost"),
+    SLIDER(AUDIO_MIXER_HEADPHONES, "Headphones"),
+    SLIDER(AUDIO_MIXER_PLAYBACK, "Playback Volume"),
+    TOGGLE(AUDIO_MIXER_DVR_MODE, "DVR Audio", "As Heard", "Custom", AUDIO_MIXER_DVR_AS_HEARD),
+    TOGGLE(AUDIO_MIXER_DVR_MIC, "Record Mic", "Yes", "No", 1),
+    TOGGLE(AUDIO_MIXER_DVR_LINE_IN, "Record Line In", "Yes", "No", 1),
+    TOGGLE(AUDIO_MIXER_DVR_AV, "Record A/V In", "Yes", "No", 1),
+    SLIDER(AUDIO_MIXER_DVR_LEVEL, "Record Level"),
+    {.type = ITEM_BACK, .field = AUDIO_MIXER_FIELD_COUNT, .name = "Back"},
 };
 
 #define ITEM_COUNT ((int)ARRAY_SIZE(items))
@@ -105,6 +108,7 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_t *section = lv_menu_section_create(page);
     lv_obj_add_style(section, &style_submenu, LV_PART_MAIN);
     lv_obj_set_size(section, UI_PAGE_VIEW_SIZE);
+    lv_obj_set_style_pad_top(section, UI_AUDIO_PAD_TOP, 0);
 
     snprintf(buf, sizeof(buf), "%s:", _lang(pp_audio.name));
     create_text(NULL, section, false, buf, LV_MENU_ITEM_BUILDER_VARIANT_2);
@@ -128,6 +132,8 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
         switch (item->type) {
         case ITEM_SLIDER:
             create_slider_item(&sliders[row], cont, _lang(item->name), audio_mixer_max(item->field), 0, row);
+            // rows are tighter than on the other pages
+            lv_obj_set_style_pad_ver(sliders[row].slider, UI_AUDIO_KNOB_PAD, LV_PART_KNOB);
             break;
         case ITEM_TOGGLE:
             create_btn_group_item(&toggles[row], cont, 2, _lang(item->name), _lang(item->btn0), _lang(item->btn1), "", "", row);
@@ -159,7 +165,7 @@ static void release_slider(bool back_to_submenu) {
     if (focused < 0)
         return;
 
-    lv_obj_add_style(sliders[focused].slider, &style_silder_main, LV_PART_MAIN);
+    lv_obj_remove_style(sliders[focused].slider, &style_silder_select, LV_PART_MAIN);
     focused = -1;
     if (back_to_submenu)
         app_state_push(APP_STATE_SUBMENU);
@@ -197,6 +203,8 @@ static void page_audio_on_roller(uint8_t key) {
 }
 
 static void page_audio_on_click(uint8_t key, int sel) {
+    (void)key;
+
     if (sel < 0 || sel >= ITEM_COUNT) {
         return;
     }
