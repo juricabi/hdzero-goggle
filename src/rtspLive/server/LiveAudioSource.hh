@@ -53,6 +53,7 @@ private:
     virtual void doGetNextFrame();
     static void pollAgain(void* clientData);
     void deliverFrame();
+    unsigned nextPollUs() const;
 
 private:
     unsigned char* fBuffer;
@@ -63,4 +64,5 @@ private:
     uint64_t fWaitStartUs;  // when the sink asked for the frame being waited for
     uint64_t fLastSeenUs;   // last frame read from the ring
     Boolean  fStallNoted;
+    unsigned fFrameUs;      // duration of the last frame
 };

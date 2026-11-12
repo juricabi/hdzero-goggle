@@ -11,6 +11,7 @@ extern "C"
 
 #define AUDIO_BUFFER_SIZE   (8 * 1024)  // > largest ADTS frame (13-bit length)
 #define AUDIO_POLL_US       2000        // AAC frame: 1024 samples = 21.3 ms at 48 kHz
+#define AUDIO_EARLY_US      4000        // start polling that long before the next frame is due
 #define AUDIO_IDLE_POLL_US  20000       // ring not attached / reader not connected
 #define AUDIO_MAX_AGE_US    1000000     // older frames are a backlog (paused reader): skip them
 #define AUDIO_MAX_SKIP      64          // frames examined per poll
@@ -99,7 +100,7 @@ LiveAudioSource* LiveAudioSource::createNew(UsageEnvironment& env) {
 LiveAudioSource::LiveAudioSource(UsageEnvironment& env)
     : FramedSource(env), fBuffer(new unsigned char[AUDIO_BUFFER_SIZE]),
       fHaveExpectedFormat(False), fNbFrames(0), fNbDropped(0), fWaitStartUs(0), fLastSeenUs(0),
-      fStallNoted(False) {
+      fStallNoted(False), fFrameUs(0) {
     memset(&fExpected, 0, sizeof(fExpected));
     printf("[MEDIA SERVER]live audio source opened\n");
     avshare_startMedia(MEDIA_AUDIO);
@@ -124,6 +125,18 @@ void LiveAudioSource::doGetNextFrame() {
     deliverFrame();
 }
 
+// Frames come one frame duration apart (21.3 ms for AAC at 48 kHz): after one was found, sleep
+// until shortly before the next is due, then poll every AUDIO_POLL_US, instead of polling every
+// AUDIO_POLL_US all the time (500 wake-ups/s). The timestamps do not depend on when it is read.
+unsigned LiveAudioSource::nextPollUs() const {
+    if ((fFrameUs == 0) || (fLastSeenUs == 0)) {
+        return AUDIO_POLL_US;
+    }
+    uint64_t now = liveMonotonicUs();
+    uint64_t wake = fLastSeenUs + fFrameUs - AUDIO_EARLY_US;
+    return (wake > now + AUDIO_POLL_US) ? (unsigned)(wake - now) : AUDIO_POLL_US;
+}
+
 void LiveAudioSource::pollAgain(void* clientData) {
     ((LiveAudioSource*)clientData)->deliverFrame();
 }
@@ -144,7 +157,7 @@ void LiveAudioSource::deliverFrame() {
             }
         }
         if (len == 0) {
-            nextTask() = envir().taskScheduler().scheduleDelayedTask(AUDIO_POLL_US, pollAgain, this);
+            nextTask() = envir().taskScheduler().scheduleDelayedTask(nextPollUs(), pollAgain, this);
             return;
         }
         if (len == -1) {
@@ -167,6 +180,7 @@ void LiveAudioSource::deliverFrame() {
         LiveAudioTrack::noteFrame(hdr);
         fLastSeenUs = liveMonotonicUs();
         fStallNoted = False;
+        fFrameUs = (unsigned)(1024ull * hdr.numRawBlocks * 1000000 / aacSamplingFrequency(hdr.sfIndex));
 
         if (liveMonotonicUs() > ts + AUDIO_MAX_AGE_US) {
             ++fNbDropped;
