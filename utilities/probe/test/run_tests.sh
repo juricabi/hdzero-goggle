@@ -204,15 +204,20 @@ all_back() {
         same_sorted "$M/i2c_3_0x49" "$M/i2c_3_0x49.orig"
 }
 no_viol() { [ ! -s "$M/violations" ]; }
-gone() { # the script and its helpers (guardian, players) have exited within 3 s
+gone() { # nothing of this scenario is left but the app (script, guardian, players) within 3 s
     i=0
     while [ "$i" -lt 30 ]; do
-        pgrep -f "$KIT/$1" > /dev/null 2>&1 || {
-            pgrep -f "busybox sleep ${STUB_APLAY_S:-1}\$" > /dev/null 2>&1 || return 0
-        }
+        left=""
+        for e in $(grep -l -z -x "MODEL=$M" /proc/[0-9]*/environ 2> /dev/null); do
+            p=${e#/proc/}
+            p=${p%/environ}
+            grep -q -x "$p" "$M/app.pids" 2> /dev/null || left="$left $p"
+        done
+        [ -z "$left" ] && return 0
         sleep 0.1
         i=$((i + 1))
     done
+    echo "  still running:$left ($(for p in $left; do tr '\000' ' ' < "/proc/$p/cmdline"; echo; done 2> /dev/null | head -3))"
     return 1
 }
 WHY=""

@@ -266,11 +266,12 @@ int main(int argc, char **argv) {
 }
 C
 cp "$TOP/src/record/pcmbridge.c" "$TOP/src/record/pcmbridge.h" "$TOP/src/record/pcmbridge_alsa.h" "$TOP/src/record/appmsg.h" "$T/inc/"
+# shellcheck disable=SC2089,SC2090 # the quotes are part of the macro values
 D="-DHDMIA_REQ_FILE=\"$T/req\" -DHDMIA_STATE_FILE=\"$T/state\" -DHDMIA_LOCK_FILE=\"$T/lock\""
-# shellcheck disable=SC2086 # D holds several options
+# shellcheck disable=SC2086,SC2090 # D holds several options
 gcc -Wall -Wno-unused-parameter -c -I"$T/inc" $D -Dopen=t_open -Dread=t_read -Dwrite=t_write -Dclose=t_close -Dflock=t_flock -o "$T/pb.o" "$T/inc/pcmbridge.c"
 gcc -w -c -I"$T/inc" -o "$T/minIni.o" "$T/inc/minIni.c"
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086,SC2090
 gcc -Wall -I"$T/inc" -I"$TOP/src/record" $D -o "$T/t" "$T/harness.c" "$T/pb.o" "$T/minIni.o" -lpthread
 "$T/t" "$T/req" "$T/state" 2> "$T/log.txt" || {
     echo "--- bridge log:"
