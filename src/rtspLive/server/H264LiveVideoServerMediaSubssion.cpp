@@ -27,7 +27,7 @@ FramedSource* H264LiveVideoServerMediaSubssion::createNewStreamSource(unsigned c
 	if (fNalTimestamps)
 	{
 		// stream with audio: NAL units with the frames' own (shared) timestamps
-		LiveNalVideoSource* nalSource = LiveNalVideoSource::createNew(envir());
+		LiveNalVideoSource* nalSource = LiveNalVideoSource::createNew(envir(), False);
 		if (nalSource == NULL)
 		{
 			return NULL;

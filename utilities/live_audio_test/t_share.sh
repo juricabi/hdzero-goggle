@@ -20,7 +20,7 @@ REC_AUDIO=1 write_conf "$L/rec.conf" 1 0
 echo "== stream first, then recording and the AI->AO loop start and stop while it runs"
 start_record "$L/rec.conf" "$L/record_1.log"
 start_live "$L/live.conf" "$L/rtspLive_1.log"
-capture "$L/cap_1.mkv" 26 &
+capture "$L/cap_1.nut" 26 &
 CAP=$!
 step() { sleep "$1"; echo "  +$2: $3"; "$BIN/gmsg" record "$3"; }
 step 4 4 start
@@ -33,8 +33,8 @@ wait $CAP
 sleep 4
 stop_live
 stop_record
-read -r gap n <<< "$(audio_gaps "$L/cap_1.mkv")"
-echo "  capture: $(packet_counts "$L/cap_1.mkv"), largest audio gap $gap ms"
+read -r gap n <<< "$(audio_gaps "$L/cap_1.nut")"
+echo "  capture: $(packet_counts "$L/cap_1.nut"), largest audio gap $gap ms"
 [ "$gap" -le 100 ]; check $? "stream audio not interrupted by recording / loop start and stop (largest gap $gap ms)"
 [ "$(grep -c "ai2aenc_start" "$L/record_1.log")" = 3 ]; check $? "live chain started once, recording audio twice"
 grep -q "ffpack_close: .* audio frames" "$L/record_1.log" && ! grep -q "muxed so far: [0-9]* video, 0 audio" "$L/record_1.log"
@@ -48,14 +48,14 @@ start_record "$L/rec.conf" "$L/record_2.log"
 "$BIN/gmsg" record start
 sleep 2
 start_live "$L/live.conf" "$L/rtspLive_2.log"
-capture "$L/cap_2.mkv" 6
+capture "$L/cap_2.nut" 6
 stop_live
 sleep 4.5
 "$BIN/gmsg" record stop
 sleep 1
 stop_record
-echo "  capture: $(packet_counts "$L/cap_2.mkv")"
-grep -q "audio" <<< "$(packet_counts "$L/cap_2.mkv")"; check $? "stream has audio while recording with audio"
+echo "  capture: $(packet_counts "$L/cap_2.nut")"
+grep -q "audio" <<< "$(packet_counts "$L/cap_2.nut")"; check $? "stream has audio while recording with audio"
 ! grep -q "AIDEV VIOLATION\|AIDEV LEAK" "$L/record_2.log"; check $? "AI device: no disable while in use, not left enabled"
 grep "AIDEV" "$L/record_2.log" | sed 's/^/    /'
 cleanup_ipc

@@ -135,7 +135,14 @@ packet_counts() { # FILE -> "video N audio M"
     done < "$1.streams"
     echo "${out# }"
 }
-decode_errors() { ffmpeg -v error -i "$1" -f null - 2>&1 | wc -l; }
+# decoder errors, each stream on its own (a capture's container timestamps are not checked here)
+decode_errors() {
+    local n=0 t
+    for t in v a; do
+        n=$(( n + $(ffmpeg -v error -i "$1" -map "0:$t?" -f null - 2>&1 | wc -l) ))
+    done
+    echo $n
+}
 
 PASS=0
 FAIL=0

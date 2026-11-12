@@ -842,6 +842,39 @@ static int avshare_findFrameStart(int mediaIndex)
     return -1;
 }
 
+// A frame the writer gave up half-way (the video writer, avshare_add(), stops when the ring is
+// full and then drops frames until the next I frame) is discarded when the next frame start
+// appears behind it. But while it is kept, its slots are not free: a next frame larger than the
+// rest of the ring (an I frame above half the ring, ~280 KiB) cannot complete either and would be
+// kept the same way, frame after frame. The writer fills a frame's slots in one go, so a partial
+// frame that has not grown for PARTIAL_TIMEOUT_US is given up here too.
+#define PARTIAL_TIMEOUT_US  100000
+
+static struct {
+    int      start;    // first slot of the partial frame seen last, -1: none
+    int      nSlots;   // filled slots it had
+    uint64_t sinceUs;  // when it was first seen that way
+} gPartial[MEDIA_NUM] = { {-1, 0, 0}, {-1, 0, 0} };
+
+static uint64_t avshare_nowUs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
+static bool avshare_partialStalled(int mediaIndex, int start, int nSlots)
+{
+    uint64_t now = avshare_nowUs();
+    if( (gPartial[mediaIndex].start != start) || (gPartial[mediaIndex].nSlots != nSlots) ) {
+        gPartial[mediaIndex].start = start;
+        gPartial[mediaIndex].nSlots = nSlots;
+        gPartial[mediaIndex].sinceUs = now;
+        return false;
+    }
+    return (now - gPartial[mediaIndex].sinceUs) >= PARTIAL_TIMEOUT_US;
+}
+
 int avshare_readMediaFrame(int media_type, uint8_t* buf, int bufLen, uint64_t* timestampUs)
 {
     int mediaIndex = MEDIA_type2index(media_type);
@@ -867,13 +900,18 @@ int avshare_readMediaFrame(int media_type, uint8_t* buf, int bufLen, uint64_t* t
         bool overflow = false;
         bool restart = false;
         bool complete = false;
+        bool stalled = false;
         uint64_t ts = heads[start].timestamp;
 
         while( nSlots < SHAREBUF_COUNT ) {
             ShareStream_t* h = &heads[idx];
             if( SLOT_WFLAG(h) != 0 ) {
-                // writer has not finished this frame yet: try again later
-                return 0;
+                // writer has not finished this frame yet: try again later (unless it gave up)
+                if( (nSlots == 0) || !avshare_partialStalled(mediaIndex, start, nSlots) ) {
+                    return 0;
+                }
+                stalled = true;
+                break;
             }
             // acquire: read the slot's header and data only after seeing it filled (ARMv7 may
             // satisfy these loads before the wflag load: a control dependency does not order loads)
@@ -912,7 +950,12 @@ int avshare_readMediaFrame(int media_type, uint8_t* buf, int bufLen, uint64_t* t
         }
         gAvshare.idxNext[mediaIndex] = idx;
         gAvshare.posNext[mediaIndex] = 0;
+        gPartial[mediaIndex].start = -1;
 
+        if( stalled ) {
+            alogd("drop partial %s frame (%d slots), the writer gave up on it\n", (mediaIndex == 0) ? "video" : "audio", nSlots);
+            return -2;
+        }
         if( restart ) {
             continue;
         }

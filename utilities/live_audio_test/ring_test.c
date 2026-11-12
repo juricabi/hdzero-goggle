@@ -1,13 +1,16 @@
 // Native unit test of the avshare ring: the record (writer) side and the rtspLive (reader) side
 // are both linked in, their globals renamed w_* / r_* with objcopy, and they share the real
 // SysV shared memory segment exactly as the two processes do on the goggle.
+#include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -235,6 +238,55 @@ static void test_video_partial(void) {
     printf("video partial-frame recovery: ok\n");
 }
 
+// I frames larger than what a partial frame leaves free (above half the ring): the legacy video
+// writer gives up a frame when the ring is full and drops until the next I frame; if the reader
+// kept every partial frame until a new frame start shows up, each I frame would stay partial
+// behind the previous one and the video would never recover.
+static void test_video_big_iframes(void) {
+    static uint8_t buf[600 * 1024], out[1024 * 1024];
+    uint64_t ts;
+    const int big = 40 * 10240 - 100; // 40 of the 56 slots
+    uint32_t seq = 5000;
+    int n;
+
+    w_avshare_connected(MEDIA_VIDEO); // the record main loop polls it: the writer starts at slot 0
+    CHECK(r_avshare_startMedia(MEDIA_VIDEO) == 0, "video reader start");
+    for (int i = 0; i < 10; i++, seq++) {
+        w_avshare_addvid(buf, make_video(buf, 15000, seq), FRAME_P, seq); // 2 slots each, not read yet
+    }
+    w_avshare_addvid(buf, make_video(buf, big, seq), FRAME_I, seq); // only 36 slots free: partial
+    seq++;
+    for (int i = 0; i < 10; i++) {
+        n = r_avshare_readMediaFrame(MEDIA_VIDEO, out, sizeof(out), &ts);
+        CHECK(n == 15000, "queued P frame %d (len %d)", i, n);
+    }
+
+    // one I frame per GOP, the reader polling every millisecond in between (like LiveNalVideoSource)
+    int got = 0, iFrames = 0;
+    for (iFrames = 1; iFrames <= 6 && !got; iFrames++, seq++) {
+        w_avshare_addvid(buf, make_video(buf, big, seq), FRAME_I, seq);
+        for (int t = 0; t < 200 && !got; t++) {
+            n = r_avshare_readMediaFrame(MEDIA_VIDEO, out, sizeof(out), &ts);
+            if (n == big) {
+                uint32_t s2 = 0;
+                memcpy(&s2, out + 5, 4);
+                CHECK(s2 == seq && ts == seq, "big I frame content %u/%u", s2, seq);
+                got = 1;
+            }
+            usleep(1000);
+        }
+    }
+    CHECK(got, "a 40-slot I frame got through (tried %d I frames)", iFrames - 1);
+    for (int i = 0; i < 50; i++, seq++) {
+        int len = (i % 15 == 0) ? big : 9000;
+        w_avshare_addvid(buf, make_video(buf, len, seq), (i % 15 == 0) ? FRAME_I : FRAME_P, seq);
+        n = r_avshare_readMediaFrame(MEDIA_VIDEO, out, sizeof(out), &ts);
+        CHECK(n == len && ts == seq, "big-I stream frame %u (len %d/%d)", seq, n, len);
+    }
+    r_avshare_stopMedia(MEDIA_VIDEO);
+    printf("video I frames above half the ring: recovered after %d I frame(s)\n", iFrames - 1);
+}
+
 static void test_legacy_video(void) {
     static uint8_t buf[64 * 1024], out[1024 * 1024];
     struct timeval tv;
@@ -330,8 +382,57 @@ static void test_timestamp(void) {
     printf("timestamp conversion: wall-clock error %lld us\n", diff);
 }
 
+// The writer trusts a connect flag only while some process holds the lock rtspLive takes on
+// /tmp/live.pid (a process does not see its own locks): a child plays the running rtspLive.
+static pid_t gLockHolder = -1;
+
+static void reader_process_start(void) {
+    int ready[2];
+    if (pipe(ready) != 0) return;
+    gLockHolder = fork();
+    if (gLockHolder == 0) {
+        int fd = open("/tmp/live.pid", O_RDWR | O_CREAT, 0644);
+        struct flock fl;
+        memset(&fl, 0, sizeof(fl));
+        fl.l_type = F_WRLCK;
+        fl.l_whence = SEEK_SET;
+        fcntl(fd, F_SETLK, &fl);
+        if (write(ready[1], "x", 1) != 1) _exit(1);
+        for (;;) pause();
+    }
+    char c;
+    if (read(ready[0], &c, 1) != 1) printf("lock holder failed\n");
+    close(ready[0]);
+    close(ready[1]);
+}
+
+static void reader_process_kill(void) {
+    if (gLockHolder > 0) {
+        kill(gLockHolder, SIGKILL);
+        waitpid(gLockHolder, NULL, 0);
+        gLockHolder = -1;
+    }
+}
+
+// rtspLive killed with its connect flag set: the writer must stop trusting the flag
+static void test_stale_flag(void) {
+    CHECK(r_avshare_startMedia(MEDIA_AUDIO) == 0, "reader start");
+    usleep(600000);
+    CHECK(w_avshare_connected(MEDIA_AUDIO), "reader alive: connected");
+    reader_process_kill();
+    usleep(600000); // the writer re-checks the lock every 500 ms
+    CHECK(!w_avshare_connected(MEDIA_AUDIO), "reader process gone, flag still set: not connected");
+    reader_process_start();
+    usleep(600000);
+    CHECK(w_avshare_connected(MEDIA_AUDIO), "a reader process again: connected");
+    r_avshare_stopMedia(MEDIA_AUDIO);
+    CHECK(!w_avshare_connected(MEDIA_AUDIO), "disconnected");
+    printf("stale connect flag of a dead reader: ignored\n");
+}
+
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    reader_process_start();
     // the record process creates the segment at boot (its init clears the connect flags)
     CHECK(w_avshare_init() == 0, "writer init");
 
@@ -341,9 +442,12 @@ int main(void) {
     test_audio_reconnect();
     r_avshare_stopMedia(MEDIA_AUDIO);
     test_video_partial();
+    test_video_big_iframes();
     test_legacy_video();
     test_concurrent();
+    test_stale_flag();
 
+    reader_process_kill();
     w_avshare_uninit();
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

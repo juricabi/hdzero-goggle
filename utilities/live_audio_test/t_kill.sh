@@ -30,7 +30,7 @@ for how in quit TERM KILL; do
     echo "== rtspLive ends by $how while streaming"
     start_record "$L/rec.conf" "$L/record_$how.log"
     start_live "$L/live.conf" "$L/rtspLive_$how.log"
-    capture "$L/cap_$how.mkv" 20 &
+    capture "$L/cap_$how.nut" 20 &
     CAP=$!
     for _ in $(seq 100); do grep -q "liveaudio_onFrame\] first frame" "$L/record_$how.log" && break; sleep 0.1; done
     sleep 3

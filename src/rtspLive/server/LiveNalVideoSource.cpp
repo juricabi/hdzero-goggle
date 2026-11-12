@@ -11,13 +11,13 @@ extern "C"
 #define VIDEO_POLL_US       1000   // same polling as H264FramedLiveSource
 #define VIDEO_IDLE_POLL_US  20000  // ring not attached / reader not connected
 
-LiveNalVideoSource* LiveNalVideoSource::createNew(UsageEnvironment& env) {
-    return new LiveNalVideoSource(env);
+LiveNalVideoSource* LiveNalVideoSource::createNew(UsageEnvironment& env, Boolean h265) {
+    return new LiveNalVideoSource(env, h265);
 }
 
-LiveNalVideoSource::LiveNalVideoSource(UsageEnvironment& env)
-    : FramedSource(env), fFrame(new unsigned char[MAXSTREAMBUF]), fFrameLen(0), fPos(0),
-      fLastNalOfFrame(False) {
+LiveNalVideoSource::LiveNalVideoSource(UsageEnvironment& env, Boolean h265)
+    : FramedSource(env), fH265(h265), fFrame(new unsigned char[MAXSTREAMBUF]), fFrameLen(0), fPos(0),
+      fLastNalOffset(0), fFrameHasVcl(False), fEndsAccessUnit(False) {
     fFramePresentationTime.tv_sec = 0;
     fFramePresentationTime.tv_usec = 0;
     printf("[MEDIA SERVER]live NAL video source opened\n");
@@ -37,6 +37,14 @@ void LiveNalVideoSource::doGetNextFrame() {
 
 void LiveNalVideoSource::pollAgain(void* clientData) {
     ((LiveNalVideoSource*)clientData)->deliverNal();
+}
+
+Boolean LiveNalVideoSource::isVcl(unsigned char nalHeader) const {
+    if (fH265) {
+        return ((nalHeader >> 1) & 0x3F) < 32; // H.265: types 0..31
+    }
+    unsigned type = nalHeader & 0x1F;
+    return (type >= 1) && (type <= 5); // H.264: coded slices
 }
 
 // Next NAL unit of the current frame, without its start code and trailing zero bytes.
@@ -103,9 +111,21 @@ void LiveNalVideoSource::deliverNal() {
                 fPos = i + 3;
             }
         }
+
+        // find the frame's last NAL unit and whether it holds a picture
+        unsigned firstPos = fPos, o = 0, l = 0;
+        fLastNalOffset = fFrameLen;
+        fFrameHasVcl = False;
+        while (nextNal(o, l)) {
+            fLastNalOffset = o;
+            if (isVcl(fFrame[o])) {
+                fFrameHasVcl = True;
+            }
+        }
+        fPos = firstPos;
     }
 
-    fLastNalOfFrame = (fPos >= fFrameLen);
+    fEndsAccessUnit = fFrameHasVcl && (offset == fLastNalOffset);
 
     if (length > fMaxSize) {
         fNumTruncatedBytes = length - fMaxSize;
@@ -132,8 +152,8 @@ LiveH264VideoStreamDiscreteFramer::LiveH264VideoStreamDiscreteFramer(UsageEnviro
     : H264VideoStreamDiscreteFramer(env, source, False, False), fLiveSource(source) {
 }
 
-Boolean LiveH264VideoStreamDiscreteFramer::nalUnitEndsAccessUnit(u_int8_t nal_unit_type) {
-    return fLiveSource->lastNalOfFrame() && H264or5VideoStreamDiscreteFramer::nalUnitEndsAccessUnit(nal_unit_type);
+Boolean LiveH264VideoStreamDiscreteFramer::nalUnitEndsAccessUnit(u_int8_t /*nal_unit_type*/) {
+    return fLiveSource->endsAccessUnit();
 }
 
 LiveH265VideoStreamDiscreteFramer*
@@ -145,6 +165,6 @@ LiveH265VideoStreamDiscreteFramer::LiveH265VideoStreamDiscreteFramer(UsageEnviro
     : H265VideoStreamDiscreteFramer(env, source, False, False), fLiveSource(source) {
 }
 
-Boolean LiveH265VideoStreamDiscreteFramer::nalUnitEndsAccessUnit(u_int8_t nal_unit_type) {
-    return fLiveSource->lastNalOfFrame() && H264or5VideoStreamDiscreteFramer::nalUnitEndsAccessUnit(nal_unit_type);
+Boolean LiveH265VideoStreamDiscreteFramer::nalUnitEndsAccessUnit(u_int8_t /*nal_unit_type*/) {
+    return fLiveSource->endsAccessUnit();
 }

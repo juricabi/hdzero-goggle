@@ -14,13 +14,17 @@
 
 class LiveNalVideoSource: public FramedSource {
 public:
-    static LiveNalVideoSource* createNew(UsageEnvironment& env);
+    static LiveNalVideoSource* createNew(UsageEnvironment& env, Boolean h265);
 
-    // the NAL unit delivered last is the last one of its ring frame (access unit)
-    Boolean lastNalOfFrame() const { return fLastNalOfFrame; }
+    // The NAL unit delivered last ends its access unit: it is the last NAL unit of a ring frame
+    // that holds a picture (a VCL NAL unit). Ring frames are the encoder's output frames, all
+    // NAL units of one carry its timestamp (RFC 6184 / 7798: the marker goes on the last packet
+    // of the access unit, whatever its type, e.g. a trailing SEI). A frame without a picture
+    // (the parameter sets queued before an I frame) does not end the access unit.
+    Boolean endsAccessUnit() const { return fEndsAccessUnit; }
 
 protected:
-    LiveNalVideoSource(UsageEnvironment& env);
+    LiveNalVideoSource(UsageEnvironment& env, Boolean h265);
     virtual ~LiveNalVideoSource();
 
 private:
@@ -28,17 +32,21 @@ private:
     static void pollAgain(void* clientData);
     void deliverNal();
     Boolean nextNal(unsigned& offset, unsigned& length);
+    Boolean isVcl(unsigned char nalHeader) const;
 
 private:
+    Boolean fH265;
     unsigned char* fFrame;
     unsigned fFrameLen;
-    unsigned fPos;        // parse position in fFrame
+    unsigned fPos;            // parse position in fFrame
+    unsigned fLastNalOffset;  // where the last NAL unit of the frame starts
+    Boolean fFrameHasVcl;
     struct timeval fFramePresentationTime;
-    Boolean fLastNalOfFrame;
+    Boolean fEndsAccessUnit;
 };
 
-// Discrete framers that set the RTP marker on the last VCL NAL unit of each frame only
-// (the default guesses "any VCL NAL unit", wrong for multi-slice pictures).
+// Discrete framers that set the RTP marker at the end of each access unit (see above) only
+// (the default guesses "any VCL NAL unit", wrong for multi-slice pictures and trailing SEI).
 class LiveH264VideoStreamDiscreteFramer: public H264VideoStreamDiscreteFramer {
 public:
     static LiveH264VideoStreamDiscreteFramer* createNew(UsageEnvironment& env, LiveNalVideoSource* source);
