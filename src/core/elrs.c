@@ -130,6 +130,13 @@ static void channel_channel_hdzero(uint8_t const channel) {
     }
 }
 
+// The analog channel for MSP: 0-based A1..L8 (the ELRS band/channel index), 255
+// (the backpack's CHANNEL_INDEX_UNKNOWN) while the goggle does not tune the analog
+// source (an uncontrolled bay module: its channel is not known).
+static uint8_t analog_msp_index(void) {
+    return analog_channel_tunable() ? (uint8_t)(analog_channel_get() - 1) : 255;
+}
+
 static void change_channel_analog(uint8_t channel) {
     if (channel == 0 || channel > ANALOG_CHANNEL_NUM) {
         LOGE("Invalid analog channel %d", channel);
@@ -303,7 +310,7 @@ void msp_process_packet() {
             if (g_source_info.source == SOURCE_HDZERO) {
                 chan = hdz_ch2index(g_setting.source.hdzero_band, g_setting.scan.channel);
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                chan = g_setting.scan.channel - 1;
+                chan = analog_msp_index(); // (was the HDZero channel)
             }
             msp_send_packet(MSP_GET_BAND_CHAN, MSP_PACKET_RESPONSE, 1, &chan);
         } break;
@@ -326,7 +333,7 @@ void msp_process_packet() {
             if (g_source_info.source == SOURCE_HDZERO) {
                 ch = hdz_ch2index(g_setting.source.hdzero_band, g_setting.scan.channel) + 1;
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                ch = g_setting.scan.channel;
+                ch = analog_channel_tunable() ? analog_channel_get() : 0; // (was the HDZero channel); 0: unknown
             }
             freq = ch == 0 ? 0 : freq_table[ch - 1];
             buf[0] = freq & 0xff;
@@ -503,6 +510,18 @@ bool elrs_headtracking_enabled() {
 }
 
 void msp_channel_update() {
+    if (g_source_info.source == SOURCE_AV_MODULE) {
+        // analog: the analog channel, A1..L8 as 0..47 (was the HDZero channel)
+        uint8_t chan = analog_msp_index();
+        if (chan == 255) {
+            LOGI("MSPv2 MSP_SET_BAND_CHAN not sent: the goggle does not control the bay module");
+            return;
+        }
+        msp_send_packet(MSP_SET_BAND_CHAN, MSP_PACKET_COMMAND, sizeof(chan), &chan);
+        LOGI("MSPv2 MSP_SET_BAND_CHAN %d sent (analog)", chan);
+        return;
+    }
+
     // Channel 1...20 for R1...8, E1, F1, F2 and F4, L1...8
     uint8_t const ch = g_setting.scan.channel;
     uint8_t const band = g_setting.source.hdzero_band;
