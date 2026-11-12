@@ -1066,6 +1066,10 @@ failed:
     liveaudio_deinit(&recCtx.liveAudio);
     record_stop(&recCtx);
     pcmbridge_deinitSys(recCtx.hdmiAudio, !aidev_heldByOthers(&recCtx, AIUSER_hdmiBridge));
+    recCtx.hdmiAudio = NULL; // freed: no longer a user
+    if (aiuser_loopback(&recCtx)) { // ai2ao_deinitSys() does not stop a running loop
+        ai2ao_stop(recCtx.ao, !aidev_heldByOthers(&recCtx, AIUSER_loopback));
+    }
     ai2ao_deinitSys(recCtx.ao);
     ai2aenc_deinitSys(recCtx.aa);
     vi2live_deinitSys(recCtx.vvLive);

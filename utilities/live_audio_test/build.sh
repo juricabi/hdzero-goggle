@@ -7,7 +7,9 @@
 #   rtspLive      the real src/rtspLive, built natively against a host live555
 #                 (LIVE555=<built live555 source tree>; skipped when not set)
 #   ring_test     both ring implementations in one binary (x86; ring_test.arm with TOOLCHAIN=<buildroot sdk>)
-#   gmsg          sends goggle messages (record start/stop, AI->AO loop, quit)
+#   record_host_fast  the same, stream audio stopped 300 ms (not 3 s) after the reader leaves
+#   stream_reader the real ring reader holding /tmp/live.pid: rtspLive's audio track without a server
+#   gmsg          sends goggle messages (record start/stop, AI->AO loop, HDMI audio bridge, quit)
 #
 # Every file is compiled with -Wall -Wextra; warnings are kept in $WORK/build/*.warn.
 set -e
@@ -46,6 +48,18 @@ gcc -O1 -g -Ilib/minIni/src -c lib/minIni/src/minIni.c -o "$R/minIni.o"
 cc_warn "$R/stubs.o" "$LAT_DIR/record_stubs.c" $RCF -I"$LAT_DIR"
 gcc -o "$BIN/record_host" "$R"/*.o -lpthread
 echo "built $BIN/record_host"
+# the same with the stream audio stopping 300 ms after the reader leaves (not 3 s): t_aidev.sh
+mkdir -p "$R/fast"
+cc_warn "$R/fast/live_audio.o" src/record/live_audio.c $RCF -DLIVE_AUDIO_STOP_DELAY_MS=300
+gcc -o "$BIN/record_host_fast" $(ls "$R"/*.o | grep -v "/live_audio.o$") "$R/fast/live_audio.o" -lpthread
+echo "built $BIN/record_host_fast"
+# stands in for rtspLive's audio track (the real ring reader, no server): t_aidev.sh
+SR=$B/stream_reader
+mkdir -p "$SR"
+cc_warn "$SR/stream_reader.o" "$LAT_DIR/stream_reader.c" -O1 -g $W -D_GNU_SOURCE -Isrc/rtspLive/stream
+cc_warn "$SR/avshare.o" src/rtspLive/stream/avshare.c -O1 -g $W -Wno-unused-variable -Wno-unused-function -D_GNU_SOURCE -Isrc/rtspLive/stream
+gcc -o "$BIN/stream_reader" "$SR"/*.o -lpthread
+echo "built $BIN/stream_reader"
 
 # ---- gmsg (and an ARM one: SysV message payloads are not translated by qemu-arm, a 64-bit
 # sender cannot talk to the 32-bit rtspLive under qemu) ---------------------------------------

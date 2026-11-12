@@ -9,7 +9,9 @@
 #include "confparser.h"
 #include "live_audio.h"
 
+#ifndef LIVE_AUDIO_STOP_DELAY_MS // (host tests shorten it)
 #define LIVE_AUDIO_STOP_DELAY_MS  3000 // keep the chain running across DESCRIBE -> SETUP
+#endif
 #define LIVE_AUDIO_RETRY_MS       5000 // after a failed start
 #define LIVE_AUDIO_STALL_MS       2000 // running, but no frame for that long: restart the chain
 #define LIVE_CLOCK_MAX_LATENCY_US 1000000

@@ -19,9 +19,11 @@
 //   LAT_VIDEO_FROM_START 1: each start of an encoder plays the video from its first frame (the
 //                        same frames for every run, to compare two rtspLive builds)
 //   LAT_CTRL             directory: if "$LAT_CTRL/ai_fail" exists, AI chains stop producing and
-//                        ai2aenc_start() fails (an audio chain failing for good)
+//                        ai2aenc_start() fails (an audio chain failing for good); the HDMI audio
+//                        bridge's route comes from "$LAT_CTRL/hdmia_src" and "$LAT_CTRL/hdmia_fail"
+//                        makes its start fail (see the bridge below)
 // Every AI device misuse (device disabled while another channel still uses it, device left
-// enabled with no channel) is logged as "AIDEV VIOLATION" / "AIDEV LEAK".
+// enabled with no channel, also at exit) is logged as "AIDEV VIOLATION" / "AIDEV LEAK".
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -33,6 +35,7 @@
 
 #include "ai2aenc.h"
 #include "ai2ao.h"
+#include "pcmbridge.h"
 #include "disk.h"
 #include "ffpack.h"
 #include "jpegenc.h"
@@ -236,6 +239,17 @@ static void aidev_open(const char *who) {
     pthread_mutex_unlock(&gAiLock);
 }
 
+// at exit (after main() returns): no channel may be left, nor the device enabled
+__attribute__((destructor)) static void aidev_atExit(void) {
+    pthread_mutex_lock(&gAiLock);
+    if (gAiChannels != 0 || gAiEnabled) {
+        stub_log("AIDEV LEAK at exit: %d channel(s), device %s", gAiChannels, gAiEnabled ? "enabled" : "disabled");
+    } else {
+        stub_log("AIDEV at exit: no channel, device disabled");
+    }
+    pthread_mutex_unlock(&gAiLock);
+}
+
 static void aidev_close(const char *who, bool disableDev) {
     pthread_mutex_lock(&gAiLock);
     gAiChannels--;
@@ -247,7 +261,8 @@ static void aidev_close(const char *who, bool disableDev) {
     } else if (gAiChannels == 0) {
         stub_log("AIDEV LEAK %s: last channel gone, device left enabled", who);
     }
-    stub_log("AIDEV %s: channel destroyed (%d in use, disable=%d)", who, gAiChannels, disableDev);
+    stub_log("AIDEV %s: channel destroyed (%d in use, disable=%d, device %s)", who, gAiChannels, disableDev,
+             gAiEnabled ? "on" : "off");
     pthread_mutex_unlock(&gAiLock);
 }
 
@@ -348,6 +363,72 @@ ERRORTYPE ai2ao_stop(Ai2Ao_t *ao, bool disableDev) {
     return SUCCESS;
 }
 bool ai2ao_playing(Ai2Ao_t *ao) { return ao->clkChn > MM_INVALID_CHN; }
+
+//----------------------------------------------------------------------------------------------
+// HDMI audio bridge (src/record/pcmbridge.c), its use of the AI device as the real one does it:
+// one route at a time, a start replaces the running route (pb_stop(pb, aiDevFree) first); the
+// route "ai" (HDMI out) has a channel on the AI device, any other source (hw:snddaudio2, HDMI in)
+// none. The route is the content of $LAT_CTRL/hdmia_src ("ai" when missing); with
+// $LAT_CTRL/hdmia_fail the start fails after its channel was created (a sink that does not open)
+// and closes it again with aiDevFree as the disable decision, as pb_fail() does.
+//----------------------------------------------------------------------------------------------
+struct PcmBridge {
+    bool running;
+    bool usesAi;
+};
+
+static void ctrl_read(const char *name, char *buf, size_t len, const char *def) {
+    const char *dir = getenv("LAT_CTRL");
+    char path[512];
+    snprintf(buf, len, "%s", def);
+    if (!dir) return;
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    if (fgets(buf, (int)len, f)) buf[strcspn(buf, "\r\n")] = 0;
+    fclose(f);
+}
+
+PcmBridge_t *pcmbridge_initSys(void) { return calloc(1, sizeof(PcmBridge_t)); }
+
+static void pb_stub_stop(PcmBridge_t *pb, bool disableAiDev) {
+    if (!pb->running) return;
+    if (pb->usesAi) aidev_close("pcmbridge", disableAiDev);
+    stub_log("pcmbridge stopped (%s, disableAiDev=%d)", pb->usesAi ? "ai" : "alsa source", disableAiDev);
+    pb->running = pb->usesAi = false;
+}
+
+int pcmbridge_start(PcmBridge_t *pb, const char *confFile, AiParams_t *aiParams, bool aiDevFree) {
+    char src[64];
+    (void)confFile;
+    (void)aiParams;
+    if (pb == NULL) return -1;
+    pb_stub_stop(pb, aiDevFree); // a running route is replaced
+    ctrl_read("hdmia_src", src, sizeof(src), "ai");
+    pb->usesAi = strcmp(src, "ai") == 0;
+    if (pb->usesAi) aidev_open("pcmbridge");
+    if (ctrl_flag("hdmia_fail")) {
+        if (pb->usesAi) aidev_close("pcmbridge", aiDevFree);
+        pb->usesAi = false;
+        stub_log("pcmbridge start failed (src=%s, aiDevFree=%d)", src, aiDevFree);
+        return -1;
+    }
+    pb->running = true;
+    stub_log("pcmbridge started (src=%s, aiDevFree=%d)", src, aiDevFree);
+    return 0;
+}
+
+void pcmbridge_stop(PcmBridge_t *pb, bool disableAiDev) {
+    if (pb) pb_stub_stop(pb, disableAiDev);
+}
+
+void pcmbridge_deinitSys(PcmBridge_t *pb, bool disableAiDev) {
+    if (pb == NULL) return;
+    pb_stub_stop(pb, disableAiDev);
+    free(pb);
+}
+
+bool pcmbridge_usesAi(PcmBridge_t *pb) { return pb != NULL && pb->running && pb->usesAi; }
 
 //----------------------------------------------------------------------------------------------
 // VI -> VENC (recording and live)

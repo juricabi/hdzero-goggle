@@ -1,5 +1,5 @@
 // Send a goggle message to the record process (or to rtspLive), like the main app does.
-// usage: gmsg record|live quit|start|stop|live_start|live_stop|aio_start|aio_stop|<number>
+// usage: gmsg record|live quit|start|stop|live_start|live_stop|aio_start|aio_stop|hdmia_start|hdmia_stop|<number>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
         {"quit", MSG_cmdQUIT}, {"start", MSG_cmdSTART}, {"stop", MSG_cmdSTOP},
         {"live_start", LIVE_cmdSTART}, {"live_stop", LIVE_cmdSTOP},
         {"aio_start", AIO_cmdSTART}, {"aio_stop", AIO_cmdSTOP},
+        {"hdmia_start", HDMIA_cmdSTART}, {"hdmia_stop", HDMIA_cmdSTOP},
     };
     if (argc != 3) {
         fprintf(stderr, "usage: %s record|live <command>\n", argv[0]);
