@@ -13,12 +13,13 @@
 #include "ui/ui_style.h"
 
 // Rows: 0 Type, 1 Mode (selectable only when the type has modes), 2 Pin Control,
-// 3 Back.  A change applies (and is stored) when its list is closed with a click
-// or Pin Control is toggled.
+// 3 Check Pins, 4 Back.  A change applies (and is stored) when its list is closed
+// with a click or Pin Control is toggled.  Check Pins only reads (module.h).
 enum {
     ROW_TYPE = 0,
     ROW_MODE,
     ROW_PINS,
+    ROW_CHECK,
     ROW_BACK,
     ROW_COUNT,
     ROW_STATUS = ROW_COUNT + 1,
@@ -30,6 +31,8 @@ static lv_obj_t *btn_module_type;
 static lv_obj_t *lbl_module_mode;
 static lv_obj_t *btn_module_mode;
 static lv_obj_t *lbl_status;
+static lv_obj_t *lbl_check;
+static unsigned check_seq_shown = 0;
 static btn_group_t btn_pins;
 
 static lv_obj_t *page_item_focused = NULL;
@@ -106,6 +109,32 @@ static void update_status(void) {
     lv_label_set_text(lbl_status, text);
 }
 
+// Result of the last pin check: the PG bank supply and the three levels.
+static void update_check(void) {
+    char buf[160], bank[32];
+    const module_pin_check_t r = module_pin_check_result();
+    if (r.running) {
+        lv_label_set_text(lbl_check, _lang("Reading..."));
+        return;
+    }
+    if (!r.seq)
+        return; // (the hint set at page creation stays)
+    check_seq_shown = r.seq;
+    if (r.pg_bank_mv)
+        snprintf(bank, sizeof(bank), "PG %s %d.%d V", _lang("bank"), r.pg_bank_mv / 1000, r.pg_bank_mv % 1000 / 100);
+    else
+        snprintf(bank, sizeof(bank), "PG %s ?", _lang("bank"));
+    if (r.levels < 0) {
+        snprintf(buf, sizeof(buf), "%s, %s: %s", bank, _lang("not read"), _lang(r.why ? r.why : "?"));
+    } else {
+        snprintf(buf, sizeof(buf), "%s, PG0 %s PG1 %s PG2 %s", bank,
+                 r.toggled & 1 ? "~" : (r.levels & 1 ? "1" : "0"),
+                 r.toggled & 2 ? "~" : (r.levels & 2 ? "1" : "0"),
+                 r.toggled & 4 ? "~" : (r.levels & 4 ? "1" : "0"));
+    }
+    lv_label_set_text(lbl_check, buf);
+}
+
 static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
     char buf[512];
     lv_obj_t *page = lv_menu_page_create(parent, NULL);
@@ -143,16 +172,20 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
     create_btn_group_item(&btn_pins, cont, 2, _lang("Pin Control"), _lang("Off"), _lang("On"), "", "", ROW_PINS);
     btn_group_set_sel(&btn_pins, g_setting.module.pins ? 1 : 0);
 
+    create_label_item(cont, _lang("Check Pins"), 1, ROW_CHECK, 1);
+    lbl_check = create_label_item(cont, _lang("Click: read PG0-PG2 as inputs, nothing driven"), 2, ROW_CHECK, 4);
+
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
     create_label_item(cont, buf, 1, ROW_BACK, 1);
 
     lbl_status = create_label_item(cont, "", 1, ROW_STATUS, 4);
 
     lv_obj_t *note = lv_label_create(cont);
-    snprintf(buf, sizeof(buf), "%s\n%s\n%s",
-             _lang("Pin Control lets the goggle drive the bay pins (SoC PG0-PG2). They also carry"),
-             _lang("the WiFi chip's SDIO bus, so module control pauses while WiFi is on."),
-             _lang("True-D: set its BAY mode before choosing a type here (docs/module-bay.md)."));
+    snprintf(buf, sizeof(buf), "%s\n%s\n%s\n%s",
+             _lang("Pin Control On drives the bay pins (SoC PG0-PG2). They reach a module only"),
+             _lang("with the 3-wire bay mod (series resistors, docs/module-bay-mod-safety.md)."),
+             _lang("They are also the WiFi SDIO bus: module control pauses while WiFi is on."),
+             _lang("True-D: MOD 1.16 or later, its BAY mode set first; older firmware drives 5 V."));
     lv_label_set_text(note, buf);
     lv_obj_set_style_text_font(note, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_LEFT, 0);
@@ -268,6 +301,13 @@ static void page_on_click(uint8_t key, int sel) {
         }
         break;
 
+    case ROW_CHECK:
+        if (!page_item_focused) {
+            module_check_pins();
+            update_check();
+        }
+        break;
+
     default:
         break;
     }
@@ -293,6 +333,9 @@ static void page_on_update(uint32_t delta_ms) {
         return;
     last_ms = lv_tick_get();
     update_status();
+    const module_pin_check_t r = module_pin_check_result();
+    if (lbl_check && (r.running || r.seq != check_seq_shown))
+        update_check();
 }
 
 page_pack_t pp_modulebay = {

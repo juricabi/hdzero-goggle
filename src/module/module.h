@@ -48,6 +48,22 @@ void module_power_changed(int on);
 void module_wifi_changed();
 module_status_t module_status();
 
+// Bay pin check (Module Bay page; reads, never drives).  The worker reads PG0-PG2
+// as inputs for 100 ms, only while it does not control the bay and never while
+// WiFi is on or the pins are in the SDIO function, and the PG bank supply as the
+// SoC reports it (PIO_POW_VAL).  Shows the wiring mod and a module that pulls or
+// drives the lines before Pin Control is turned on.
+typedef struct {
+    unsigned seq;     // number of checks done (0: none yet)
+    bool running;     // a check is pending or running
+    int pg_bank_mv;   // 1800 or 3300 (PIO_POW_VAL bit 6: < 2.0 V / > 2.5 V), 0: unknown
+    int levels;       // bit i: PGi read high; -1: not read (why)
+    int toggled;      // bit i: PGi changed while it was read
+    const char *why;  // why the levels were not read, NULL: they were
+} module_pin_check_t;
+void module_check_pins();
+module_pin_check_t module_pin_check_result();
+
 // The configured module type (whatever the pins, power and source).
 int module_num_channels();               // 0: Unknown
 const char *module_mode_names(int type); // Mode list options, NULL: none

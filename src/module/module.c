@@ -19,6 +19,7 @@
 
 #include "module.h"
 #include "rapidfire.h"
+#include "softspi.h"
 #include "steadyview.h"
 #include "steadyview_x.h"
 #include "switch.h"
@@ -53,6 +54,13 @@ static module_def_t *modules[MODULE_TYPES] = {
 // is SDC1, the SDIO bus of the WiFi chip.
 #define PIO_PG_CFG0     0x0300b0d8
 #define PIO_FUNC_SDC1   2
+// PIO_POW_VAL (V536 datasheet 1.6, p. 888): bit 6 = PG port power value, read only;
+// 0: the bank supply is above 2.5 V, 1: below 2.0 V.
+#define PIO_POW_VAL     0x0300b348
+#define PIO_POW_VAL_PG  (1u << 6)
+// pin check: how long and how often the pins are read
+#define CHECK_MS        100
+#define CHECK_STEP_MS   2
 
 // What bay_pins_busy() looks at (variables so that the host test can point them
 // at files of its own; neither exists in the emulator).
@@ -75,6 +83,9 @@ static uint64_t power_on_ms = 0;     // when the bay was switched on, 0: before 
 static bool reinit = false;          // power switched: release the pins, set the module up again
 static bool mode_pending = false;
 static bool channel_pending = false; // the bay module's stored channel changed
+static bool check_pending = false;   // pin check asked for
+static bool check_busy = false;      // pin check running
+static module_pin_check_t check_result = {.levels = -1};
 
 // worker state
 static module_def_t *active = NULL; // initialised module, holds the pins
@@ -202,6 +213,46 @@ static void timed_wait(pthread_cond_t *cond, uint64_t until_ms) {
 
 // ---- worker ----
 
+// The pin check (worker thread, lock released): never while the worker controls
+// the bay, WiFi is on or the SDIO host has the pins.  Reading means exporting
+// them as GPIO inputs, which module control's close() leaves them as anyway.
+static void run_pin_check(bool controlling, bool wifi_on) {
+    module_pin_check_t r = {.levels = -1};
+    uint32_t pow;
+    if (read_reg(PIO_POW_VAL, &pow))
+        r.pg_bank_mv = (pow & PIO_POW_VAL_PG) ? 1800 : 3300;
+    if (controlling) {
+        r.why = "driven by module control";
+    } else if (wifi_on) {
+        r.why = "WiFi on";
+    } else if (bay_pins_busy()) {
+        r.why = "in use by the WiFi SDIO bus";
+    } else if (!softspi_open()) {
+        softspi_close();
+        r.why = "no GPIO access";
+    } else {
+        int first = -1, toggled = 0;
+        for (int t = 0; t < CHECK_MS; t += CHECK_STEP_MS) {
+            int now = 0;
+            for (int pin = 0; pin < SOFTSPI_PINS; pin++)
+                now |= softspi_get_pin((softspi_pin_t)pin) << pin;
+            if (first < 0)
+                first = now;
+            toggled |= now ^ first;
+            usleep(CHECK_STEP_MS * 1000);
+        }
+        softspi_close(); // inputs, unexported
+        r.levels = first;
+        r.toggled = toggled;
+    }
+    LOGI("module: pin check: PG bank %d mV, levels %d, toggled %d%s%s", r.pg_bank_mv, r.levels, r.toggled,
+         r.why ? ", not read: " : "", r.why ? r.why : "");
+    pthread_mutex_lock(&lock);
+    r.seq = check_result.seq + 1;
+    check_result = r;
+    pthread_mutex_unlock(&lock);
+}
+
 // The current bay channel to the active module (lock held, released meanwhile).
 static void send_channel(const char *why) {
     module_def_t *m = active;
@@ -230,6 +281,17 @@ static void *module_worker(void *arg) {
             active = NULL;
             setup_channel = false;
             resend_at_ms = 0;
+            continue;
+        }
+
+        if (check_pending) {
+            const bool controlling = active != NULL, wifi_on = g_setting.wifi.enable;
+            check_pending = false;
+            check_busy = true;
+            pthread_mutex_unlock(&lock);
+            run_pin_check(controlling, wifi_on);
+            pthread_mutex_lock(&lock);
+            check_busy = false;
             continue;
         }
 
@@ -461,6 +523,26 @@ void module_wifi_changed() {
             LOGE("module: bay pins still held while WiFi starts");
     }
     pthread_mutex_unlock(&lock);
+}
+
+void module_check_pins() {
+    if (!started)
+        return;
+    pthread_mutex_lock(&lock);
+    check_pending = true;
+    poke();
+    pthread_mutex_unlock(&lock);
+}
+
+module_pin_check_t module_pin_check_result() {
+    module_pin_check_t r = {.levels = -1, .why = "no module bay"};
+    if (!started)
+        return r;
+    pthread_mutex_lock(&lock);
+    r = check_result;
+    r.running = check_pending || check_busy;
+    pthread_mutex_unlock(&lock);
+    return r;
 }
 
 module_status_t module_status() {

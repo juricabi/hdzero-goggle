@@ -57,6 +57,15 @@ hw_revision_t getHwRevision() {
     return HW_REV_2; // bay power switched by the power thread
 }
 
+// bay pins for module.c's pin check: inputs reading 1, 0, 1
+static int pins_exported;
+bool softspi_open() {
+    pins_exported = 1;
+    return true;
+}
+void softspi_close() { pins_exported = 0; }
+int softspi_get_pin(softspi_pin_t pin) { return pin != SOFTSPI_DAT; }
+
 // ---- recording module types ----
 
 #define MAX_EVENTS 256
@@ -357,6 +366,35 @@ int main(void) {
     g_setting.source.analog_module = SETTING_SOURCES_ANALOG_MODULE_INTERNAL;
     module_source_changed();
     check(analog_channel_get() == 40, "toggled back to Built-in: L8 again");
+
+    printf("Pin check (reads only):\n");
+    module_pin_check_t pc = module_pin_check_result();
+    const unsigned seq = pc.seq;
+    module_check_pins();
+    settle();
+    pc = module_pin_check_result();
+    check(pc.seq == seq + 1 && pc.levels == -1 && pc.why && !pins_exported,
+          "while the worker controls the bay: levels not read, pins left to it");
+    g_setting.module.pins = false;
+    module_settings_changed(false);
+    settle();
+    module_check_pins();
+    settle();
+    pc = module_pin_check_result();
+    check(pc.seq == seq + 2 && pc.levels == 5 && pc.toggled == 0 && !pc.why && !pins_exported && !pc.running,
+          "Pin Control Off: PG0 1, PG1 0, PG2 1 read as inputs, pins unexported again");
+    check(pc.pg_bank_mv == 0, "  PG bank supply unknown without the register dump");
+    g_setting.wifi.enable = true;
+    module_wifi_changed();
+    module_check_pins();
+    settle();
+    pc = module_pin_check_result();
+    check(pc.seq == seq + 3 && pc.levels == -1 && pc.why && !pins_exported, "WiFi on: levels not read");
+    g_setting.wifi.enable = false;
+    module_wifi_changed();
+    g_setting.module.pins = true;
+    module_settings_changed(false);
+    settle();
 
     printf("WiFi SDIO interlock (bay_pins_busy(), stand-in sysfs files):\n");
     char dir[] = "/tmp/module_bay_test.XXXXXX";
