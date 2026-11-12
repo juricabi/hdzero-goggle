@@ -43,10 +43,18 @@ MUTANTS = [
          "const int adc_mic = v[AUDIO_MIXER_REC_MIC] && !(rec_mix && v[AUDIO_MIXER_MIC] > 0);")]),
     ("page marker: level 0 counted as in the mix", R, [
         ("settings->value[AUDIO_MIXER_REC_MIX] && settings->value[level] > 0;",
-         "settings->value[AUDIO_MIXER_REC_MIX] && settings->value[level] >= 0;")]),
+         "settings->value[AUDIO_MIXER_REC_MIX] && settings->value[level] + 1 > 0;")]),
     ("migration: Record What I Hear on", R, [("v[AUDIO_MIXER_REC_MIX] = 0;", "v[AUDIO_MIXER_REC_MIX] = 1;")]),
     ("load: a version 1 [mixer] read as it is", M, [
         ("if (version < AUDIO_MIXER_VERSION) {", "if (version < 1) {")]),
+    ("boot: headphones live from boot when untouched", M, [
+        ("context.line_out = mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] != 0;", "context.line_out = true;")]),
+    ("boot: a headphone level change does not make them live", M, [
+        ("        mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] = 1;\n        context.line_out = true;\n",
+         "        mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] = 1;\n")]),
+    ("boot: any change makes the headphones live", M, [
+        ("    return field == AUDIO_MIXER_HEADPHONES || field == AUDIO_MIXER_MIC",
+         "    return field != AUDIO_MIXER_PHONES_AT_BOOT || field == AUDIO_MIXER_MIC")]),
     ("load: version 1 keys left behind", M, [
         ("            ini_puts(AUDIO_MIXER_SECTION, old_keys[i], NULL, SETTING_INI);", "            (void)old_keys[i];")]),
     ("switches in table order (off before on)", R, [
@@ -77,8 +85,8 @@ MUTANTS = [
         ("audio_mixer_defaults_from_audio_source(&defaults, audio_source);",
          "audio_mixer_defaults_from_audio_source(&defaults, audio_source);\n    if (ini_getl(AUDIO_MIXER_SECTION, \"version\", 0, SETTING_INI))\n        audio_mixer_defaults_from_audio_source(&defaults, 0);")]),
     ("set writes setting.ini", M, [
-        ("    mixer.value[field] = clamp_field(field, value);\n    pthread_mutex_unlock(&mixer_mutex);",
-         "    mixer.value[field] = clamp_field(field, value);\n    pthread_mutex_unlock(&mixer_mutex);\n    ini_putl(AUDIO_MIXER_SECTION, field_key[field], mixer.value[field], SETTING_INI);")]),
+        ("    mixer.value[field] = clamp_field(field, value);\n    if (is_headphone_level",
+         "    mixer.value[field] = clamp_field(field, value);\n    ini_putl(AUDIO_MIXER_SECTION, field_key[field], mixer.value[field], SETTING_INI);\n    if (is_headphone_level")]),
     ("apply in the caller's thread", M, [("    if (worker_running)\n        pthread_cond_signal(&work_cond);",
                                           "    if (0)\n        pthread_cond_signal(&work_cond);")]),
     ("no watcher", M, [("const int has = codec_has_last_batch();", "const int has = codec_has_last_batch() >= 0;")]),

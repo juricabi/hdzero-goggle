@@ -38,6 +38,8 @@ typedef enum {
     AUDIO_MIXER_RX_AUDIO,      // audio output of the built-in analog receiver (RTC6715), 0/1;
                                // not a codec control (Goggle 2 and BoxPro only)
     AUDIO_MIXER_HDMI,          // headphone level of HDMI-in audio (the live digital source in the DAC)
+    AUDIO_MIXER_PHONES_AT_BOOT, // 0: as stock, the headphones get the mix from the first switch to an analog
+                                // source on; 1: from boot. Set by the first change of a headphone level.
     AUDIO_MIXER_FIELD_COUNT
 } audio_mixer_field_t;
 
@@ -67,7 +69,8 @@ void audio_mixer_init(void);
 int audio_mixer_get(audio_mixer_field_t field);
 int audio_mixer_max(audio_mixer_field_t field);
 // Clamp and store one value (memory only): audio_mixer_apply() sends it to the codec,
-// audio_mixer_save() writes it to setting.ini.
+// audio_mixer_save() writes it to setting.ini. Changing a headphone level (Volume, Mic, Line In,
+// A/V In, HDMI In) also makes the headphones live now and from every boot (AUDIO_MIXER_PHONES_AT_BOOT).
 void audio_mixer_set(audio_mixer_field_t field, int value);
 // Write the values changed since the last save to setting.ini. Call it from the UI, which
 // writes the other settings (under lvgl_mutex), never from the worker.
@@ -84,6 +87,9 @@ bool audio_mixer_apply_wait(unsigned timeout_ms);
 // part of the mixer whenever the record daemon starts (boot, SD check, SD format) and
 // when a DVR file is played, at a time the app does not know.
 
+// Line out allowed (an analog source) or muted (HDMI in), as the old dvr_enable_line_out(). At
+// boot it is muted until the first call with true, like the stock firmware that left the record
+// daemon's (silent) mixer in place until then, unless AUDIO_MIXER_PHONES_AT_BOOT is set.
 void audio_mixer_set_line_out(bool enable);
 // HDMI-in audio (src/core/hdmi_audio.c, only with [hdmi] audio_in=1): a live digital source plays
 // into the DAC. Its level is AUDIO_MIXER_HDMI; unlike playback it is mixed with the other live

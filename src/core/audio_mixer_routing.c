@@ -53,6 +53,7 @@ static const uint8_t field_max[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_DVR_LEVEL] = AUDIO_MIXER_DVR_LEVEL_MAX,
     [AUDIO_MIXER_RX_AUDIO] = 1,
     [AUDIO_MIXER_HDMI] = AUDIO_MIXER_LEVEL_MAX,
+    [AUDIO_MIXER_PHONES_AT_BOOT] = 1,
 };
 
 int audio_mixer_max(audio_mixer_field_t field) {
@@ -96,6 +97,11 @@ void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, lo
 
     // HDMI-in audio (only with HDMI In Audio on): 0 dB, the level of DVR playback.
     v[AUDIO_MIXER_HDMI] = OUTPUT_GAIN_0DB + 1;
+
+    // The old firmware set the headphone routing only on a switch to an analog source: booting
+    // straight into HDZero (or HDMI in) left the headphones silent until then. Kept until a
+    // headphone level is changed on the Audio page.
+    v[AUDIO_MIXER_PHONES_AT_BOOT] = 0;
 }
 
 audio_mixer_field_t audio_mixer_level_of(audio_mixer_field_t rec_field) {

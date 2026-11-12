@@ -40,10 +40,10 @@ import codec_model as cm  # noqa: E402
 
 TARGETS = ["HDZGOGGLE", "HDZGOGGLE2", "HDZBOXPRO"]
 KEYS = ["mic", "line_in", "av", "mic_boost", "line_in_boost", "headphones", "playback",
-        "rec_mix", "rec_mic", "rec_line_in", "rec_av", "dvr_level", "rx_audio", "hdmi"]
+        "rec_mix", "rec_mic", "rec_line_in", "rec_av", "dvr_level", "rx_audio", "hdmi", "phones_at_boot"]
 MAX = {"mic": 8, "line_in": 8, "av": 8, "mic_boost": 7, "line_in_boost": 7, "headphones": 31,
        "playback": 31, "rec_mix": 1, "rec_mic": 1, "rec_line_in": 1, "rec_av": 1, "dvr_level": 7,
-       "rx_audio": 1, "hdmi": 8}
+       "rx_audio": 1, "hdmi": 8, "phones_at_boot": 1}
 OLD_KEYS = ["dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av"]  # [mixer] version 1 (never released)
 VERSION = "2"
 # the Record source switch of each analog source, and its headphone level
@@ -213,7 +213,7 @@ def migration_spec(target, audio_source):
     return {"mic": 0, "line_in": 0, "av": 8, "mic_boost": dt["MIC1 boost AMP gain control"],
             "line_in_boost": dt["MIC2 boost AMP gain control"], "headphones": 31, "playback": 27,
             "rec_mix": 0, "rec_mic": int(sel == 0), "rec_line_in": int(sel == 1), "rec_av": int(sel == 2),
-            "dvr_level": 3, "rx_audio": int(audio_source == 2), "hdmi": 4}
+            "dvr_level": 3, "rx_audio": int(audio_source == 2), "hdmi": 4, "phones_at_boot": 0}
 
 
 def compare(test, got, want):
@@ -258,6 +258,7 @@ ROUTING_STATES = [
     ("mix + direct mic at level 0: mic direct, a/v from the mix", mix_only(rec_mic=1, mic=0, av=8, headphones=31), {}),
     ("mix + direct mic at level > 0: once, at its mix level", mix_only(rec_mic=1, mic=5, av=8, mic_boost=3, headphones=31), {}),
     ("mix + all direct, some heard", mix_only(rec_mic=1, rec_line_in=1, rec_av=1, mic=0, line_in=2, av=7, dvr_level=4), {}),
+    ("mix + direct line in at level 0", mix_only(rec_line_in=1, line_in=0, line_in_boost=5, mic=3), {}),
     ("mix of nothing + direct a/v", mix_only(rec_av=1, mic=0, line_in=0, av=0, headphones=31), {}),
     ("hdmi in (line out off), mix", mix_only(mic=4, av=8, headphones=31, dvr_level=3), {"line_out": 0}),
     ("hdmi in (line out off), direct line in", direct_only(rec_line_in=1, av=8, headphones=31), {"line_out": 0}),
@@ -286,8 +287,8 @@ def test_routing(h):
     for name, values, ctx in ROUTING_STATES:
         test = f"{h.target} routing '{name}'"
         lines = codec_lines(base_codec(h.target)) + ["init", "apply"]
-        if "line_out" in ctx:
-            lines.append(f"line_out {ctx['line_out']}")
+        # (after a switch to an analog source unless the state says otherwise)
+        lines.append(f"line_out {ctx.get('line_out', 1)}")
         if "live_dac" in ctx:
             lines.append(f"live_dac {ctx['live_dac']}")
         if "playback" in ctx:
@@ -419,27 +420,37 @@ def test_migration(h):
             if new_rx != old_rx:
                 fail(test, f"analog receiver audio {new_rx}, old firmware {old_rx}")
                 continue
-            if cm.line_out_powered(new) != cm.line_out_powered(old) and flow != "boot":
+            if cm.line_out_powered(new) != cm.line_out_powered(old):
                 fail(test, f"line out powered {cm.line_out_powered(new)}, old firmware {cm.line_out_powered(old)}")
                 continue
             if flow == "late_reset" and "codec changed by someone else" not in log:
                 fail(test, "the reset was not noticed")
                 continue
-            if flow != "boot":
-                compare(test, got, want)
-                continue
-            # Booting straight into HDZero: the old firmware left the record daemon's line out
-            # (27, DAC only) until the first source switch; the new one is always in the settled
-            # state. Documented in docs/audio.md; the recording is the same.
-            compare(test + " (recording)", {k: got[k] for k in ("record_l", "record_r")},
-                    {k: want[k] for k in ("record_l", "record_r")})
-            settled, _ = old_firmware(h.target, audio_source, "switch")
-            doc = {"phones_l": want["phones_l"], "phones_r": want["phones_r"]}
-            if doc != {"phones_l": {}, "phones_r": {}}:
-                fail(test, "the old boot state is not the documented one (headphones silent)")
-            compare(test + " (headphones = old after a source switch)",
-                    {k: got[k] for k in ("phones_l", "phones_r")},
-                    {k: cm.evaluate(settled)[k] for k in ("phones_l", "phones_r")})
+            # booting straight into HDZero included: the old firmware left the record daemon's
+            # silent line out (27, idle left DAC only) until the first switch to an analog source
+            compare(test, got, want)
+
+
+def test_phones_at_boot(h):
+    """The headphones at boot: stock (silent until the first analog source) until a headphone level is
+    changed; from then on, from boot. Other changes (recording, boosts) keep the stock behaviour."""
+    values = dict(migration_spec(h.target, 2))
+    for name, ini_values, change, want_live, want_flag in (
+            ("untouched", values, [], False, 0),
+            ("a recording switch changed", values, ["set rec_mix 1", "apply"], False, 0),
+            ("Mic changed", values, ["set mic 3", "apply"], True, 1),
+            ("Volume changed", values, ["set headphones 20", "apply"], True, 1),
+            ("Volume set to its value", values, ["set headphones 31", "apply"], False, 0),
+            ("phones_at_boot=1 in setting.ini", dict(values, phones_at_boot=1), [], True, 1)):
+        test = f"{h.target} headphones at boot, {name}"
+        lines = codec_lines(base_codec(h.target)) + ["init", "apply", "wait"] + change + ["wait", "get phones_at_boot", "dump"]
+        _, queries, codec, _, _ = h.run(mixer_ini(ini_values), lines)
+        live = cm.line_out_powered(codec)
+        flag = int(query(queries, "GET phones_at_boot")[0].split()[2])
+        if live != want_live or flag != want_flag:
+            fail(test, f"line out powered {live}, phones_at_boot {flag}; want {want_live}, {want_flag}")
+        else:
+            ok(test)
 
 
 TRANSITIONS = [
@@ -487,8 +498,9 @@ def recorded_sources(state, dac):
 def test_transitions(h):
     for name, values, start, change, dac in TRANSITIONS:
         test = f"{h.target} transition '{name}'"
-        # everything before the mark is applied; the change must be one batch on its own
-        lines = codec_lines(base_codec(h.target)) + ["init", "wait"] + start + ["wait", "dump", "mark"] + change + ["sleep 300", "dump"]
+        # everything before the mark is applied (after a switch to an analog source); the change
+        # must be one batch on its own
+        lines = codec_lines(base_codec(h.target)) + ["init", "wait", "line_out 1"] + start + ["wait", "dump", "mark"] + change + ["sleep 300", "dump"]
         batches, _, _, _, _ = h.run(mixer_ini(values), lines)
         before, after = h.dumps[0], h.dumps[-1]
         new = batches[h.marks[0]:]
@@ -635,7 +647,8 @@ def main():
             except subprocess.CalledProcessError as e:
                 fail(target, f"build failed: {e}")
                 continue
-            for test in (test_routing, test_loading, test_migration, test_transitions, test_worker, test_watcher):
+            for test in (test_routing, test_loading, test_migration, test_phones_at_boot, test_transitions,
+                         test_worker, test_watcher):
                 try:
                     test(h)
                 except Exception as e:  # a crashing mutant is a failure too

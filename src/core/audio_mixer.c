@@ -49,6 +49,7 @@ static const char *const field_key[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_DVR_LEVEL] = "dvr_level",
     [AUDIO_MIXER_RX_AUDIO] = "rx_audio",
     [AUDIO_MIXER_HDMI] = "hdmi",
+    [AUDIO_MIXER_PHONES_AT_BOOT] = "phones_at_boot",
 };
 
 // keys of version 1 (test builds only), removed when the section is migrated
@@ -67,7 +68,7 @@ static pthread_cond_t work_cond;                                 // worker: some
 static pthread_cond_t done_cond;                                 // audio_mixer_apply_wait()
 static audio_mixer_settings_t mixer;                             // current values
 static audio_mixer_settings_t saved;                             // values in setting.ini (UI)
-static audio_mixer_context_t context = {.line_out = true, .playback = false, .live_dac = false};
+static audio_mixer_context_t context = {.line_out = false, .playback = false, .live_dac = false};
 static unsigned requested; // apply generations: requested by the UI ...
 static unsigned applied;   // ... and in the codec
 static bool worker_running;
@@ -115,10 +116,17 @@ void audio_mixer_init(void) {
         }
     }
     saved = mixer;
+    // stock: the line out comes on with the first switch to an analog source (dvr_enable_line_out)
+    context.line_out = mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] != 0;
 
     pthread_mutex_unlock(&mixer_mutex);
 
     start_worker();
+}
+
+static bool is_headphone_level(audio_mixer_field_t field) {
+    return field == AUDIO_MIXER_HEADPHONES || field == AUDIO_MIXER_MIC || field == AUDIO_MIXER_LINE_IN ||
+           field == AUDIO_MIXER_AV || field == AUDIO_MIXER_HDMI;
 }
 
 int audio_mixer_get(audio_mixer_field_t field) {
@@ -132,7 +140,13 @@ void audio_mixer_set(audio_mixer_field_t field, int value) {
         return;
 
     pthread_mutex_lock(&mixer_mutex);
+    const int old = mixer.value[field];
     mixer.value[field] = clamp_field(field, value);
+    if (is_headphone_level(field) && mixer.value[field] != old && !mixer.value[AUDIO_MIXER_PHONES_AT_BOOT]) {
+        // the pilot sets the headphones up: what the page shows is heard, now and from every boot
+        mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] = 1;
+        context.line_out = true;
+    }
     pthread_mutex_unlock(&mixer_mutex);
 }
 
