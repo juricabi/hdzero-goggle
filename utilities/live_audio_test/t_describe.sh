@@ -38,6 +38,7 @@ for mode in noaudio audio; do
         [ "$(grep -c "m=video$" <<< "$ov")" = 3 ]; check $? "all three video-only"
         r4=$(python3 -I "$LAT_DIR/rtsp_describe.py" "$URL" 0); echo "  after:      $r4"
         le "$(secs "$r4")" 0.3; check $? "next DESCRIBE does not wait [$(secs "$r4") s]"
+        sleep 0.2
         n=$(grep -c "no audio frame within" "$L/rtspLive_$mode.log")
         [ "$n" = 3 ]; check $? "three waits for 8 DESCRIBEs in ~30 s ($n)"
     else

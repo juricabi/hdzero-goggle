@@ -36,7 +36,7 @@ for how in quit TERM KILL; do
     sleep 3
     n=$(wc -l < "$L/record_$how.log")
     case $how in
-        quit) "$BIN/gmsg" live quit ;;
+        quit) gmsg_live quit ;;
         *) kill -"$how" "$LIVE_PID" ;;
     esac
     tv=$(wait_log "$L/record_$how.log" "vi2venc_stop (live" "$n" 8)

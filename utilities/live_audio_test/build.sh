@@ -47,8 +47,12 @@ cc_warn "$R/stubs.o" "$LAT_DIR/record_stubs.c" $RCF -I"$LAT_DIR"
 gcc -o "$BIN/record_host" "$R"/*.o -lpthread
 echo "built $BIN/record_host"
 
-# ---- gmsg -----------------------------------------------------------------------------------
+# ---- gmsg (and an ARM one: SysV message payloads are not translated by qemu-arm, a 64-bit
+# sender cannot talk to the 32-bit rtspLive under qemu) ---------------------------------------
 gcc -O1 $W -Isrc/record -o "$BIN/gmsg" "$LAT_DIR/gmsg.c"
+if [ -n "$TOOLCHAIN" ] && [ -x "$TOOLCHAIN/bin/arm-buildroot-linux-musleabihf-gcc" ]; then
+    "$TOOLCHAIN/bin/arm-buildroot-linux-musleabihf-gcc" -static -O1 $W -Isrc/record -o "$BIN/gmsg.arm" "$LAT_DIR/gmsg.c"
+fi
 
 # ---- rtspLive (native) ----------------------------------------------------------------------
 if [ -n "$LIVE555" ]; then

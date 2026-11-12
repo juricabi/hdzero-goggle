@@ -94,8 +94,19 @@ start_live() {
     sleep 0.3
 }
 
+# goggle message to rtspLive (quit), from a sender of the same word size
+gmsg_live() {
+    if [ "$RTSPLIVE" = arm ]; then qemu-arm "$BIN/gmsg.arm" live "$1"; else "$BIN/gmsg" live "$1"; fi
+}
+
+# like WiFi off: the quit message (rtspLive exits normally), then SIGTERM if it is still there
 stop_live() {
-    [ -n "$LIVE_PID" ] && kill "$LIVE_PID" 2>/dev/null && wait "$LIVE_PID" 2>/dev/null
+    if [ -n "$LIVE_PID" ]; then
+        gmsg_live quit 2>/dev/null
+        for _ in $(seq 30); do kill -0 "$LIVE_PID" 2>/dev/null || break; sleep 0.1; done
+        kill "$LIVE_PID" 2>/dev/null
+        wait "$LIVE_PID" 2>/dev/null
+    fi
     LIVE_PID=
 }
 
