@@ -14,6 +14,7 @@
 #include "driver/dm6302.h"
 #include "driver/hardware.h"
 #include "driver/it66121.h"
+#include "core/hdmi_audio.h"
 #include "driver/rtc6715.h"
 #include "driver/screen.h"
 #include "ui/page_common.h"
@@ -61,6 +62,7 @@ void app_switch_to_menu() {
     g_sdcard_det_req = 1;
     if (g_source_info.source == SOURCE_HDMI_IN) // HDMI
         IT66121_init();
+    hdmi_audio_apply(false); // HDMI audio (experimental): no-op unless enabled in setting.ini
 
     rtc6715.init(0, 0);
     system_script(REC_STOP_LIVE);
@@ -102,6 +104,7 @@ void app_switch_to_analog(bool is_av_in) {
 
     // audio in&out
     dvr_select_audio_source(g_setting.record.audio_source);
+    hdmi_audio_apply(false); // HDMI audio (experimental): no-op unless enabled; before the line out is set
     dvr_enable_line_out(true);
 
     sleep(1);
@@ -140,6 +143,7 @@ void app_switch_to_hdmi_in() {
     dvr_enable_line_out(false);
     g_setting.autoscan.last_source = SETTING_AUTOSCAN_SOURCE_HDMI_IN;
     ini_putl("autoscan", "last_source", g_setting.autoscan.last_source, SETTING_INI);
+    hdmi_audio_apply(true); // HDMI audio (experimental): no-op unless enabled in setting.ini
 
     system_script(REC_STOP_LIVE);
 }
@@ -223,6 +227,7 @@ void app_switch_to_hdzero(bool is_default) {
     ini_putl("autoscan", "last_source", g_setting.autoscan.last_source, SETTING_INI);
 
     dvr_update_vi_conf(CAM_MODE);
+    hdmi_audio_apply(false); // HDMI audio (experimental): no-op unless enabled in setting.ini
     system_script(REC_STOP_LIVE);
 }
 

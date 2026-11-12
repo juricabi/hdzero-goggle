@@ -23,6 +23,7 @@ SDL_mutex *global_sdl_mutex;
 #include "core/audio_mixer.h"
 #include "core/common.hh"
 #include "core/elrs.h"
+#include "core/hdmi_audio.h"
 #include "core/ht.h"
 #include "core/input_device.h"
 #include "core/osd.h"
@@ -162,6 +163,7 @@ int main(int argc, char *argv[]) {
     settings_init();
     settings_load();
     audio_mixer_init();
+    hdmi_audio_load(); // HDMI audio (experimental): [hdmi] audio_out / audio_in, default off
     language_init();
 #ifdef HDZGOGGLE2
     vclk_phase_init();
@@ -216,6 +218,7 @@ int main(int argc, char *argv[]) {
     // worker also undoes the reset of the record daemon started by rc.sh)
     audio_mixer_apply();
     start_running();
+    hdmi_audio_apply(g_source_info.source == SOURCE_HDMI_IN && g_app_state == APP_STATE_VIDEO); // HDMI audio (experimental)
     create_threads();
 
     // 8. Synthetic counter for gif refresh

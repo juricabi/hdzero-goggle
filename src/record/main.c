@@ -247,24 +247,28 @@ inline static bool record_isArecording(RecordContext_t *recCtx) {
 }
 
 /*
- * Users of the audio input (AI) device. A user that stops may disable the device only when no
- * other user holds it: ask aidev_heldByOthers(). Register further users in the enum and table.
+ * Users of the audio input (AI) device: one MPP AI device, every user has a channel on it. A user
+ * that stops may disable the device only when no other user holds it: ask aidev_heldByOthers().
+ * Register further users in the enum and table.
  */
 typedef enum {
     AIUSER_recording,  // recording with audio (ai2aenc, recCtx->aa)
     AIUSER_loopback,   // AI -> AO loop (ai2ao, recCtx->ao)
     AIUSER_liveStream, // live stream audio (live_audio.c)
+    AIUSER_hdmiBridge, // HDMI out audio: AI -> I2S0 (pcmbridge.c, src=ai)
     AIUSER_NUM
 } AiUser_e;
 
 static bool aiuser_recording(RecordContext_t *recCtx) { return (recCtx->vv != NULL) && record_isArecording(recCtx); }
 static bool aiuser_loopback(RecordContext_t *recCtx) { return (recCtx->ao != NULL) && ai2ao_playing(recCtx->ao); }
 static bool aiuser_liveStream(RecordContext_t *recCtx) { return liveaudio_running(&recCtx->liveAudio); }
+static bool aiuser_hdmiBridge(RecordContext_t *recCtx) { return pcmbridge_usesAi(recCtx->hdmiAudio); }
 
 static bool (*const aiUsers[AIUSER_NUM])(RecordContext_t *recCtx) = {
     [AIUSER_recording] = aiuser_recording,
     [AIUSER_loopback] = aiuser_loopback,
     [AIUSER_liveStream] = aiuser_liveStream,
+    [AIUSER_hdmiBridge] = aiuser_hdmiBridge,
 };
 
 static bool aidev_heldByOthers(RecordContext_t *recCtx, AiUser_e self) {
@@ -943,6 +947,18 @@ void main_loop(RecordContext_t *recCtx) {
         case AIO_cmdSTOP:
             ai2ao_stop(recCtx->ao, !aidev_heldByOthers(recCtx, AIUSER_loopback));
             break;
+        /* ---- HDMI audio bridge (experimental, sent only when setting.ini [hdmi] enables it) ---- */
+        case HDMIA_cmdSTART: {
+            AiParams_t aiParams;
+            ZeroMemory(&aiParams, sizeof(aiParams));
+            conf_loadAiParams(recCtx->confFile, &aiParams);
+            pcmbridge_start(recCtx->hdmiAudio, recCtx->confFile, &aiParams, !aidev_heldByOthers(recCtx, AIUSER_hdmiBridge));
+            break;
+        }
+        case HDMIA_cmdSTOP:
+            pcmbridge_stop(recCtx->hdmiAudio, !aidev_heldByOthers(recCtx, AIUSER_hdmiBridge));
+            break;
+        /* ---- end HDMI audio bridge ---- */
         case LIVE_cmdSTART:
             recCtx->enableLive = true;
             // for debug only
@@ -1006,6 +1022,7 @@ int main(int argc, char *argv[]) {
     recCtx.vv = NULL;
     recCtx.aa = NULL;
     recCtx.ao = NULL;
+    recCtx.hdmiAudio = NULL;
     recCtx.stateGo = REC_statIdle;
     recCtx.stateGoing = REC_statIdle;
     recCtx.status = REC_statSave;
@@ -1034,6 +1051,7 @@ int main(int argc, char *argv[]) {
     }
 
     recCtx.ao = ai2ao_initSys();
+    recCtx.hdmiAudio = pcmbridge_initSys(); // HDMI audio (experimental), idle until HDMIA_cmdSTART
     avshare_init();
     if (!liveaudio_init(&recCtx.liveAudio)) {
         LOGE("live audio init failed");
@@ -1047,6 +1065,7 @@ failed:
     liveaudio_stop(&recCtx.liveAudio, aidev_heldByOthers(&recCtx, AIUSER_liveStream));
     liveaudio_deinit(&recCtx.liveAudio);
     record_stop(&recCtx);
+    pcmbridge_deinitSys(recCtx.hdmiAudio, !aidev_heldByOthers(&recCtx, AIUSER_hdmiBridge));
     ai2ao_deinitSys(recCtx.ao);
     ai2aenc_deinitSys(recCtx.aa);
     vi2live_deinitSys(recCtx.vvLive);

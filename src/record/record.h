@@ -7,6 +7,7 @@ extern "C" {
 #include "vi2venc.h"
 #include "ai2aenc.h"
 #include "ai2ao.h"
+#include "pcmbridge.h" // HDMI audio (experimental)
 #include "ffpack.h"
 #include "disk.h"
 #include "record_definitions.h"
@@ -77,6 +78,7 @@ typedef struct
     Vi2Venc_t* vvLive;
     Ai2Aenc_t* aa;
     Ai2Ao_t*   ao;
+    PcmBridge_t* hdmiAudio; // HDMI audio bridge (experimental, idle unless HDMIA_cmdSTART)
     FFPack_t*  ff;
     uint32_t   tickBegin;
     uint32_t   nbFramesTotal;
