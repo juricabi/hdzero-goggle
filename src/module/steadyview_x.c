@@ -95,6 +95,5 @@ module_def_t steadyview_x_module = {
     .set_channel = steadyview_x_set_channel,
     .set_mode = steadyview_x_set_mode,
     .mode_names = "Diversity\nMix 1\nMix 2\nMix 3",
-    .boot_ms = 0,
     .boot_resend_ms = 0,
 };

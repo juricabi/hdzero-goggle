@@ -2,7 +2,6 @@
 #   make -C utilities/module_bay_test test
 
 CC ?= gcc
-CFLAGS ?= -O2 -Wall -Wextra -Werror -std=c99
 SRC = ../../src/module
 OUT ?= /tmp/module_bay_test
 
@@ -11,32 +10,42 @@ OUT ?= /tmp/module_bay_test
 ROOT = ../..
 WORKER_CFLAGS = -O1 -g -std=gnu99 -DEMULATOR_BUILD -DHDZGOGGLE2=1 -D_GNU_SOURCE \
 	-I$(ROOT)/src -I$(ROOT)/src/core -I$(ROOT)/lib/log/include -I$(ROOT)/lib/lvgl -I$(ROOT)/lib/minIni/src
+WARN = -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers
 
-all: $(OUT)/test_trued_uart $(OUT)/test_module_worker $(OUT)/test_module_types
-
-$(OUT)/test_trued_uart: test_trued_uart.c $(SRC)/bitbang_uart.c $(SRC)/trued_proto.c $(SRC)/bitbang_uart.h $(SRC)/trued_proto.h
-	mkdir -p $(OUT)
-	$(CC) $(CFLAGS) -o $@ test_trued_uart.c $(SRC)/bitbang_uart.c $(SRC)/trued_proto.c
+all: $(OUT)/test_module_worker $(OUT)/test_module_types $(OUT)/test_settings_module
 
 $(OUT)/test_module_worker: test_module_worker.c $(SRC)/module.c $(SRC)/module.h $(SRC)/module_def.h
 	mkdir -p $(OUT)
-	$(CC) $(WORKER_CFLAGS) -DSDIO_RECHECK_MS=500 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers \
-		-o $@ test_module_worker.c -lpthread
+	$(CC) $(WORKER_CFLAGS) -DSDIO_RECHECK_MS=500 $(WARN) -o $@ test_module_worker.c -lpthread
 
-# the real Switch, rapidFIRE and True-D types on the real worker, recording pins
-TYPES_SRC = $(SRC)/module.c $(SRC)/switch.c $(SRC)/rapidfire.c $(SRC)/trued.c $(SRC)/trued_proto.c \
-	$(SRC)/bitbang_uart.c $(SRC)/module_def.c
-$(OUT)/test_module_types: test_module_types.c $(TYPES_SRC) $(SRC)/module.h $(SRC)/module_def.h $(SRC)/softspi.h
+# the real Switch, rapidFIRE, SteadyView and SteadyView X types on the real worker,
+# recording pins; SteadyView X built as for the goggle (not the emulator), its gpio /
+# uart / insmod calls answered by the test (glibc marks system() warn_unused_result, musl does not)
+TYPES_SRC = $(SRC)/module.c $(SRC)/switch.c $(SRC)/rapidfire.c $(SRC)/steadyview.c $(SRC)/module_def.c
+$(OUT)/steadyview_x.o: $(SRC)/steadyview_x.c $(SRC)/steadyview_x.h $(SRC)/module_def.h
 	mkdir -p $(OUT)
-	$(CC) $(WORKER_CFLAGS) -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -o $@ \
-		test_module_types.c $(TYPES_SRC) -lpthread
+	$(CC) $(filter-out -DEMULATOR_BUILD,$(WORKER_CFLAGS)) -Dsystem=test_system $(WARN) -Wno-unused-result -c -o $@ $(SRC)/steadyview_x.c
+$(OUT)/test_module_types: test_module_types.c $(TYPES_SRC) $(OUT)/steadyview_x.o $(SRC)/module.h $(SRC)/module_def.h $(SRC)/softspi.h
+	mkdir -p $(OUT)
+	$(CC) $(WORKER_CFLAGS) $(WARN) -o $@ test_module_types.c $(TYPES_SRC) $(OUT)/steadyview_x.o -lpthread
 
-test: $(OUT)/test_trued_uart $(OUT)/test_module_worker $(OUT)/test_module_types
-	$(OUT)/test_trued_uart
+# settings_load() (src/core/settings.c) with the real minIni, as for the Goggle 1
+# emulator (setting.ini in the current directory)
+SETTINGS_CFLAGS = -O1 -g -std=gnu99 -DEMULATOR_BUILD -DHDZGOGGLE=1 -D_GNU_SOURCE \
+	-I$(ROOT)/src -I$(ROOT)/src/core -I$(ROOT)/lib/log/include -I$(ROOT)/lib/lvgl -I$(ROOT)/lib/minIni/src
+# (settings.c and minIni are upstream code: built without -Wall)
+$(OUT)/test_settings_module: test_settings_module.c $(ROOT)/src/core/settings.c $(ROOT)/src/core/settings.h
+	mkdir -p $(OUT)
+	$(CC) $(SETTINGS_CFLAGS) $(WARN) -c -o $(OUT)/test_settings_module.o test_settings_module.c
+	$(CC) $(SETTINGS_CFLAGS) -o $@ $(OUT)/test_settings_module.o $(ROOT)/src/core/settings.c $(ROOT)/lib/minIni/src/minIni.c
+
+test: $(OUT)/test_module_worker $(OUT)/test_module_types $(OUT)/test_settings_module
+	$(OUT)/test_settings_module
 	$(OUT)/test_module_worker
+	MODULE_TEST_BATCH1=1 $(OUT)/test_module_worker
 	$(OUT)/test_module_types
 
 clean:
-	rm -f $(OUT)/test_trued_uart $(OUT)/test_module_worker $(OUT)/test_module_types
+	rm -f $(OUT)/test_module_worker $(OUT)/test_module_types $(OUT)/steadyview_x.o $(OUT)/test_settings_module $(OUT)/test_settings_module.o
 
 .PHONY: all test clean

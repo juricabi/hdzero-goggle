@@ -50,7 +50,10 @@ static void steadyview_set_channel(int index) {
     current_channel = index;
 }
 
-// The SteadyView reads its mix mode from CLK/DAT as it powers up.
+// The SteadyView reads its mix mode from CLK/DAT as it powers up.  This mode-set
+// pulse is the one bay power-on with the pins driven, by the protocol: it happens
+// only with Module = SteadyView, from its set-up (itself >= MODULE_BOOT_MS after the
+// bay's power-on) or a Mode change.  Every other power-on keeps the pins inputs.
 static void set_mode_pins(void) {
     softspi_set_pin(SOFTSPI_CLK, mix_mode & 0x01);
     softspi_set_pin(SOFTSPI_DAT, mix_mode & 0x02);
@@ -170,6 +173,5 @@ module_def_t steadyview_module = {
     .set_channel = steadyview_set_channel,
     .set_mode = steadyview_set_mode,
     .mode_names = "Diversity\nMix 1\nMix 2\nMix 3",
-    .boot_ms = 0,
     .boot_resend_ms = 0,
 };

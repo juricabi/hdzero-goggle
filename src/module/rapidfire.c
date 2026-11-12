@@ -1,4 +1,5 @@
-#include <unistd.h>
+#include <stdbool.h>
+#include <time.h>
 
 #include "core/common.hh"
 #include "core/settings.h"
@@ -6,25 +7,38 @@
 #include "rapidfire.h"
 #include "softspi.h"
 
-// ImmersionRC rapidFIRE SPI API on the bay pins (CS, DATA, CLK), with pkendall's
-// timing from his analog-module-control branch (used on a Goggle 1).  The goggle
-// only writes: nothing here reads a pin or depends on an answer, so a module that
-// only listens (a True-D in its rapidFIRE mode) gets the same as a rapidFIRE.
+// ImmersionRC rapidFIRE SPI API on the bay pins (CS, DATA, CLK; pkendall's
+// analog-module-control, Goggle 1).  The goggle only writes: nothing here reads a
+// pin or depends on an answer, so a module that only listens (a Furious True-D
+// with MOD 1.17, BAY:RAPIDFIRE) gets the same as a rapidFIRE.
 //
-//   2.0 s after bay power-on (the ExpressLRS backpack's VRX_BOOT_DELAY):
-//   init      pins from input straight to all three high, 200 ms; all low, 200 ms
-//             (the SPI mode entry, as the ExpressLRS backpack does it); then CS
-//             high, CLK and DATA low (idle, kept while the module is controlled)
+//   2.0 s after bay power-on (MODULE_BOOT_MS; the ExpressLRS backpack's
+//   VRX_BOOT_DELAY), the pins inputs until then:
+//   init      pins from input straight to all three high (CS first), 200 ms; all
+//             low, 200 ms (the SPI mode entry, as the ExpressLRS backpack does it);
+//             then CS high, CLK and DATA low (idle, kept while the module is
+//             controlled)
 //   mode      100 ms later 'D' '=' 0x01 crc mode
 //   channel   right after: 'B' '=' 0x01 crc band (IMRC numbering), 100 ms, 'C' '='
-//             0x01 crc channel (1-8); crc = sum of bytes 0-3 with the value in byte
-//             3, the value again in byte 4
+//             0x01 crc channel (1-8); crc = (cmd + '=' + 1 + value) & 0xFF
 //   again     5.0 s after bay power-on: band and channel once more (a module that
 //             boots slower); channel changes in between wait for it
-// Each command goes out 3 times, 10 ms apart: CS low, 16 us, 5 bytes MSB first
-// (DATA set while CLK is low, CLK high >= 9 us, low >= 8 us, each plus one sysfs
-// write), 16 us, CS high.  The receiver should sample DATA on the rising CLK edge
-// while CS is low and should not rely on the SPI mode entry (it may boot after it).
+// Each command goes out 3 times, 10 ms apart.  A channel change is always band,
+// then channel: a True-D takes a channel only with its band frame up to 1 s before.
+//
+// Frame (SPI mode 0, MSB first: the module samples DATA at the rising CLK edge):
+//   CS low, DATA = bit 7 of byte 0, >= RF_PHASE_US
+//   per bit: CLK high, >= RF_PHASE_US; CLK low, DATA = the next bit, >= RF_PHASE_US
+//   CS high, DATA low (idle)
+// So any two successive edges of CS and CLK are >= RF_PHASE_US apart on the pins (CS
+// low to the first CLK rise, every CLK level, the last CLK fall to CS high), and DATA
+// changes only right after a CLK fall, >= RF_PHASE_US before the next rise.  A True-D
+// reads a bay edge <= 43.1 us after it in its worst case and needs >= 100 us per level
+// and gap (furiousdfw docs/bay-standards.md, section 4); a real rapidFIRE takes up to
+// ~80 kHz (>= 6.25 us per level).  81 waits per frame: >= 8.1 ms guaranteed; each wait
+// overshoots by the timer slack (50 us for a normal thread), the wake-up latency and
+// the sysfs writes, never less: ~13.5-14.8 ms per frame on a PC, an estimated
+// ~12-20 ms on the goggle (not measured).
 
 #define SPAM_COUNT 3
 
@@ -35,11 +49,39 @@
 #define RF_API_CHANNEL_CMD 'C'
 #define RF_API_MODE_CMD    'D'
 
-#define SPAM_GAP_MS 10 // between the repeats of a command
+#define SPAM_GAP_MS 10  // between the repeats of a command
 #define CMD_GAP_MS  100 // between two commands
 
-// Every wait is an abort point (module_sleep_ms()): a release request stops a
-// transfer after the SPI frame on the wire.
+#ifndef RF_PHASE_US
+#define RF_PHASE_US 100 // the shortest time between two successive frame edges
+#endif
+
+static bool before(const struct timespec *a, const struct timespec *b) {
+    return a->tv_sec < b->tv_sec || (a->tv_sec == b->tv_sec && a->tv_nsec < b->tv_nsec);
+}
+
+// Waits until RF_PHASE_US after the pin write that has just returned.  The edge
+// happened inside that write, the next one happens inside the next write, which
+// starts only once the clock has been read past an absolute CLOCK_MONOTONIC
+// deadline: a sleep can only end late (timer slack, scheduling, preemption), and
+// one that ends early for any reason (a signal, an error) is simply repeated, so
+// the gap on the pins is >= RF_PHASE_US whatever the scheduler does.
+static void phase_wait(void) {
+    struct timespec t, now;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    t.tv_nsec += RF_PHASE_US * 1000L;
+    if (t.tv_nsec >= 1000000000L) {
+        t.tv_sec++;
+        t.tv_nsec -= 1000000000L;
+    }
+    do {
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &now);
+    } while (before(&now, &t));
+}
+
+// Every wait between frames is an abort point (module_sleep_ms()): a release
+// request stops a transfer after the frame on the wire.
 static bool send_cmd(uint8_t command, uint8_t value);
 
 static void rapidfire_set_channel(int index) {
@@ -54,15 +96,20 @@ static void rapidfire_set_channel(int index) {
 }
 
 static void rapidfire_set_mode() {
+    const int mode = g_setting.module.setting;
     if (!module_sleep_ms(CMD_GAP_MS))
         return;
-    send_cmd(RF_API_MODE_CMD, g_setting.module.setting);
+    send_cmd(RF_API_MODE_CMD, mode >= 0 && mode <= 2 ? mode : 0); // (only 0-2 exist)
     // the worker sends the channel next
 }
 
 static void rapidfire_init() {
-    softspi_open();       // inputs
-    softspi_drive_all(1); // straight to high, no low step before the entry
+    softspi_open(); // inputs
+    // straight to high, no low step before the entry; CS first, so that CLK rises
+    // with CS already high: a listener that saw CS float low takes no clock edge
+    softspi_drive_pin(SOFTSPI_CS, 1);
+    softspi_drive_pin(SOFTSPI_CLK, 1);
+    softspi_drive_pin(SOFTSPI_DAT, 1);
     if (!module_sleep_ms(200))
         return;
     softspi_set_pin(SOFTSPI_CLK, 0);
@@ -90,22 +137,20 @@ static uint8_t crc8(uint8_t *buf, uint8_t bufLen) {
     return sum & 0xFF;
 }
 
-static void send_spi(uint8_t *buf, uint8_t len) {
+// One frame, from idle (CS high, CLK low, DATA low) back to idle.
+static void send_spi(const uint8_t *buf, uint8_t len) {
+    const int bits = len * 8;
     softspi_set_pin(SOFTSPI_CS, 0);
-    usleep(16);
-
-    for (int i = 0; i < len; ++i) {
-        uint8_t byte = buf[i];
-        for (uint8_t k = 0; k < 8; k++) {
-            softspi_set_pin(SOFTSPI_DAT, byte & 0x80);
-            softspi_set_pin(SOFTSPI_CLK, 1);
-            usleep(9);
-            softspi_set_pin(SOFTSPI_CLK, 0);
-            usleep(8);
-            byte <<= 1;
-        }
+    softspi_set_pin(SOFTSPI_DAT, buf[0] & 0x80);
+    phase_wait();
+    for (int i = 0; i < bits; i++) {
+        softspi_set_pin(SOFTSPI_CLK, 1); // the module samples DATA here
+        phase_wait();
+        softspi_set_pin(SOFTSPI_CLK, 0);
+        if (i + 1 < bits)
+            softspi_set_pin(SOFTSPI_DAT, (buf[(i + 1) / 8] << ((i + 1) % 8)) & 0x80);
+        phase_wait();
     }
-    usleep(16);
     softspi_set_pin(SOFTSPI_CS, 1);
     softspi_set_pin(SOFTSPI_DAT, 0); // idle: CS high, CLK and DATA low
 }
@@ -139,7 +184,9 @@ module_def_t rapidfire_module = {
     .close = rapidfire_close,
     .set_channel = rapidfire_set_channel,
     .set_mode = rapidfire_set_mode,
-    .mode_names = "legacy\nrapidFIRE 1\nrapidFIRE 2",
-    .boot_ms = 2000,        // as the ExpressLRS backpack (VRX_BOOT_DELAY)
-    .boot_resend_ms = 5000, // a module that boots slower (a True-D's boot screen ends ~3.5 s)
+    // 'D' value = list entry: 0 rapidFIRE #1, 1 rapidFIRE #2, 2 legacy (the rapidFIRE
+    // SPI API as GOROman/rapidFIRE_SPI has it; pkendall's list showed 0 as "legacy").
+    // A True-D ignores 'D'.
+    .mode_names = "rapidFIRE 1\nrapidFIRE 2\nLegacy",
+    .boot_resend_ms = 5000, // a module that boots slower (a True-D reads from ~1.45 s, MOD 1.17)
 };

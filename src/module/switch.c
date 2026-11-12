@@ -8,8 +8,9 @@
 #include "switch.h"
 
 // Static 3-bit channel code on the bay pins, active high: code n = channel n+1 of
-// the module's own band (Fat Shark style switch selection; also the "1-8" bay mode
-// of the Furious True-D).  The Mode list picks which SoC pin carries which bit,
+// the module's own band (Fat Shark style switch selection; also the "BAY:1-8" mode
+// of a Furious True-D).  Like every type, the pins stay inputs until MODULE_BOOT_MS
+// (2.0 s) after bay power-on.  The Mode list picks which SoC pin carries which bit,
 // because the bay wiring is not known (docs/module-bay.md): all six orders.  A
 // label gives the weight of each pin's bit, "PG0=4 PG1=1 PG2=2": PG1 is bit 0,
 // PG2 bit 1, PG0 bit 2.  The first three are the orders offered before, so their
@@ -33,13 +34,14 @@ static const softspi_pin_t pin_orders[][3] = {
 #define SWITCH_PRE_MS   200
 
 // A True-D in its "1-8" bay mode takes a code once it has read the same for
-// 300 ms, and ignores code 7 (all high: what an unconnected bay reads) until it
-// has taken another code since its power-up.  It reads its pins only once its loop
-// runs: after its bootloader (~1 s), set-up and 2 s boot screen, so it takes its
-// first code ~3.5-3.9 s after power-on.  So channel 8 (code 7) is preceded by
-// code 6 (channel 7) until a True-D has surely taken that: SWITCH_TAKE_MS on the
-// pins, and at least until SWITCH_READY_MS after bay power-on.  Other modules just
-// show channel 7 that long first; codes 0-6 go out at once.
+// 300 ms, and ignores code 7 (all high: what an unconnected bay reads) until another
+// code came first: MOD 1.16 until it has taken another code, and it reads its pins
+// only once its loop runs (~3.5-3.9 s after power-on); MOD 1.17 once another code
+// has read the same twice in a row, from ~1.45 s on (boot screen included).  So
+// channel 8 (code 7) is preceded by code 6 (channel 7) until MOD 1.16 has surely
+// taken that: SWITCH_TAKE_MS on the pins, and at least until SWITCH_READY_MS after
+// bay power-on.  Other modules just show channel 7 that long first; codes 0-6 go
+// out at once.
 #define SWITCH_TAKE_MS  500
 #define SWITCH_READY_MS 5000
 
@@ -136,6 +138,5 @@ module_def_t switch_module = {
     .set_channel = switch_set_channel,
     .set_mode = switch_set_mode,
     .mode_names = SWITCH_MODE_NAMES,
-    .boot_ms = 0,
     .boot_resend_ms = 0,
 };
