@@ -84,6 +84,14 @@ static void deselect_menu_tab(page_pack_t *pp) {
     lv_obj_add_flag(pp->icon, LV_OBJ_FLAG_HIDDEN);
 }
 
+// A page whose rows do not fit (the Audio page) puts them in a scrollable container: keep the
+// selected one on screen, as menu_nav() does for the sidebar. Does nothing on the other pages,
+// whose containers are not scrollable (lv_obj_scroll_to_view() returns at once then).
+static void show_selection(const panel_arr_t *arr) {
+    if (arr->cur >= 0 && arr->cur < MAX_PANELS)
+        lv_obj_scroll_to_view(arr->panel[arr->cur], LV_ANIM_OFF);
+}
+
 void submenu_enter(void) {
     page_pack_t *pp = find_pp(lv_menu_get_cur_main_page(menu));
     if (!pp) {
@@ -97,6 +105,7 @@ void submenu_enter(void) {
         for (pp->p_arr.cur = 0; !lv_obj_has_flag(pp->p_arr.panel[pp->p_arr.cur], FLAG_SELECTABLE); ++pp->p_arr.cur)
             ;
         set_select_item(&pp->p_arr, pp->p_arr.cur);
+        show_selection(&pp->p_arr);
     }
 
     if (pp->enter) {
@@ -142,6 +151,7 @@ void submenu_roller(uint8_t key) {
         }
         LOGI("submenu_roller %d, %d", pp->p_arr.cur, pp->p_arr.max - 1);
         set_select_item(&pp->p_arr, pp->p_arr.cur);
+        show_selection(&pp->p_arr);
     }
 
     // Allow roller to have latest item selected

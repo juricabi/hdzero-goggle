@@ -100,20 +100,26 @@ extern "C" {
 #define UI_VERSION_ROWS                   60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               160, 160, 160, 160, 160, 160, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
-// audio mixer page (13 rows, 14 on Goggle 2, one more with HDMI In): indent, label, two button columns (arrow + button;
-// sliders span them and the spacer), spacer, value. Fits every translation, see page_audio.c.
+// Audio page: indent, label, two button columns (arrow + button; sliders span them and the spacer),
+// spacer, value; section headings span the row. The rows scroll in a window of UI_AUDIO_VIEW_H with
+// the hint line below it. Every translation fits (utilities/audio_mixer/check_strings.sh).
 #define UI_AUDIO_COL_INDENT               171 // no column gaps: labels where the other pages have them
-#define UI_AUDIO_COL_LABEL                316
-#define UI_AUDIO_COL_BUTTON               204
+#define UI_AUDIO_COL_LABEL                420
+#define UI_AUDIO_COL_BUTTON               152
 #define UI_AUDIO_COL_SPACER               0
 #define UI_AUDIO_COL_VALUE                100
-#define UI_AUDIO_GRID_MAX_W               1005 // page view width - UI_STYLE_SUBMENU_PAD_LEFT
+#define UI_AUDIO_GRID_MAX_W               995 // page view width - UI_STYLE_SUBMENU_PAD_LEFT - room for the scroll bar
 #define UI_AUDIO_ARROW_W                  36
 #define UI_AUDIO_BTN_PAD                  8
 #define UI_AUDIO_SLIDER_GAP               20 // between a slider at its maximum and the value
-#define UI_AUDIO_ROWS_H                   700 // all rows: 53 px each on the Goggle, 50 on the Goggle 2
+#define UI_AUDIO_ROW_H                    60 // as on the other pages; headings too, so that the window
+#define UI_AUDIO_VIEW_H                   660 // (11 rows) always shows whole rows
+#define UI_AUDIO_KNOB_PAD                 20  // slider knob inside its row (as on the other pages)
+#define UI_AUDIO_HINT_FONT                &lv_font_montserrat_20
+#define UI_AUDIO_HEADING_FONT             &lv_font_montserrat_20
+#define UI_AUDIO_HEADING_COLOR            0x7fc4ff
+#define UI_AUDIO_HINT_PAD                 14
 #define UI_AUDIO_PAD_TOP                  84
-#define UI_AUDIO_KNOB_PAD                 18
 #define UI_VERSION_RELEASE_NOTES_MIN_SIZE 600
 #define UI_VERSION_RELEASE_NOTES_MAX_SIZE 1280
 #define UI_VERSION_FIRMWARE_MIN_SIZE      UI_VERSION_RELEASE_NOTES_MIN_SIZE
@@ -257,19 +263,24 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_VERSION_ROWS                   40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
-// audio mixer page (14 rows, 15 with HDMI In), columns as on the goggles
+// Audio page, as on the goggles
 #define UI_AUDIO_COL_INDENT               112
-#define UI_AUDIO_COL_LABEL                236
-#define UI_AUDIO_COL_BUTTON               160
+#define UI_AUDIO_COL_LABEL                310
+#define UI_AUDIO_COL_BUTTON               120
 #define UI_AUDIO_COL_SPACER               0
-#define UI_AUDIO_COL_VALUE                72
-#define UI_AUDIO_GRID_MAX_W               748
+#define UI_AUDIO_COL_VALUE                80
+#define UI_AUDIO_GRID_MAX_W               742
 #define UI_AUDIO_ARROW_W                  28
 #define UI_AUDIO_BTN_PAD                  6
 #define UI_AUDIO_SLIDER_GAP               14
-#define UI_AUDIO_ROWS_H                   476 // all rows: 34 px each
+#define UI_AUDIO_ROW_H                    40
+#define UI_AUDIO_VIEW_H                   440 // 11 rows
+#define UI_AUDIO_KNOB_PAD                 18  // slider knob inside its row (2 + 2 x 18 < 40)
+#define UI_AUDIO_HINT_FONT                &lv_font_montserrat_14
+#define UI_AUDIO_HEADING_FONT             &lv_font_montserrat_16
+#define UI_AUDIO_HEADING_COLOR            0x4f8fc0
+#define UI_AUDIO_HINT_PAD                 8
 #define UI_AUDIO_PAD_TOP                  30
-#define UI_AUDIO_KNOB_PAD                 12
 #define UI_VERSION_RELEASE_NOTES_MIN_SIZE 600
 #define UI_VERSION_RELEASE_NOTES_MAX_SIZE 1280
 #define UI_VERSION_FIRMWARE_MIN_SIZE      UI_VERSION_RELEASE_NOTES_MIN_SIZE

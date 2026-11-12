@@ -15,111 +15,249 @@
 #include "ui/ui_style.h"
 
 /*
- * Audio mixer page. Every row is one [mixer] field of setting.ini:
- * sliders apply while they move (click to grab, dial, click to release),
- * toggles apply on click. Applying runs in the mixer's worker; setting.ini is
- * written when a toggle is clicked, a slider is released, the page is left, or
- * SAVE_DELAY_MS after the last dial step of a slider that is still grabbed.
+ * Audio page: one list in sections (Headphones, Recording, Inputs, HDMI Audio), scrolled so that
+ * the selected row is always on screen, with one hint line for the selected row below it.
+ *
+ * Sliders apply while they move (click to grab, dial, click to release), switches on click.
+ * Applying runs in the mixer's worker; setting.ini is written when a switch is clicked, a slider
+ * is released, the page is left, or SAVE_DELAY_MS after the last dial step of a slider that is
+ * still grabbed. The two HDMI switches are [hdmi] audio_out / audio_in (core/hdmi_audio.c).
  */
 
 #define SAVE_DELAY_MS 1000
 
 typedef enum {
-    ITEM_SLIDER,
-    ITEM_TOGGLE,
-    ITEM_BACK,
-} item_type_t;
+    ROW_HEADING, // section heading, not selectable
+    ROW_SLIDER,  // a mixer level
+    ROW_SWITCH,  // a mixer on/off field
+    ROW_HDMI_OUT,
+    ROW_HDMI_IN,
+    ROW_BACK,
+} row_type_t;
 
 typedef struct {
-    item_type_t type;
-    audio_mixer_field_t field;
+    row_type_t type;
+    audio_mixer_field_t field; // sliders and mixer switches
     const char *name;
-    const char *btn0; // toggles: left button
-    const char *btn1; // toggles: right button
-    int btn0_value;   // toggles: field value of the left button
-} item_t;
+    const char *hint;
+    const char *btn0; // switches: left button (field value 1), right button (0)
+    const char *btn1;
+} row_t;
 
-#define SLIDER(f, n)             {.type = ITEM_SLIDER, .field = (f), .name = (n)}
-#define TOGGLE(f, n, b0, b1, v0) {.type = ITEM_TOGGLE, .field = (f), .name = (n), .btn0 = (b0), .btn1 = (b1), .btn0_value = (v0)}
+#define HEADING(n)           {.type = ROW_HEADING, .field = AUDIO_MIXER_FIELD_COUNT, .name = (n)}
+#define SLIDER(f, n, h)      {.type = ROW_SLIDER, .field = (f), .name = (n), .hint = (h)}
+#define YES_NO(f, n, h)      {.type = ROW_SWITCH, .field = (f), .name = (n), .hint = (h), .btn0 = "Yes", .btn1 = "No"}
+#define ON_OFF(t, f, n, h)   {.type = (t), .field = (f), .name = (n), .hint = (h), .btn0 = "On", .btn1 = "Off"}
+#define RECORD_SOURCE(f, n)  YES_NO(f, n, NULL) // the hint depends on the state, see row_hint()
 
-static const item_t items[] = {
-    SLIDER(AUDIO_MIXER_MIC, "Mic"),
-    SLIDER(AUDIO_MIXER_LINE_IN, "Line In"),
-    SLIDER(AUDIO_MIXER_AV, "A/V In"),
-    // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()); all targets have HDMI in.
-    // Greyed and skipped while [hdmi] audio_in is off.
-    SLIDER(AUDIO_MIXER_HDMI, "HDMI In"),
+static const row_t rows[] = {
+    HEADING("Headphones"),
+    SLIDER(AUDIO_MIXER_HEADPHONES, "Volume", "Headphone volume. It does not change the recording"),
+    SLIDER(AUDIO_MIXER_MIC, "Mic", "Built-in mic in the headphones. 0 is off"),
+    SLIDER(AUDIO_MIXER_LINE_IN, "Line In", "Line In jack (external mic) in the headphones. 0 is off"),
+#if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
+    SLIDER(AUDIO_MIXER_AV, "A/V In", "AV in jack, analog module or receiver in the headphones. 0 is off"),
+#else
+    SLIDER(AUDIO_MIXER_AV, "A/V In", "AV in jack or analog module in the headphones. 0 is off"),
+#endif
+    // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()); greyed and skipped while
+    // HDMI In Audio is off. All targets have HDMI in.
+    SLIDER(AUDIO_MIXER_HDMI, "HDMI In", "HDMI in audio in the headphones. 0 is off"),
+    SLIDER(AUDIO_MIXER_PLAYBACK, "Playback Volume", "Headphone volume while a DVR file plays"),
+
+    // the ADC: the DVR, the WiFi stream audio and HDMI out audio all take it
+    HEADING("Recording (DVR, WiFi Stream, HDMI Out)"),
+    YES_NO(AUDIO_MIXER_REC_MIX, "Record What I Hear", "Yes: records the headphone mix at the levels above"),
+    RECORD_SOURCE(AUDIO_MIXER_REC_MIC, "Record Mic"),
+    RECORD_SOURCE(AUDIO_MIXER_REC_LINE_IN, "Record Line In"),
+    RECORD_SOURCE(AUDIO_MIXER_REC_AV, "Record A/V In"),
+    SLIDER(AUDIO_MIXER_DVR_LEVEL, "Record Level", "Level of the recording, the stream and HDMI out"),
+
+    HEADING("Inputs"),
+    SLIDER(AUDIO_MIXER_MIC_BOOST, "Mic Boost", "Mic preamp, for the headphones and the recording"),
+    SLIDER(AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost", "Line In preamp, for the headphones and the recording"),
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
     // audio output of the built-in analog receiver, one of the sources of A/V In
-    TOGGLE(AUDIO_MIXER_RX_AUDIO, "Analog RX Audio", "On", "Off", 1),
+    ON_OFF(ROW_SWITCH, AUDIO_MIXER_RX_AUDIO, "Analog RX Audio", "Audio of the built-in analog receiver on A/V In"),
 #endif
-    SLIDER(AUDIO_MIXER_MIC_BOOST, "Mic Boost"),
-    SLIDER(AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost"),
-    SLIDER(AUDIO_MIXER_HEADPHONES, "Headphones"),
-    SLIDER(AUDIO_MIXER_PLAYBACK, "Playback Volume"),
-    TOGGLE(AUDIO_MIXER_REC_MIX, "Record What I Hear", "Yes", "No", 1),
-    TOGGLE(AUDIO_MIXER_REC_MIC, "Record Mic", "Yes", "No", 1),
-    TOGGLE(AUDIO_MIXER_REC_LINE_IN, "Record Line In", "Yes", "No", 1),
-    TOGGLE(AUDIO_MIXER_REC_AV, "Record A/V In", "Yes", "No", 1),
-    SLIDER(AUDIO_MIXER_DVR_LEVEL, "Record Level"),
-    {.type = ITEM_BACK, .field = AUDIO_MIXER_FIELD_COUNT, .name = "Back"},
+
+    HEADING("HDMI Audio (experimental)"),
+    ON_OFF(ROW_HDMI_OUT, AUDIO_MIXER_FIELD_COUNT, "HDMI Out Audio", "HDMI out carries the recorded audio"),
+    ON_OFF(ROW_HDMI_IN, AUDIO_MIXER_FIELD_COUNT, "HDMI In Audio", "Hear and record HDMI in audio. Restart once after switching on"),
+
+    {.type = ROW_BACK, .field = AUDIO_MIXER_FIELD_COUNT, .name = "Back"},
 };
 
-#define ITEM_COUNT ((int)ARRAY_SIZE(items))
-_Static_assert(ARRAY_SIZE(items) <= MAX_PANELS, "one select panel per row");
+#define ROW_COUNT ((int)ARRAY_SIZE(rows))
+
+// hints of the Record source switches
+#define HINT_IN_MIX     "In What I Hear: recorded at its headphone level"
+#define HINT_DIRECT_YES "Recorded at full level, heard or not"
+#define HINT_DIRECT_NO  "Not recorded. Yes: at full level, heard or not"
 
 /*
- * Own column layout (conf/ui.h): label | button | button | spacer | value. The labels get the
- * whole label column and the toggle buttons room for "Как слышно" / "Wie gehört"; sliders span
- * both button columns. Widths checked for every language at the target's font (docs/audio.md).
+ * Own column layout (conf/ui.h): indent | label | button | button | spacer | value. Sliders span
+ * both button columns and the spacer; the value column of a Record source switch shows "Mix" while
+ * that source is recorded through What I Hear. Widths checked for every language at the target's
+ * fonts by utilities/audio_mixer/check_strings.sh.
  */
 static lv_coord_t col_dsc[] = {UI_AUDIO_COL_INDENT, UI_AUDIO_COL_LABEL, UI_AUDIO_COL_BUTTON, UI_AUDIO_COL_BUTTON,
                                UI_AUDIO_COL_SPACER, UI_AUDIO_COL_VALUE, LV_GRID_TEMPLATE_LAST};
-static lv_coord_t row_dsc[ARRAY_SIZE(items) + 2]; // the rows, the note, end
+static lv_coord_t row_dsc[ARRAY_SIZE(rows) + 1];
 static lv_coord_t btn_col_dsc[] = {UI_AUDIO_ARROW_W, UI_AUDIO_COL_BUTTON - UI_AUDIO_ARROW_W, LV_GRID_TEMPLATE_LAST};
 _Static_assert(UI_AUDIO_COL_INDENT + UI_AUDIO_COL_LABEL + 2 * UI_AUDIO_COL_BUTTON + UI_AUDIO_COL_SPACER + UI_AUDIO_COL_VALUE <= UI_AUDIO_GRID_MAX_W,
                "the Audio page's columns must fit the page");
 
-static slider_group_t sliders[ARRAY_SIZE(items)];
-static btn_group_t toggles[ARRAY_SIZE(items)];
-static int focused = -1; // row of the grabbed slider
+static slider_group_t sliders[ARRAY_SIZE(rows)];
+static btn_group_t switches[ARRAY_SIZE(rows)];
+static lv_obj_t *marks[ARRAY_SIZE(rows)];    // "Mix" of the Record source switches
+static lv_obj_t *headings[ARRAY_SIZE(rows)]; // heading label of each heading row
+static int sel_row[ARRAY_SIZE(rows)];        // selectable index (panel) -> row
+static int sel_count;
+static lv_obj_t *list; // the scrolling grid
+static lv_obj_t *hint;
+static int focused = -1; // selectable index of the grabbed slider
 static lv_timer_t *save_timer;
+
+_Static_assert(ARRAY_SIZE(rows) - 4 <= MAX_PANELS, "one select panel per selectable row (4 headings)");
 
 static void save_timer_cb(lv_timer_t *timer) {
     lv_timer_pause(timer);
     audio_mixer_save();
 }
 
-static void update_slider(int row) {
-    char buf[32];
-    const int value = audio_mixer_get(items[row].field);
-
-    lv_slider_set_value(sliders[row].slider, value, LV_ANIM_OFF);
-    audio_mixer_value_str(items[row].field, value, buf, sizeof(buf));
-    lv_label_set_text(sliders[row].label, buf);
+static bool is_record_source(const row_t *row) {
+    return row->type == ROW_SWITCH && audio_mixer_level_of(row->field) < AUDIO_MIXER_FIELD_COUNT;
 }
 
-static void update_items(void) {
-    for (int row = 0; row < ITEM_COUNT; row++) {
-        const item_t *item = &items[row];
-        if (item->type == ITEM_SLIDER) {
-            update_slider(row);
-        } else if (item->type == ITEM_TOGGLE) {
-            btn_group_set_sel(&toggles[row], audio_mixer_get(item->field) == item->btn0_value ? 0 : 1);
-        }
-        if (item->field == AUDIO_MIXER_HDMI) {
-            const bool on = hdmi_audio_in_enabled();
-            slider_enable(&sliders[row], on);
-            if (on)
-                lv_obj_add_flag(pp_audio.p_arr.panel[row], FLAG_SELECTABLE);
-            else
-                lv_obj_clear_flag(pp_audio.p_arr.panel[row], FLAG_SELECTABLE);
-        }
+// value of a switch row: 1 = left button
+static int switch_value(const row_t *row) {
+    switch (row->type) {
+    case ROW_HDMI_OUT:
+        return hdmi_audio_out_enabled();
+    case ROW_HDMI_IN:
+        return hdmi_audio_in_enabled();
+    default:
+        return audio_mixer_get(row->field) != 0;
     }
 }
 
+static void update_slider(int r) {
+    char buf[32];
+    const int value = audio_mixer_get(rows[r].field);
+
+    lv_slider_set_value(sliders[r].slider, value, LV_ANIM_OFF);
+    audio_mixer_value_str(rows[r].field, value, buf, sizeof(buf));
+    lv_label_set_text(sliders[r].label, buf);
+}
+
+static const char *row_hint(const row_t *row) {
+    if (is_record_source(row)) {
+        if (audio_mixer_recorded_via_mix(row->field))
+            return HINT_IN_MIX;
+        return audio_mixer_get(row->field) ? HINT_DIRECT_YES : HINT_DIRECT_NO;
+    }
+    return row->hint;
+}
+
+static void update_hint(void) {
+    const int sel = pp_audio.p_arr.cur;
+    const char *text = NULL;
+    if (sel >= 0 && sel < sel_count)
+        text = row_hint(&rows[sel_row[sel]]);
+    lv_label_set_text(hint, text ? _lang(text) : "");
+}
+
+static void update_rows(void) {
+    for (int sel = 0; sel < sel_count; sel++) {
+        const int r = sel_row[sel];
+        const row_t *row = &rows[r];
+        switch (row->type) {
+        case ROW_SLIDER:
+            update_slider(r);
+            if (row->field == AUDIO_MIXER_HDMI) {
+                const bool on = hdmi_audio_in_enabled();
+                slider_enable(&sliders[r], on);
+                if (on)
+                    lv_obj_add_flag(pp_audio.p_arr.panel[sel], FLAG_SELECTABLE);
+                else
+                    lv_obj_clear_flag(pp_audio.p_arr.panel[sel], FLAG_SELECTABLE);
+            }
+            break;
+        case ROW_SWITCH:
+        case ROW_HDMI_OUT:
+        case ROW_HDMI_IN:
+            btn_group_set_sel(&switches[r], switch_value(row) ? 0 : 1);
+            if (marks[r])
+                lv_label_set_text(marks[r], audio_mixer_recorded_via_mix(row->field) ? _lang("Mix") : "");
+            break;
+        default:
+            break;
+        }
+    }
+    update_hint();
+}
+
+// Keep the selected row on screen, with its section heading when it is the first row of a section.
+// (ui_main_menu.c already scrolls the selected panel into view; this adds the heading.)
+static void scroll_to_selection(void) {
+    const int sel = pp_audio.p_arr.cur;
+    if (sel < 0 || sel >= sel_count)
+        return;
+    const int r = sel_row[sel];
+    if (r > 0 && rows[r - 1].type == ROW_HEADING)
+        lv_obj_scroll_to_view(headings[r - 1], LV_ANIM_OFF);
+    lv_obj_scroll_to_view(pp_audio.p_arr.panel[sel], LV_ANIM_OFF);
+}
+
+static lv_obj_t *create_heading(lv_obj_t *parent, const char *text, int r) {
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, _lang(text));
+    lv_obj_set_style_text_font(label, UI_AUDIO_HEADING_FONT, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(UI_AUDIO_HEADING_COLOR), 0);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    // the whole row (scrolling it into view then scrolls by whole rows), the text at its bottom
+    // with a thin line under it, across the row
+    lv_obj_set_size(label, UI_AUDIO_COL_LABEL + 2 * UI_AUDIO_COL_BUTTON + UI_AUDIO_COL_SPACER + UI_AUDIO_COL_VALUE, UI_AUDIO_ROW_H);
+    lv_obj_set_style_pad_bottom(label, 2, 0);
+    lv_obj_set_style_pad_top(label, UI_AUDIO_ROW_H - 2 - lv_font_get_line_height(UI_AUDIO_HEADING_FONT), 0);
+    lv_obj_set_style_border_side(label, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(label, 1, 0);
+    lv_obj_set_style_border_color(label, lv_color_hex(UI_AUDIO_HEADING_COLOR), 0);
+    lv_obj_set_style_border_opa(label, LV_OPA_50, 0);
+    lv_obj_set_grid_cell(label, LV_GRID_ALIGN_START, 1, 5, LV_GRID_ALIGN_START, r, 1);
+    return label;
+}
+
+static void create_switch(int r, int sel) {
+    const row_t *row = &rows[r];
+    btn_group_t *t = &switches[r];
+    create_btn_group_item(t, list, 2, _lang(row->name), _lang(row->btn0), _lang(row->btn1), "", "", r);
+    lv_obj_set_grid_cell(t->label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, r, 1);
+    lv_obj_set_width(t->label, UI_AUDIO_COL_LABEL);
+    for (int i = 0; i < 2; i++) {
+        btn_with_arr_t *b = &t->btn_a[i];
+        lv_obj_set_width(b->container, UI_AUDIO_COL_BUTTON);
+        lv_obj_set_style_grid_column_dsc_array(b->container, btn_col_dsc, 0);
+        lv_obj_set_width(b->btn, UI_AUDIO_COL_BUTTON - UI_AUDIO_ARROW_W);
+        lv_obj_set_style_pad_left(b->btn, UI_AUDIO_BTN_PAD, 0);
+        lv_obj_set_style_pad_right(b->btn, 0, 0);
+    }
+    if (is_record_source(row)) {
+        marks[r] = lv_label_create(list);
+        lv_label_set_text(marks[r], "");
+        lv_obj_set_style_text_font(marks[r], UI_PAGE_TEXT_FONT, 0);
+        lv_obj_set_style_text_color(marks[r], lv_color_hex(UI_AUDIO_HEADING_COLOR), 0);
+        lv_obj_set_style_pad_top(marks[r], UI_PAGE_TEXT_PAD, 0);
+        lv_obj_set_size(marks[r], UI_AUDIO_COL_VALUE, UI_AUDIO_ROW_H);
+        lv_label_set_long_mode(marks[r], LV_LABEL_LONG_DOT);
+        lv_obj_set_grid_cell(marks[r], LV_GRID_ALIGN_START, 5, 1, LV_GRID_ALIGN_CENTER, r, 1);
+    }
+    (void)sel;
+}
+
 static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
-    char buf[512]; // the note, UTF-8 (Cyrillic and CJK take 2-3 bytes per character)
+    char buf[128];
     lv_obj_t *page = lv_menu_page_create(parent, NULL);
     lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(page, UI_PAGE_VIEW_SIZE);
@@ -133,73 +271,87 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
     snprintf(buf, sizeof(buf), "%s:", _lang(pp_audio.name));
     create_text(NULL, section, false, buf, LV_MENU_ITEM_BUILDER_VARIANT_2);
 
-    lv_obj_t *cont = lv_obj_create(section);
-    lv_obj_set_size(cont, UI_PAGE_VIEW_SIZE);
-    lv_obj_set_pos(cont, 0, 0);
-    lv_obj_set_layout(cont, LV_LAYOUT_GRID);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_style(cont, &style_context, LV_PART_MAIN);
+    // The rows: taller than the window, scrolled only by the selection (lv_obj_scroll_to_view).
+    list = lv_obj_create(section);
+    lv_obj_set_size(list, lv_pct(100), UI_AUDIO_VIEW_H);
+    lv_obj_set_pos(list, 0, 0);
+    lv_obj_set_layout(list, LV_LAYOUT_GRID);
+    lv_obj_add_style(list, &style_context, LV_PART_MAIN);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_clear_flag(list, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN);
+    // a scroll bar shows that there is more
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_ON);
+    lv_obj_set_style_bg_color(list, lv_color_hex(TEXT_COLOR_DISABLE), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(list, 4, LV_PART_SCROLLBAR);
 
-    for (int row = 0; row < ITEM_COUNT; row++)
-        row_dsc[row] = UI_AUDIO_ROWS_H / ITEM_COUNT;
-    row_dsc[ITEM_COUNT] = LV_GRID_CONTENT;
-    row_dsc[ITEM_COUNT + 1] = LV_GRID_TEMPLATE_LAST;
-    lv_obj_set_style_grid_column_dsc_array(cont, col_dsc, 0);
-    lv_obj_set_style_grid_row_dsc_array(cont, row_dsc, 0);
-    // up to 15 rows: no gap between them, or the last ones fall off the screen; no column gaps either,
-    // the columns are sized for the longest translation
-    lv_obj_set_style_pad_row(cont, 0, 0);
-    lv_obj_set_style_pad_column(cont, 0, 0);
+    // every row the same height, headings too: scrolled by whole rows, the window never shows half a row
+    for (int r = 0; r < ROW_COUNT; r++)
+        row_dsc[r] = UI_AUDIO_ROW_H;
+    _Static_assert(UI_AUDIO_VIEW_H % UI_AUDIO_ROW_H == 0, "the window shows whole rows");
+    row_dsc[ROW_COUNT] = LV_GRID_TEMPLATE_LAST;
+    lv_obj_set_style_grid_column_dsc_array(list, col_dsc, 0);
+    lv_obj_set_style_grid_row_dsc_array(list, row_dsc, 0);
+    // no column gaps (the columns are sized for the longest translation), no row gaps
+    lv_obj_set_style_pad_row(list, 0, 0);
+    lv_obj_set_style_pad_column(list, 0, 0);
 
-    create_select_item(arr, cont);
+    create_select_item(arr, list);
 
-    for (int row = 0; row < ITEM_COUNT; row++) {
-        const item_t *item = &items[row];
-        switch (item->type) {
-        case ITEM_SLIDER: {
-            slider_group_t *s = &sliders[row];
-            create_slider_item(s, cont, _lang(item->name), audio_mixer_max(item->field), 0, row);
-            lv_obj_set_grid_cell(s->name, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, row, 1);
+    sel_count = 0;
+    for (int r = 0; r < ROW_COUNT; r++) {
+        const row_t *row = &rows[r];
+        if (row->type == ROW_HEADING) {
+            headings[r] = create_heading(list, row->name, r);
+            continue;
+        }
+
+        // this row's selection panel
+        const int sel = sel_count++;
+        sel_row[sel] = r;
+        lv_obj_set_grid_cell(arr->panel[sel], LV_GRID_ALIGN_STRETCH, 0, 6, LV_GRID_ALIGN_STRETCH, r, 1);
+
+        switch (row->type) {
+        case ROW_SLIDER: {
+            slider_group_t *s = &sliders[r];
+            create_slider_item(s, list, _lang(row->name), audio_mixer_max(row->field), 0, r);
+            lv_obj_set_grid_cell(s->name, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, r, 1);
             lv_obj_set_width(s->name, UI_AUDIO_COL_LABEL);
-            lv_obj_set_grid_cell(s->slider, LV_GRID_ALIGN_START, 2, 3, LV_GRID_ALIGN_CENTER, row, 1);
+            lv_obj_set_grid_cell(s->slider, LV_GRID_ALIGN_START, 2, 3, LV_GRID_ALIGN_CENTER, r, 1);
             lv_obj_set_width(s->slider, 2 * UI_AUDIO_COL_BUTTON + UI_AUDIO_COL_SPACER - UI_AUDIO_SLIDER_GAP);
             lv_obj_set_width(s->label, UI_AUDIO_COL_VALUE);
-            // rows are tighter than on the other pages
+            // the knob stays inside its row: nothing of a row scrolled out shows at the window's edge
             lv_obj_set_style_pad_ver(s->slider, UI_AUDIO_KNOB_PAD, LV_PART_KNOB);
             break;
         }
-        case ITEM_TOGGLE: {
-            btn_group_t *t = &toggles[row];
-            create_btn_group_item(t, cont, 2, _lang(item->name), _lang(item->btn0), _lang(item->btn1), "", "", row);
-            lv_obj_set_grid_cell(t->label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, row, 1);
-            lv_obj_set_width(t->label, UI_AUDIO_COL_LABEL);
-            for (int i = 0; i < 2; i++) {
-                btn_with_arr_t *b = &t->btn_a[i];
-                lv_obj_set_width(b->container, UI_AUDIO_COL_BUTTON);
-                lv_obj_set_style_grid_column_dsc_array(b->container, btn_col_dsc, 0);
-                lv_obj_set_width(b->btn, UI_AUDIO_COL_BUTTON - UI_AUDIO_ARROW_W);
-                lv_obj_set_style_pad_left(b->btn, UI_AUDIO_BTN_PAD, 0);
-                lv_obj_set_style_pad_right(b->btn, 0, 0);
-            }
+        case ROW_SWITCH:
+        case ROW_HDMI_OUT:
+        case ROW_HDMI_IN:
+            create_switch(r, sel);
             break;
-        }
-        case ITEM_BACK:
-            snprintf(buf, sizeof(buf), "< %s", _lang(item->name));
-            create_label_item(cont, buf, 1, row, 1);
+        case ROW_BACK:
+            snprintf(buf, sizeof(buf), "< %s", _lang(row->name));
+            create_label_item(list, buf, 1, r, 1);
+            break;
+        default:
             break;
         }
     }
 
-    lv_obj_t *note = lv_label_create(cont);
-    snprintf(buf, sizeof(buf), "%s.", _lang("Levels set the headphone mix, 0 is off"));
-    lv_label_set_text(note, buf);
-    lv_obj_set_style_text_font(note, UI_PAGE_LABEL_FONT, 0);
-    lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_color(note, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
-    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-    lv_obj_set_grid_cell(note, LV_GRID_ALIGN_STRETCH, 1, 5, LV_GRID_ALIGN_START, ITEM_COUNT, 1);
+    // one line of help for the selected row, fixed below the list
+    hint = lv_label_create(section);
+    lv_label_set_text(hint, "");
+    lv_obj_set_style_text_font(hint, UI_AUDIO_HINT_FONT, 0);
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
+    lv_obj_set_style_pad_top(hint, UI_AUDIO_HINT_PAD, 0);
+    lv_obj_set_style_pad_left(hint, UI_AUDIO_COL_INDENT, 0);
+    lv_obj_set_width(hint, UI_AUDIO_COL_INDENT + UI_AUDIO_COL_LABEL + 2 * UI_AUDIO_COL_BUTTON + UI_AUDIO_COL_SPACER + UI_AUDIO_COL_VALUE);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
 
-    update_items();
+    pp_audio.p_arr.max = sel_count;
+    update_rows();
 
     // runs in lv_timer_handler(), under lvgl_mutex like the input handlers
     save_timer = lv_timer_create(save_timer_cb, SAVE_DELAY_MS, NULL);
@@ -212,7 +364,7 @@ static void release_slider(bool back_to_submenu) {
     if (focused < 0)
         return;
 
-    lv_obj_remove_style(sliders[focused].slider, &style_silder_select, LV_PART_MAIN);
+    lv_obj_remove_style(sliders[sel_row[focused]].slider, &style_silder_select, LV_PART_MAIN);
     focused = -1;
     lv_timer_pause(save_timer);
     audio_mixer_save();
@@ -221,21 +373,28 @@ static void release_slider(bool back_to_submenu) {
 }
 
 static void page_audio_enter(void) {
-    update_items();
+    // from the top, with the first heading
+    lv_obj_scroll_to_y(list, 0, LV_ANIM_OFF);
+    update_rows();
+    scroll_to_selection();
 }
 
 static void page_audio_exit(void) {
     // submenu_exit() has already set the main menu state
     release_slider(false);
     audio_mixer_save();
+    lv_label_set_text(hint, "");
 }
 
 static void page_audio_on_roller(uint8_t key) {
     if (g_app_state != APP_STATE_SUBMENU_ITEM_FOCUSED || focused < 0) {
+        // the selection moved
+        scroll_to_selection();
+        update_hint();
         return;
     }
 
-    const audio_mixer_field_t field = items[focused].field;
+    const audio_mixer_field_t field = rows[sel_row[focused]].field;
     int value = audio_mixer_get(field);
 
     // same direction as the other slider pages
@@ -248,7 +407,8 @@ static void page_audio_on_roller(uint8_t key) {
     }
 
     audio_mixer_set(field, value);
-    update_slider(focused);
+    // the "Mix" marks and the hint follow the levels
+    update_rows();
     audio_mixer_apply();
     // saved on release, or once the dial rests
     lv_timer_reset(save_timer);
@@ -258,35 +418,47 @@ static void page_audio_on_roller(uint8_t key) {
 static void page_audio_on_click(uint8_t key, int sel) {
     (void)key;
 
-    if (sel < 0 || sel >= ITEM_COUNT) {
+    if (sel < 0 || sel >= sel_count) {
         return;
     }
 
-    const item_t *item = &items[sel];
+    const int r = sel_row[sel];
+    const row_t *row = &rows[r];
 
-    if (item->type == ITEM_SLIDER) {
+    switch (row->type) {
+    case ROW_SLIDER:
         if (focused == sel) {
             release_slider(true);
         } else {
             release_slider(false);
             focused = sel;
             app_state_push(APP_STATE_SUBMENU_ITEM_FOCUSED);
-            lv_obj_add_style(sliders[sel].slider, &style_silder_select, LV_PART_MAIN);
+            lv_obj_add_style(sliders[r].slider, &style_silder_select, LV_PART_MAIN);
         }
-    } else if (item->type == ITEM_TOGGLE) {
-        btn_group_toggle_sel(&toggles[sel]);
-        const int value = btn_group_get_sel(&toggles[sel]) == 0 ? item->btn0_value : !item->btn0_value;
-        audio_mixer_set(item->field, value);
+        break;
+    case ROW_SWITCH:
+        audio_mixer_set(row->field, !switch_value(row));
         audio_mixer_save();
-        update_items();
+        update_rows();
         audio_mixer_apply();
+        break;
+    case ROW_HDMI_OUT:
+        hdmi_audio_set(!hdmi_audio_out_enabled(), hdmi_audio_in_enabled());
+        update_rows();
+        break;
+    case ROW_HDMI_IN:
+        hdmi_audio_set(hdmi_audio_out_enabled(), !hdmi_audio_in_enabled());
+        update_rows();
+        break;
+    default:
+        break;
     }
 }
 
 page_pack_t pp_audio = {
     .p_arr = {
         .cur = 0,
-        .max = ARRAY_SIZE(items),
+        .max = 0, // the selectable rows, counted by page_audio_create()
     },
     .name = "Audio",
     .create = page_audio_create,
