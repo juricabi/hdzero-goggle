@@ -26,6 +26,7 @@ AACLiveAudioServerMediaSubsession::AACLiveAudioServerMediaSubsession(UsageEnviro
 }
 
 AACLiveAudioServerMediaSubsession::~AACLiveAudioServerMediaSubsession() {
+    envir().taskScheduler().unscheduleDelayedTask(nextTask());
     printf("[MEDIA SERVER]AAC server media subsession destruct\n");
 }
 
