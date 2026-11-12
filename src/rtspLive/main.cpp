@@ -177,7 +177,8 @@ void live_checkConf(LiveContext_t* liveCtx, char* confSet)
 
     char  sTemp[MAX_pathLEN];
     char* p = sTemp;
-    readlink("/proc/self/exe", sTemp, MAX_pathLEN);
+    memset(sTemp, 0, MAX_pathLEN); // readlink() does not terminate the string
+    readlink("/proc/self/exe", sTemp, MAX_pathLEN - 1);
     if (NULL != (p = strrchr(sTemp,'/'))){
         /* path where confs is */
         *p = '\0';
@@ -189,7 +190,7 @@ void live_checkConf(LiveContext_t* liveCtx, char* confSet)
 
         /* path where record is */
         memset(sTemp, 0, MAX_pathLEN);
-        readlink("/proc/self/exe", sTemp, MAX_pathLEN);
+        readlink("/proc/self/exe", sTemp, MAX_pathLEN - 1);
         p = strrchr(sTemp,'/');
         *p = '\0';
         snprintf(liveCtx->confFile, MAX_pathLEN, "%s/%s", sTemp, REC_confFILE);
