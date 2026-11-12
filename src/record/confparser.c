@@ -508,3 +508,11 @@ bool conf_loadLiveAudio(char* confFile)
 {
     return ini_getbool(SEC_LIVE, KEY_LIVE_AUDIO, 0, confFile) > 0;
 }
+
+#define KEY_LIVE_AUDIO_OFFSET "audio_offset_ms"
+
+int conf_loadLiveAudioOffset(char* confFile)
+{
+    long lValue = ini_getl(SEC_LIVE, KEY_LIVE_AUDIO_OFFSET, 0, confFile);
+    return check_set(lValue, -500, 500);
+}

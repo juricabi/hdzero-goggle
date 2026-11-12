@@ -833,7 +833,7 @@ int live_start(RecordContext_t *recCtx) {
 
     recCtx->nbFramesLive = 0;
     recCtx->ptsBaseLive = 0;
-    liveclock_reset(&recCtx->liveVideoClock);
+    liveclock_reset(&recCtx->liveVideoClock, "video");
 
     record_dumpViParams(&viParams);
     record_dumpVeParams(&veParams);
