@@ -3,6 +3,7 @@
 #include "dm5680.h"
 #include "driver/hardware.h"
 #include "i2c.h"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -16,9 +17,15 @@ static bool it66121_audio_cfg_on = false; // set by IT66121_audio_config(), appl
 static it66121_audio_input_t it66121_audio_cfg_in = IT66121_AUDIO_I2S;
 static bool it66121_active = false;   // between IT66121_init() and IT66121_close()
 static bool it66121_audio_on = false; // audio block currently programmed and enabled
+// HDMI audio: the audio code switches to register bank 1 and back. Every multi-register access
+// to the chip (init, close, set_phase from the HDMI-in detect / ELRS / UI threads, audio) holds
+// this lock, so set_phase never writes Reg59/70/72 while bank 1 is selected (0x159/0x170/0x172).
+static pthread_mutex_t it66121_lock = PTHREAD_MUTEX_INITIALIZER;
+static int it66121_audio_locked(bool on);
 /* ===== end HDMI out audio state ===== */
 
 void IT66121_close() {
+    pthread_mutex_lock(&it66121_lock);
     it66121_active = false; // HDMI audio: the chip is put into reset below, audio setup is lost
     it66121_audio_on = false;
 
@@ -27,9 +34,11 @@ void IT66121_close() {
 	#endif
 	
     DM5680_ResetHDMI_TX(0);
+    pthread_mutex_unlock(&it66121_lock);
 }
 
 void IT66121_init() {
+    pthread_mutex_lock(&it66121_lock);
 	#ifdef HDZGOGGLE2
         I2C_Write(ADDR_FPGA, 0x8a, 0x01);
 	#endif
@@ -144,12 +153,14 @@ void IT66121_init() {
     it66121_active = true;
     it66121_audio_on = false;
     if (it66121_audio_cfg_on)
-        IT66121_audio(true);
+        it66121_audio_locked(true);
+    pthread_mutex_unlock(&it66121_lock);
 }
 
 void IT66121_set_phase(uint8_t phase, uint8_t inv) {
     uint8_t rdat;
 
+    pthread_mutex_lock(&it66121_lock);
     inv &= 1;
     I2C_R_Write(ADDR_IT66121, 0x59, 0x40 | (inv << 3));
 
@@ -159,6 +170,7 @@ void IT66121_set_phase(uint8_t phase, uint8_t inv) {
     } else if (rdat == 0x22) {
         I2C_R_Write(ADDR_IT66121, 0x72, (0x03 | (phase << 6)));
     }
+    pthread_mutex_unlock(&it66121_lock);
 }
 /* ===========================================================================
  * HDMI out audio (EXPERIMENTAL, default off, see docs/hdmi-audio.md)
@@ -298,42 +310,14 @@ static void it66121_audio_disable(void) {
     I2C_R_Write(ADDR_IT66121, 0x04, v | IT66121_RST_AREF | IT66121_RST_AUD); // back to the IT66121_init() state
 }
 
-int IT66121_audio(bool on) {
-    if (!it66121_active) {
-        LOGI("IT66121 audio: HDMI out not initialised, nothing done");
-        return -1;
-    }
-
-    if (on) {
-        it66121_audio_enable(it66121_audio_cfg_in);
-        it66121_audio_on = true;
-        char buf[160];
-        usleep(20000);
-        IT66121_audio_status(buf, sizeof(buf));
-        LOGI("IT66121 audio on (%s): %s", it66121_audio_cfg_in == IT66121_AUDIO_SPDIF ? "S/PDIF" : "I2S", buf);
-    } else {
-        it66121_audio_disable();
-        it66121_audio_on = false;
-        LOGI("IT66121 audio off");
-    }
-    return 0;
-}
-
-void IT66121_audio_mute(bool mute) {
-    if (!it66121_audio_on)
-        return;
-    // RL p.23 RegE4[7:4] REGAudSPxFlat: flat (silent) samples for source 0; the link and InfoFrame stay up.
-    IT66121_REG_BANK0();
-    I2C_R_Write(ADDR_IT66121, 0xe4, mute ? 0x10 : 0x00);
-}
-
-uint32_t IT66121_audio_cts(void) {
+static uint32_t it66121_cts_locked(void) {
     uint8_t r135, r136, r137;
 
     if (!it66121_active)
         return 0;
     // RL p.25: Reg135[7:4] = CTSCnt[3:0], Reg136 = CTSCnt[11:4], Reg137 = CTSCnt[19:12] (read-only,
-    // measured from the audio input clock). 0 means no audio clock (SCK/WS) reaches the chip.
+    // measured from the audio input clock). 0 = no audio clock at the chip, or not these registers
+    // (PG p.31 names Reg1A0-1A2; both are logged until a device shows which one counts).
     IT66121_REG_BANK1();
     r135 = I2C_R_Read(ADDR_IT66121, 0x35);
     r136 = I2C_R_Read(ADDR_IT66121, 0x36);
@@ -342,7 +326,7 @@ uint32_t IT66121_audio_cts(void) {
     return ((uint32_t)r137 << 12) | ((uint32_t)r136 << 4) | (r135 >> 4);
 }
 
-void IT66121_audio_status(char *buf, size_t len) {
+static void it66121_status_locked(char *buf, size_t len) {
     uint8_t r04, r5f, re0, rc0, rc1, rce, a0, a1, a2;
     uint32_t cts;
 
@@ -357,8 +341,7 @@ void IT66121_audio_status(char *buf, size_t len) {
     rc0 = I2C_R_Read(ADDR_IT66121, 0xc0);
     rc1 = I2C_R_Read(ADDR_IT66121, 0xc1);
     rce = I2C_R_Read(ADDR_IT66121, 0xce);
-    cts = IT66121_audio_cts();
-    // PG p.31 names Reg1A0-1A2 as the CTS read-back instead; log both until a device confirms one of them.
+    cts = it66121_cts_locked();
     IT66121_REG_BANK1();
     a0 = I2C_R_Read(ADDR_IT66121, 0xa0);
     a1 = I2C_R_Read(ADDR_IT66121, 0xa1);
@@ -366,5 +349,56 @@ void IT66121_audio_status(char *buf, size_t len) {
     IT66121_REG_BANK0();
     snprintf(buf, len, "04=%02x 5F=%02x E0=%02x C0=%02x C1=%02x CE=%02x CTS=%u (1A0-1A2=%02x %02x %02x)",
              r04, r5f, re0, rc0, rc1, rce, (unsigned)cts, a0, a1, a2);
+}
+
+static int it66121_audio_locked(bool on) {
+    if (!it66121_active) {
+        LOGI("IT66121 audio: HDMI out not initialised, nothing done");
+        return -1;
+    }
+
+    if (on) {
+        it66121_audio_enable(it66121_audio_cfg_in);
+        it66121_audio_on = true;
+        char buf[160];
+        usleep(20000);
+        it66121_status_locked(buf, sizeof(buf));
+        LOGI("IT66121 audio on (%s): %s", it66121_audio_cfg_in == IT66121_AUDIO_SPDIF ? "S/PDIF" : "I2S", buf);
+    } else {
+        it66121_audio_disable();
+        it66121_audio_on = false;
+        LOGI("IT66121 audio off");
+    }
+    return 0;
+}
+
+int IT66121_audio(bool on) {
+    pthread_mutex_lock(&it66121_lock);
+    int r = it66121_audio_locked(on);
+    pthread_mutex_unlock(&it66121_lock);
+    return r;
+}
+
+void IT66121_audio_mute(bool mute) {
+    pthread_mutex_lock(&it66121_lock);
+    if (it66121_audio_on) {
+        // RL p.23 RegE4[7:4] REGAudSPxFlat: flat (silent) samples for source 0; the link and InfoFrame stay up.
+        IT66121_REG_BANK0();
+        I2C_R_Write(ADDR_IT66121, 0xe4, mute ? 0x10 : 0x00);
+    }
+    pthread_mutex_unlock(&it66121_lock);
+}
+
+uint32_t IT66121_audio_cts(void) {
+    pthread_mutex_lock(&it66121_lock);
+    uint32_t cts = it66121_cts_locked();
+    pthread_mutex_unlock(&it66121_lock);
+    return cts;
+}
+
+void IT66121_audio_status(char *buf, size_t len) {
+    pthread_mutex_lock(&it66121_lock);
+    it66121_status_locked(buf, len);
+    pthread_mutex_unlock(&it66121_lock);
 }
 /* ===== end HDMI out audio ===== */

@@ -69,8 +69,8 @@ git -C "$TOP" show "$BASE:src/driver/it66121.h" > "$T/orig/driver/it66121.h"
 cp "$TOP/src/driver/it66121.c" "$TOP/src/driver/it66121.h" "$T/new/driver/"
 rc=0
 for v in HDZGOGGLE HDZGOGGLE2 HDZBOXPRO; do
-    gcc -w -D$v -I"$T/inc" -I"$T/orig/driver" -o "$T/o" "$T/harness.c" "$T/orig/driver/it66121.c"
-    gcc -w -D$v -DNEWAPI -I"$T/inc" -I"$T/new/driver" -o "$T/n" "$T/harness.c" "$T/new/driver/it66121.c"
+    gcc -w -pthread -D$v -I"$T/inc" -I"$T/orig/driver" -o "$T/o" "$T/harness.c" "$T/orig/driver/it66121.c"
+    gcc -w -pthread -D$v -DNEWAPI -I"$T/inc" -I"$T/new/driver" -o "$T/n" "$T/harness.c" "$T/new/driver/it66121.c"
     "$T/o" > "$T/o.txt"
     "$T/n" > "$T/n.txt" 2> /dev/null
     if cmp -s "$T/o.txt" "$T/n.txt"; then
