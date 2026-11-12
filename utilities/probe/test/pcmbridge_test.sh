@@ -282,8 +282,8 @@ int main(int argc, char **argv) {
     /* a latch that answers with the address (wrong register): nothing written */
     regs_init(); echo_addr = 1;
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(nwrites == 0 && state_is("failed", 4) && state_err("err=refused"), "implausible CTL (reserved bits set): refused, no SoC write (%d)", nwrites);
     pcmbridge_stop(pb, 1);
-    CHECK(nwrites == 0 && state_err("err=refused"), "implausible CTL (reserved bits set): refused, no SoC write (%d)", nwrites);
     /* the CTL write does not read back: the old value written back, refused */
     regs_init(); ctl_stuck = 1;
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
