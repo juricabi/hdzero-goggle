@@ -146,10 +146,12 @@ static uint32_t rtc6705ReadRegister(uint8_t read) {
 }
 
 module_def_t steadyview_module = {
-    48,
-    module_standard_channel_name,
-    steadyview_init,
-    steadyview_close,
-    steadyview_set_channel,
-    steadyview_set_mode
+    .num_channels = 48,
+    .name = module_standard_channel_name,
+    .init = steadyview_init,
+    .close = steadyview_close,
+    .set_channel = steadyview_set_channel,
+    .set_mode = steadyview_set_mode,
+    .mode_names = "Diversity\nMix 1\nMix 2\nMix 3",
+    .boot_resend_ms = 0,
 };

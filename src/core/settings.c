@@ -245,9 +245,10 @@ const setting_t g_setting_defaults = {
         .calib_max = 2100,
     },
     .has_all_features = true,
-	.module = {
+    .module = {
         .type = 0,
         .setting = 0,
+        .pins = false,
     },
 };
 
@@ -371,8 +372,8 @@ void settings_load(void) {
     if (g_setting.scan.channel > HDZERO_CHANNEL_NUM) {
         g_setting.scan.channel = 1;
     }
-    if (g_setting.source.analog_channel > ANALOG_CHANNEL_NUM) {
-        g_setting.scan.channel = 33;
+    if (g_setting.source.analog_channel < 1 || g_setting.source.analog_channel > ANALOG_CHANNEL_NUM) {
+        g_setting.source.analog_channel = g_setting_defaults.source.analog_channel;
     }
 
     // autoscan
@@ -511,6 +512,7 @@ void settings_load(void) {
     // module bay
     g_setting.module.type = ini_getl("module", "type", g_setting_defaults.module.type, SETTING_INI);
     g_setting.module.setting = ini_getl("module", "setting", g_setting_defaults.module.setting, SETTING_INI);
+    g_setting.module.pins = settings_get_bool("module", "pins", g_setting_defaults.module.pins);
 
     // Check
     if (fs_file_exists(SELF_TEST_FILE)) {

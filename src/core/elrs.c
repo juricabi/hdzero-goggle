@@ -130,11 +130,15 @@ static void channel_channel_hdzero(uint8_t const channel) {
     }
 }
 
-static void change_channel_analog(uint8_t const channel) {
+static void change_channel_analog(uint8_t channel) {
     if (channel == 0 || channel > ANALOG_CHANNEL_NUM) {
         LOGE("Invalid analog channel %d", channel);
         return;
     }
+    // A bay module with fewer channels (Switch: 8, channels of the module's own band)
+    // gets (channel - 1) % 8 + 1, the VTX channel's place in its band: A1, B1 ... L1
+    // all select CH1.  48-channel modules and the internal receiver take it as is.
+    channel = analog_channel_fit(channel);
     if (g_setting.source.analog_channel != channel || g_app_state != APP_STATE_VIDEO) {
         g_setting.source.analog_channel = channel;
         beep();

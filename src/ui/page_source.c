@@ -17,6 +17,7 @@
 #include "driver/it66121.h"
 #include "driver/screen.h"
 #include "lang/language.h"
+#include "module/module.h"
 #include "ui/page_common.h"
 #include "ui/page_scannow.h"
 #include "ui/ui_main_menu.h"
@@ -216,13 +217,21 @@ void source_status_timer() {
     }
     lv_label_set_text(label[0], buf);
 
+    // the bay module's channel (its own list, e.g. CH1..CH8 for a Switch module) when
+    // the goggle controls it, none when it does not
 #if defined(HDZGOGGLE)
-    snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), state2string(g_source_info.av_bay_status));
+    if (analog_channel_tunable())
+        snprintf(buf, sizeof(buf), "%s %s: %s", _lang("Analog"), analog_channel_name(g_setting.source.analog_channel),
+                 state2string(g_source_info.av_bay_status));
+    else
+        snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), state2string(g_source_info.av_bay_status));
 #elif defined(HDZBOXPRO)
     snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), channel2str(0, 0, g_setting.source.analog_channel));
 #elif defined(HDZGOGGLE2)
-    if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL) {
+    if (!module_bay_is_source()) {
         snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), channel2str(0, 0, g_setting.source.analog_channel));
+    } else if (analog_channel_tunable()) {
+        snprintf(buf, sizeof(buf), "%s: %s %s", _lang("Analog"), _lang("Expansion Module"), analog_channel_name(g_setting.source.analog_channel));
     } else {
         snprintf(buf, sizeof(buf), "%s: %s", _lang("Analog"), _lang("Expansion Module"));
     }
@@ -350,6 +359,7 @@ static void page_source_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&btn_group0);
         g_setting.source.analog_module = btn_group_get_sel(&btn_group0);
         ini_putl("source", "analog_module", g_setting.source.analog_module, SETTING_INI);
+        analog_channel_clamp(); // into the channel list of the receiver now selected
         break;
 #endif
     case ROW_ANALOG_RATIO:

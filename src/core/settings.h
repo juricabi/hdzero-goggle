@@ -290,8 +290,9 @@ typedef struct {
 } setting_analog_rssi_t;
 
 typedef struct {
-    int type;
-    int setting;
+    int type;    // module_type_t
+    int setting; // Mode list entry of that type
+    bool pins;   // Pin Control: the goggle may drive the bay pins (PG0-PG2, shared with WiFi SDIO)
 } setting_module_t;
 
 typedef struct {

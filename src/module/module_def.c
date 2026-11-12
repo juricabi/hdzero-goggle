@@ -1,3 +1,5 @@
+#include "module_def.h"
+
 static char *module_standard_channels[] = {
     "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8",
     "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8",
@@ -8,5 +10,7 @@ static char *module_standard_channels[] = {
 };
 
 char *module_standard_channel_name(int channel) {
+    if (channel < 0 || channel >= (int)(sizeof(module_standard_channels) / sizeof(module_standard_channels[0])))
+        return "";
     return module_standard_channels[channel];
 }

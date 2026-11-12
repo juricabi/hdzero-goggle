@@ -21,6 +21,8 @@ static int uart_fd = -1;
 
 static void send_command(uint8_t *bytes, uint8_t length) {
     uint8_t crc = 0;
+    if (uart_fd < 0)
+        return;
     for (int i=1 ; i<length-2; i++) {
         crc ^= bytes[i];
     }
@@ -40,6 +42,8 @@ static void steadyview_x_set_channel(int index) {
 }
 
 void steadyview_x_set_mixmode(steadyview_x_mix_mode_t mode) {
+    if ((unsigned)mode >= ARRAY_SIZE(modes))
+        mode = 0;
     uint8_t data[] = {0x02, 0x06, 0x34, modes[mode], 0x01, 0x03};
     send_command(data, sizeof(data));
 }
@@ -50,7 +54,10 @@ static void steadyview_x_set_mode() {
     }
 }
 
+// soft_uart.ko (built with gpio_tx = 192 = CLK/PG0 and gpio_rx = 193 = DAT/PG1 as
+// its defaults) gives /dev/ttySOFT0; CS (PG2) is held low.
 static void steadyview_x_init() {
+#ifndef EMULATOR_BUILD
     gpio_open(GPIO_MODULE_CS);
     gpio_set(GPIO_MODULE_CS, 0);
 
@@ -58,21 +65,32 @@ static void steadyview_x_init() {
 
     usleep(100000);
     uart_fd = uart_open(4);
+#endif
     steadyview_x_set_mode();
 }
 
 static void steadyview_x_close() {
-    uart_close(uart_fd);
+#ifndef EMULATOR_BUILD
+    if (uart_fd >= 0)
+        uart_close(uart_fd);
+    uart_fd = -1;
     usleep(100000);
     system("rmmod soft_uart");
+    // soft_uart leaves its TX pin an output (idle high) and frees it: inputs, so
+    // nothing drives the unpowered module
+    softspi_release_gpio(GPIO_MODULE_CLK);
+    softspi_release_gpio(GPIO_MODULE_DAT);
     softspi_release_gpio(GPIO_MODULE_CS);
+#endif
 }
 
 module_def_t steadyview_x_module = {
-    48,
-    module_standard_channel_name,
-    steadyview_x_init,
-    steadyview_x_close,
-    steadyview_x_set_channel,
-    steadyview_x_set_mode
+    .num_channels = 48,
+    .name = module_standard_channel_name,
+    .init = steadyview_x_init,
+    .close = steadyview_x_close,
+    .set_channel = steadyview_x_set_channel,
+    .set_mode = steadyview_x_set_mode,
+    .mode_names = "Diversity\nMix 1\nMix 2\nMix 3",
+    .boot_resend_ms = 0,
 };

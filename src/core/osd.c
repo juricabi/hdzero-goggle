@@ -31,6 +31,7 @@
 #include "driver/nct75.h"
 #include "driver/rtc.h"
 #include "driver/rtc6715.h"
+#include "module/module.h"
 #include "ui/page_common.h"
 #include "ui/page_fans.h"
 #include "ui/page_scannow.h"
@@ -393,6 +394,15 @@ char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // cha
     }
 }
 
+// Channel label text: HDZero channel, or the analog channel in the list of the
+// analog source (module bay names such as "CH3" for a Switch module are shown
+// without a second "CH:").
+static const char *osd_channel_name(uint8_t ch) {
+    if (g_source_info.source == SOURCE_HDZERO)
+        return channel2str(1, g_setting.source.hdzero_band, ch);
+    return analog_channel_name(ch);
+}
+
 void osd_channel_show(bool bShow) {
     uint8_t ch;
     lv_color_t color;
@@ -401,13 +411,14 @@ void osd_channel_show(bool bShow) {
     if (channel_osd_mode & 0x80) {
         ch = channel_osd_mode & 0x7F;
         color = lv_color_make(0xFF, 0x20, 0x20);
-        snprintf(buf, sizeof(buf), "  To %s?  ", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
+        snprintf(buf, sizeof(buf), "  To %s?  ", osd_channel_name(ch));
         lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], LV_OPA_100, 0);
     } else {
         if (g_source_info.source == SOURCE_HDZERO) {
             ch = g_setting.scan.channel & 0x7F;
         } else {
-            if (g_source_info.source == SOURCE_AV_MODULE) {
+            // analog: only a channel the goggle tunes (not an uncontrolled bay module)
+            if (g_source_info.source == SOURCE_AV_MODULE && analog_channel_tunable()) {
                 ch = g_setting.source.analog_channel & 0x7F;
             } else {
                 bShow = false;
@@ -415,8 +426,9 @@ void osd_channel_show(bool bShow) {
         }
 
         if (bShow) {
+            const char *name = osd_channel_name(ch);
             color = lv_color_make(0xFF, 0xFF, 0xFF);
-            snprintf(buf, sizeof(buf), "CH:%s", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
+            snprintf(buf, sizeof(buf), strncmp(name, "CH", 2) ? "CH:%s" : "%s", name);
             lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], 0, 0);
         }
     }

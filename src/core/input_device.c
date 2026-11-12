@@ -74,25 +74,15 @@ void exit_tune_channel() {
     channel_osd_mode = 0;
 }
 
-// Analog channel can be tuned from the goggle: the internal receiver always, the
-// module bay only when a controllable module type is set in Module Bay.
-static bool analog_tunable(void) {
-#if defined(HDZGOGGLE2)
-    if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL)
-        return true;
-    return module_num_channels() > 0;
-#elif defined(HDZGOGGLE)
-    return module_num_channels() > 0;
-#else
-    return true;
-#endif
-}
-
+// Analog channel can be tuned from the goggle: the internal receiver (Goggle 2,
+// BoxPro) always, the module bay only when it is controlled (a module type set in
+// Module Bay, Pin Control on, WiFi off).  Range and names follow the bay module
+// (module.c analog_channel_*).
 static void analog_apply_channel(uint8_t channel) {
 #if defined(HDZGOGGLE)
     module_set_channel(channel);
 #elif defined(HDZGOGGLE2)
-    if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_EXTERNAL)
+    if (module_bay_is_source())
         module_set_channel(channel);
     else
         rtc6715.set_ch(channel - 1);
@@ -111,7 +101,7 @@ void tune_channel(uint8_t action) {
         return;
     }
 
-    if (g_source_info.source == SOURCE_AV_MODULE && !analog_tunable()) {
+    if (g_source_info.source == SOURCE_AV_MODULE && !analog_channel_tunable()) {
         return;
     }
 
@@ -130,7 +120,7 @@ void tune_channel(uint8_t action) {
             if (g_source_info.source == SOURCE_HDZERO) {
                 channel = g_setting.scan.channel;
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                channel = g_setting.source.analog_channel;
+                channel = analog_channel_fit(g_setting.source.analog_channel);
             } else {
                 return;
             }
@@ -144,7 +134,7 @@ void tune_channel(uint8_t action) {
     if (g_source_info.source == SOURCE_HDZERO)
         channel_num = HDZERO_CHANNEL_NUM;
     else if (g_source_info.source == SOURCE_AV_MODULE)
-        channel_num = ANALOG_CHANNEL_NUM;
+        channel_num = analog_channel_count(); // 8 for a Switch module in the bay
     else
         return;
 

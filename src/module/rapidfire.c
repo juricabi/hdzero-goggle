@@ -91,6 +91,8 @@ static void send_spi(uint8_t *buf, uint8_t len) {
 static void send_band(uint8_t band) {
     // convert standard band index to IMRC band index:
     const uint8_t band_map[] = {5, 4, 3, 1, 2, 6, 7};
+    if (band >= ARRAY_SIZE(band_map))
+        return;
     uint8_t imrcBand = band_map[band];
 
     uint8_t cmd[5];
@@ -143,25 +145,16 @@ static void send_mode(uint8_t mode) {
     }
 }
 
-static char *rapidfire_channels[] = {
-    "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8",
-    "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8",
-    "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8",
-    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8",
-    "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8",
-    "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8",
-    "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8",
-};
-
-char *rapidfire_channel_name(int channel) {
-    return rapidfire_channels[channel];
-}
-
+// 48 channels, A B E F R L: the analog channel setting, its range check at load,
+// the internal receiver and the ELRS VTX channel are all 48 wide (pkendall's
+// table also had the IMRC X band as channels 49-56, which nothing else can hold).
 module_def_t rapidfire_module = {
-    56,
-    rapidfire_channel_name,
-    rapidfire_init,
-    rapidfire_close,
-    rapidfire_set_channel,
-    rapidfire_set_mode,
+    .num_channels = 48,
+    .name = module_standard_channel_name,
+    .init = rapidfire_init,
+    .close = rapidfire_close,
+    .set_channel = rapidfire_set_channel,
+    .set_mode = rapidfire_set_mode,
+    .mode_names = "legacy\nrapidFIRE 1\nrapidFIRE 2",
+    .boot_resend_ms = 0,
 };

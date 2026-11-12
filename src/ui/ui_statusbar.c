@@ -9,6 +9,7 @@
 #include "core/osd.h"
 #include "driver/beep.h"
 #include "lang/language.h"
+#include "module/module.h"
 #include "ui/page_common.h"
 #include "ui/page_playback.h"
 #include "ui/page_storage.h"
@@ -54,6 +55,16 @@ LV_IMG_DECLARE(img_lowBattery);
 LV_IMG_DECLARE(img_sdcard);
 LV_IMG_DECLARE(img_noSdcard);
 LV_IMG_DECLARE(img_wifi);
+
+// "RF: Analog <channel>" with the channel name of the analog source (the bay
+// module's list when it is the source), or without a channel when the goggle does
+// not tune the bay module (type Unknown, Pin Control off, WiFi on).
+static void statusbar_analog_text(char *buf, size_t size) {
+    if (analog_channel_tunable())
+        snprintf(buf, size, "%s: %s %s", _lang("RF"), _lang("Analog"), analog_channel_name(g_setting.source.analog_channel));
+    else
+        snprintf(buf, size, "%s: %s", _lang("RF"), _lang("Analog"));
+}
 
 int statusbar_init(void) {
     char buf[128];
@@ -142,11 +153,7 @@ int statusbar_init(void) {
     } else if (g_source_info.source == SOURCE_AV_IN) {
         snprintf(buf, sizeof(buf), "AV %s", _lang("In"));
     } else if (g_source_info.source == SOURCE_AV_MODULE) {
-#if defined(HDZGOGGLE)
-        sprintf(buf, "%s: %s", _lang("RF"), _lang("Analog"));
-#elif defined(HDZBOXPRO) || defined(HDZGOGGLE2)
-        sprintf(buf, "%s: %s %s", _lang("RF"), _lang("Analog"), channel2str(0, 0, g_setting.source.analog_channel));
-#endif
+        statusbar_analog_text(buf, sizeof(buf));
     } else {
         sprintf(buf, " ");
     }
@@ -220,7 +227,13 @@ void statubar_update(void) {
     static int analog_channel_last = 0;
     static source_t source_last = SOURCE_HDZERO;
     static setting_sources_hdzero_band_t hdzero_band_last = SETTING_SOURCES_HDZERO_BAND_RACEBAND;
-    uint8_t channel_changed = (hdzero_channel_last != g_setting.scan.channel) || (analog_channel_last != g_setting.source.analog_channel);
+    static int analog_list_last = -1;
+    // the analog channel list changes with Source > Analog Module, the Module Bay type
+    // and whether the bay is controlled (Pin Control, WiFi)
+    const int analog_list = (analog_channel_tunable() ? 0x10000 : 0) | (module_bay_is_source() ? 0x100 : 0) | analog_channel_count();
+    uint8_t channel_changed = (hdzero_channel_last != g_setting.scan.channel) || (analog_channel_last != g_setting.source.analog_channel) ||
+                              (analog_list_last != analog_list);
+    analog_list_last = analog_list;
     if (channel_changed || (source_last != g_source_info.source) || (hdzero_band_last != g_setting.source.hdzero_band)) {
         memset(buf, 0, sizeof(buf));
         if (g_source_info.source == SOURCE_HDZERO) {
@@ -230,11 +243,7 @@ void statubar_update(void) {
         } else if (g_source_info.source == SOURCE_AV_IN) {
             snprintf(buf, sizeof(buf), "AV %s", _lang("In"));
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
-#if defined(HDZGOGGLE)
-            sprintf(buf, "%s: %s", _lang("RF"), _lang("Analog"));
-#elif defined(HDZGOGGLE2) || defined(HDZBOXPRO)
-            sprintf(buf, "%s: %s %s", _lang("RF"), _lang("Analog"), channel2str(0, 0, g_setting.source.analog_channel));
-#endif
+            statusbar_analog_text(buf, sizeof(buf));
         } else {
             sprintf(buf, " ");
         }
