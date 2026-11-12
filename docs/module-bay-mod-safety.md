@@ -365,7 +365,8 @@ with 1 kΩ for step 6.
    and to pin 9 (True-D: what is on D11-D13 is not known, (d)). *Stop if* an LED
    (it would defeat 4.7 kΩ), or a resistance below ~10 kΩ to GND or 5 V (a pull
    resistor that would load the goggle pin in every mode).
-5. **Module on a 5 V bench supply** (current limit ~0.5 A; pin 9 +, pin 7/8 −),
+5. **Module on a 5 V bench supply** (current limit ~0.5 A; + on pin 9, − on the
+   ground pin(s) step 3 identified, never on an RSSI pin 8),
    after its boot: each of pins 1-3 open, then with 10 kΩ to GND. ~1 V under load:
    internal pull-up (fine). Unchanged 5 V or 3.3 V: a push-pull driver. 0 V both
    times: a plain input (True-D `BAY:RAPIDFIRE`: expect this). *Stop if* a driver:
