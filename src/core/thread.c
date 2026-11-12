@@ -222,7 +222,7 @@ static void *thread_peripheral(void *ptr) {
                 g_temperature.right = nct_read_temperature(NCT_RIGHT);
 #endif
                 dvr_update_status();
-                hdmi_audio_poll(); // HDMI audio (experimental): returns at once unless enabled
+                hdmi_audio_poll(); // HDMI audio (experimental): returns at once unless in effect this boot
             }
             // detect HDZERO
             record_vtmg_change = HDZERO_detect();
