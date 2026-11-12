@@ -185,6 +185,19 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
     // (HDMI in mutes the line out, unless its audio is played: live_dac)
     const int line_out = (context->line_out || live_dac || playback) && volume > 0;
 
+    // What is connected to the output mixers. While the line out is off (HDMI in, Volume 0, or
+    // the stock boot state: silent until the first switch to an analog source) only what the
+    // recording of the mix needs: the record daemon's AW_MPI_SYS_Init() (SD check, card
+    // insertion, SD repair / format, DVR playback start) switches the line out on at volume 27
+    // behind the mixer's back until the watcher undoes it, and must then find nothing to play
+    // but the idle DAC, as on a stock goggle. (The levels of the sources are kept: they are
+    // connected again with the line out.)
+    const bool connect = line_out || rec_mix;
+    const int out_mic = connect ? mon_mic : 0;
+    const int out_line = connect ? mon_line : 0;
+    const int out_av = connect ? mon_av : 0;
+    const int out_dac = connect && dac_on;
+
     // Every switch the mixer owns, with the value it gets. They are written in two passes, the
     // ones that end up on before the ones that end up off: a path that stays never drops out,
     // and a change (another source, playback on/off, the mix or a direct source on/off) never
@@ -195,15 +208,15 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
         const char *name;
         int on;
     } sw[] = {
-        // output mixers: headphone mix, and the recording with Record What I Hear
-        {"Left Output Mixer MIC1Booststage Switch", mon_mic > 0},
-        {"Right Output Mixer MIC1Booststage Switch", mon_mic > 0},
-        {"Left Output Mixer MIC2Booststage Switch", mon_line > 0},
-        {"Right Output Mixer MIC2Booststage Switch", mon_line > 0},
-        {"Left Output Mixer LINEINL Switch", mon_av > 0},
-        {"Right Output Mixer LINEINR Switch", mon_av > 0},
-        {"Left Output Mixer DACL Switch", dac_on},
-        {"Right Output Mixer DACR Switch", dac_on},
+        // output mixers: headphone mix, and the recording with Record Headphone Mix
+        {"Left Output Mixer MIC1Booststage Switch", out_mic > 0},
+        {"Right Output Mixer MIC1Booststage Switch", out_mic > 0},
+        {"Left Output Mixer MIC2Booststage Switch", out_line > 0},
+        {"Right Output Mixer MIC2Booststage Switch", out_line > 0},
+        {"Left Output Mixer LINEINL Switch", out_av > 0},
+        {"Right Output Mixer LINEINR Switch", out_av > 0},
+        {"Left Output Mixer DACL Switch", out_dac},
+        {"Right Output Mixer DACR Switch", out_dac},
         {"Left Output Mixer DACR Switch", 0},
         {"Right Output Mixer DACL Switch", 0},
         {"DACL Mixer AIF1DA0L Switch", 1},
@@ -231,12 +244,12 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
     // 2. gains: shared ones, and the output mixer gains of the sources that are on
     cset(&cb, "MIC1 boost AMP gain control", v[AUDIO_MIXER_MIC_BOOST]);
     cset(&cb, "MIC2 boost AMP gain control", v[AUDIO_MIXER_LINE_IN_BOOST]);
-    if (mon_mic)
-        cset(&cb, "MIC1_G boost stage output mixer control", mon_mic - 1);
-    if (mon_line)
-        cset(&cb, "MIC2 BST stage to L_R outp mixer gain", mon_line - 1);
-    if (mon_av)
-        cset(&cb, "LINEINL/R to L_R output mixer gain", mon_av - 1);
+    if (out_mic)
+        cset(&cb, "MIC1_G boost stage output mixer control", out_mic - 1);
+    if (out_line)
+        cset(&cb, "MIC2 BST stage to L_R outp mixer gain", out_line - 1);
+    if (out_av)
+        cset(&cb, "LINEINL/R to L_R output mixer gain", out_av - 1);
     cset(&cb, "ADC input gain control", v[AUDIO_MIXER_DVR_LEVEL]);
     cset(&cb, "ADC volume", DIGITAL_VOLUME_OLD);
     cset(&cb, "DAC volume", dac_volume);
@@ -258,11 +271,11 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
     for (size_t i = 0; i < sw_count; i++)
         if (!sw[i].on)
             cset(&cb, sw[i].name, 0);
-    if (!mon_mic)
+    if (!out_mic)
         cset(&cb, "MIC1_G boost stage output mixer control", OUTPUT_GAIN_0DB);
-    if (!mon_line)
+    if (!out_line)
         cset(&cb, "MIC2 BST stage to L_R outp mixer gain", OUTPUT_GAIN_0DB);
-    if (!mon_av)
+    if (!out_av)
         cset(&cb, "LINEINL/R to L_R output mixer gain", OUTPUT_GAIN_0DB);
 
     return cb.len;

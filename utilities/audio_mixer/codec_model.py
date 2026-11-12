@@ -288,6 +288,29 @@ LIBMEDIA_RESET = [
 ]
 
 
+def daemon_restart(state):
+    """The codec after the record daemon (re)starts, or DVR playback opens the player: libmedia_mpp's
+    AW_MPI_SYS_Init() writes LIBMEDIA_RESET over whatever the mixer had set (line out on at 27)."""
+    return apply(state, LIBMEDIA_RESET)
+
+
+def heard(state, dac_active=False):
+    """Sources that reach the headphones (line out pin on, a path from an active input)."""
+    result = evaluate(state, dac_active)
+    return set(result["phones_l"]) | set(result["phones_r"])
+
+
+def recorded_via_mix(state, dac_active=False):
+    """Sources that reach the recording through an output mixer (Record Headphone Mix)."""
+    result = evaluate(state, dac_active)
+    out = set()
+    for sink in ("record_l", "record_r"):
+        for source, routes in result[sink].items():
+            if any(side in ("L", "R") for _, side in routes):
+                out.add(source)
+    return out
+
+
 def driver_defaults(controls, target):
     """Codec state after boot, before any user space: register reset values (switches off, muxes
     at item 0, the -4.5..+6 dB gains at 3, digital volumes 160: as in the dumps for everything

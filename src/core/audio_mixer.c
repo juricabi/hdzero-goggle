@@ -27,12 +27,31 @@
 #endif
 #define AUDIO_MIXER_AMIXER "amixer -q -s < " AUDIO_MIXER_CMD_FILE
 
-// How often the worker compares the codec with the last batch (audio_mixer_codec.c).
+// How often the worker compares the codec with the last batch (audio_mixer_codec.c). A pass reads
+// the controls libmedia_mpp's reset writes (reset_controls[], at most 12 ioctls, no process);
+// every AUDIO_MIXER_WATCH_FULL passes, every control of the batch (about 36 ioctls).
 #ifndef AUDIO_MIXER_WATCH_MS
-#define AUDIO_MIXER_WATCH_MS 2000
+#define AUDIO_MIXER_WATCH_MS 250
 #endif
-// Applies in a row for the same state when the codec does not keep it, before giving up.
+#define AUDIO_MIXER_WATCH_FULL 8
+// After audio_mixer_recheck() (the record daemon was restarted): a full pass this often, this long.
+#define AUDIO_MIXER_RECHECK_MS     (AUDIO_MIXER_WATCH_MS / 5)
+#define AUDIO_MIXER_RECHECK_WINDOW (AUDIO_MIXER_WATCH_MS * 24)
+// Applies in a row for the same state when the codec does not keep it; then it is applied again
+// with a backoff (and when the state changes).
 #define AUDIO_MIXER_WATCH_RETRIES 3
+// Backoff (codec not readable, amixer failing, routing not kept): from this, doubling, up to the max.
+#define AUDIO_MIXER_BACKOFF_MS     (AUDIO_MIXER_WATCH_MS * 8)
+#define AUDIO_MIXER_BACKOFF_MAX_MS (AUDIO_MIXER_WATCH_MS * 240)
+
+// The controls libmedia_mpp's alsaOpenMixer() writes whenever AW_MPI_SYS_Init() runs (record daemon
+// start, DVR playback; found by disassembling libmedia_mpp.so, docs/audio.md): a reset changes one of
+// them, so the quick pass reads only these. utilities/audio_mixer/codec_model.py LIBMEDIA_RESET.
+static const char *const reset_controls[] = {
+    "Lineout Switch", "DACL Mixer AIF1DA0L Switch", "Left Output Mixer DACL Switch", "AIF1 AD0L Mixer ADCL Switch",
+    "LADC input Mixer MIC1 boost Switch", "lineout volume", "DAC volume", "LINEOUTL Mux", "LINEOUTR Mux",
+    "MIC1 boost AMP gain control", "ADC input gain control", "ADC volume",
+};
 
 static const char *const field_key[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_MIC] = "mic",
@@ -69,11 +88,16 @@ static pthread_cond_t done_cond;                                 // audio_mixer_
 static audio_mixer_settings_t mixer;                             // current values
 static audio_mixer_settings_t saved;                             // values in setting.ini (UI)
 static audio_mixer_context_t context = {.line_out = false, .playback = false, .live_dac = false};
-static unsigned requested; // apply generations: requested by the UI ...
-static unsigned applied;   // ... and in the codec
+static unsigned requested; // apply generations: requested by the UI or the watcher ...
+static unsigned applied;   // ... and written
+static unsigned ui_requests; // requests from outside the worker: a new state, retried afresh
 static bool worker_running;
+static bool line_out_by_source; // audio_mixer_set_line_out() was called (a source decided)
+static uint64_t recheck_until_ms; // audio_mixer_recheck(): full passes, often, until then
 static char last_batch[4096]; // what the codec should have (batch_mutex)
 static bool have_batch;
+static bool batch_failed; // amixer did not run or failed: the codec may not have last_batch
+static unsigned codec_reads; // controls read by the watcher (host test: the cost of a pass)
 
 static void start_worker(void);
 
@@ -143,9 +167,11 @@ void audio_mixer_set(audio_mixer_field_t field, int value) {
     const int old = mixer.value[field];
     mixer.value[field] = clamp_field(field, value);
     if (is_headphone_level(field) && mixer.value[field] != old && !mixer.value[AUDIO_MIXER_PHONES_AT_BOOT]) {
-        // the pilot sets the headphones up: what the page shows is heard, now and from every boot
+        // the pilot sets the headphones up: what the page shows is heard, now and from every boot;
+        // a line out that a source muted (HDMI in) stays muted
         mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] = 1;
-        context.line_out = true;
+        if (!line_out_by_source)
+            context.line_out = true;
     }
     pthread_mutex_unlock(&mixer_mutex);
 }
@@ -186,18 +212,32 @@ static void write_batch(const audio_mixer_settings_t *settings, const audio_mixe
          v[AUDIO_MIXER_DVR_LEVEL], v[AUDIO_MIXER_RX_AUDIO],
          ctx->line_out, ctx->playback, ctx->live_dac);
 
+    // what the codec should have from now on, whatever happens below: the watcher compares the
+    // codec with it, and applies again (with a backoff) when amixer did not get it there
+    if (len < sizeof(cmd)) {
+        memcpy(last_batch, cmd, len + 1);
+        have_batch = true;
+    }
+    bool ok = false;
     FILE *fp = fopen(AUDIO_MIXER_CMD_FILE, "w");
     if (!fp || len >= sizeof(cmd)) {
         LOGE("audio mixer: cannot write %s", AUDIO_MIXER_CMD_FILE);
         if (fp)
             fclose(fp);
     } else {
-        fwrite(cmd, 1, len, fp);
-        fclose(fp);
-        system_exec(AUDIO_MIXER_AMIXER);
-        memcpy(last_batch, cmd, len + 1);
-        have_batch = true;
+        const bool written = fwrite(cmd, 1, len, fp) == len;
+        if (fclose(fp) != 0 || !written) {
+            LOGE("audio mixer: cannot write %s", AUDIO_MIXER_CMD_FILE);
+        } else {
+            const int status = system_exec(AUDIO_MIXER_AMIXER);
+            ok = status == 0;
+            if (!ok)
+                LOGE("audio mixer: amixer failed (status %d): the codec may not have this routing", status);
+        }
     }
+    if (ok && batch_failed)
+        LOGI("audio mixer: amixer works again");
+    batch_failed = !ok;
 
     pthread_mutex_unlock(&batch_mutex);
 }
@@ -229,9 +269,16 @@ bool audio_mixer_batch_value(const char *batch, const char *name, int *value) {
     return false;
 }
 
-// Does the codec still have every value of the last batch? -1: cannot read the codec
-// (emulator, no ALSA device), the worker then stops watching.
-static int codec_has_last_batch(void) {
+static bool is_reset_control(const char *name) {
+    for (size_t i = 0; i < sizeof(reset_controls) / sizeof(reset_controls[0]); i++)
+        if (strcmp(reset_controls[i], name) == 0)
+            return true;
+    return false;
+}
+
+// Does the codec still have the values of the last batch (full: every control; otherwise the ones
+// a libmedia_mpp reset writes)? -1: the codec cannot be read (emulator, no ALSA device).
+static int codec_has_last_batch(bool full) {
     int result = 1;
 
     pthread_mutex_lock(&batch_mutex);
@@ -240,6 +287,9 @@ static int codec_has_last_batch(void) {
         int want, have;
         if (sscanf(line, "cset name='%63[^']' %d", name, &want) != 2)
             continue;
+        if (!full && !is_reset_control(name))
+            continue;
+        codec_reads++;
         if (audio_mixer_codec_read(name, &have) != 0) {
             result = -1;
             break;
@@ -255,51 +305,101 @@ static int codec_has_last_batch(void) {
     return result;
 }
 
+static uint64_t mono_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+// Wait on cond (mixer_mutex held) at most ms; ETIMEDOUT when the time is up.
+static int wait_ms(pthread_cond_t *cond, unsigned ms) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_MONOTONIC, &deadline);
+    deadline.tv_sec += ms / 1000;
+    deadline.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    return pthread_cond_timedwait(cond, &mixer_mutex, &deadline);
+}
+
+static unsigned next_backoff(unsigned ms) {
+    if (ms < AUDIO_MIXER_BACKOFF_MS)
+        return AUDIO_MIXER_BACKOFF_MS;
+    return ms >= AUDIO_MIXER_BACKOFF_MAX_MS / 2 ? AUDIO_MIXER_BACKOFF_MAX_MS : 2 * ms;
+}
+
+static bool recheck_now; // audio_mixer_recheck(): a full pass at once (mixer_mutex)
+
 static void *worker_thread(void *arg) {
     (void)arg;
-    bool watching = true;
-    int retries = 0;
+    unsigned pass = 0;       // quick passes since the last full one
+    unsigned backoff = 0;    // ms between passes while something fails; 0: AUDIO_MIXER_WATCH_MS
+    int retries = 0;         // applies in a row by the watcher for the same state
+    unsigned seen_ui = 0;    // ui_requests at the last apply
+    bool unreadable = false; // the codec could not be read (logged once)
 
     pthread_mutex_lock(&mixer_mutex);
     for (;;) {
         while (applied == requested) {
-            if (!watching) {
-                pthread_cond_wait(&work_cond, &mixer_mutex);
-                continue;
+            // Nothing to do: look at the codec now and then. The record daemon's AW_MPI_SYS_Init
+            // (boot, SD check, card insertion, SD repair / format, DVR playback) resets part of the
+            // mixer whenever it runs; whatever the timing, it is undone here.
+            const bool rechecking = mono_ms() < recheck_until_ms;
+            if (!recheck_now) {
+                const unsigned period = backoff ? backoff : (rechecking ? AUDIO_MIXER_RECHECK_MS : AUDIO_MIXER_WATCH_MS);
+                if (wait_ms(&work_cond, period) != ETIMEDOUT || applied != requested)
+                    continue;
             }
-
-            // Nothing to do: look at the codec now and then. The record daemon's
-            // AW_MPI_SYS_Init (boot, SD check/format, DVR playback) resets part of
-            // the mixer whenever it runs; whatever the timing, it is undone here.
-            struct timespec deadline;
-            clock_gettime(CLOCK_MONOTONIC, &deadline);
-            deadline.tv_sec += AUDIO_MIXER_WATCH_MS / 1000;
-            deadline.tv_nsec += (long)(AUDIO_MIXER_WATCH_MS % 1000) * 1000000L;
-            if (deadline.tv_nsec >= 1000000000L) {
-                deadline.tv_sec++;
-                deadline.tv_nsec -= 1000000000L;
-            }
-            if (pthread_cond_timedwait(&work_cond, &mixer_mutex, &deadline) != ETIMEDOUT || applied != requested)
-                continue;
+            const bool full = recheck_now || rechecking || backoff || ++pass >= AUDIO_MIXER_WATCH_FULL;
+            if (full)
+                pass = 0;
+            recheck_now = false;
 
             pthread_mutex_unlock(&mixer_mutex);
-            const int has = codec_has_last_batch();
+            const int has = codec_has_last_batch(full);
             pthread_mutex_lock(&mixer_mutex);
+            pthread_mutex_lock(&batch_mutex);
+            const bool failed = batch_failed;
+            pthread_mutex_unlock(&batch_mutex);
+            if (applied != requested)
+                continue; // a new state came meanwhile
 
-            if (has < 0) {
-                watching = false;
-            } else if (has) {
-                retries = 0;
-            } else if (applied == requested && retries < AUDIO_MIXER_WATCH_RETRIES) {
-                retries++;
+            if (has == 0 || (has < 0 && failed)) {
+                // someone else changed the codec, or amixer did not get the batch there: again,
+                // at once a few times, then with a backoff
+                if (retries < AUDIO_MIXER_WATCH_RETRIES) {
+                    retries++;
+                    backoff = 0;
+                } else {
+                    if (retries == AUDIO_MIXER_WATCH_RETRIES)
+                        LOGE("audio mixer: the codec does not keep the routing, applying it again with a backoff (up to %u s)",
+                             AUDIO_MIXER_BACKOFF_MAX_MS / 1000);
+                    retries = AUDIO_MIXER_WATCH_RETRIES + 1;
+                    backoff = next_backoff(backoff);
+                }
                 requested++;
-            } else if (applied == requested && retries == AUDIO_MIXER_WATCH_RETRIES) {
-                retries++;
-                LOGE("audio mixer: the codec does not keep the routing, not applying it again until it changes");
+            } else if (has < 0) {
+                if (!unreadable)
+                    LOGE("audio mixer: cannot read the codec controls, trying again with a backoff (up to %u s)",
+                         AUDIO_MIXER_BACKOFF_MAX_MS / 1000);
+                unreadable = true;
+                backoff = next_backoff(backoff);
+            } else {
+                if (unreadable || retries > AUDIO_MIXER_WATCH_RETRIES)
+                    LOGI("audio mixer: the codec has the routing (watching every %u ms again)", AUDIO_MIXER_WATCH_MS);
+                unreadable = false;
+                retries = 0;
+                backoff = 0;
             }
         }
-        if (retries > AUDIO_MIXER_WATCH_RETRIES)
-            retries = 0; // a new state: watch it again
+        if (ui_requests != seen_ui) {
+            // a new state: watched afresh
+            seen_ui = ui_requests;
+            retries = 0;
+            backoff = 0;
+        }
         apply_latest();
     }
     return NULL;
@@ -328,6 +428,7 @@ static void start_worker(void) {
 static unsigned request_apply(void) {
     pthread_mutex_lock(&mixer_mutex);
     const unsigned generation = ++requested;
+    ui_requests++;
     if (worker_running)
         pthread_cond_signal(&work_cond);
     else
@@ -369,10 +470,30 @@ void audio_mixer_set_line_out(bool enable) {
     pthread_mutex_lock(&mixer_mutex);
     const bool changed = context.line_out != enable;
     context.line_out = enable;
+    line_out_by_source = true;
     pthread_mutex_unlock(&mixer_mutex);
 
     if (changed)
         audio_mixer_apply();
+}
+
+void audio_mixer_recheck(void) {
+    pthread_mutex_lock(&mixer_mutex);
+    recheck_until_ms = mono_ms() + AUDIO_MIXER_RECHECK_WINDOW;
+    recheck_now = true;
+    pthread_cond_signal(&work_cond);
+    pthread_mutex_unlock(&mixer_mutex);
+}
+
+unsigned audio_mixer_codec_reads(void) {
+    pthread_mutex_lock(&batch_mutex);
+    const unsigned n = codec_reads;
+    pthread_mutex_unlock(&batch_mutex);
+    return n;
+}
+
+bool audio_mixer_is_reset_control(const char *name) {
+    return is_reset_control(name);
 }
 
 void audio_mixer_set_live_dac(bool on) {

@@ -9,6 +9,11 @@
  *   stuck <name>=<value>   the codec does not keep that control: it is back at <value>
  *                          after every batch
  *   amixer_delay <ms>      every amixer run takes that long (Goggle 2 PA-off sleep)
+ *   amixer_fail <n>        the next n amixer runs fail (exit status 1, the codec unchanged)
+ *   codec_fail <0|1>       reading the codec's controls fails (no ALSA device, emulator)
+ *   reads                  prints READS <controls read by the watcher so far> <amixer runs so far>
+ *   reset_control <name>   prints RESETCTL <0|1>: is it read by the watcher's quick pass
+ *   recheck                audio_mixer_recheck() (the record daemon is being restarted)
  *   init | apply | save | wait | rx | dump | unsaved | mark (prints MARK)
  *   set <key> <value> | get <key> | line_out <0|1> | playback <0|1> | live_dac <0|1>
  *   inmix <rec key>        is that source recorded through the headphone mix (the page's marker)
@@ -36,7 +41,10 @@ const char *harness_setting_ini = "setting.ini";
 static pthread_mutex_t out_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t codec_mutex = PTHREAD_MUTEX_INITIALIZER;
 static unsigned amixer_delay_ms;
+static int amixer_failures; // the next n runs fail
+static int codec_unreadable;
 static int batch_count;
+static int amixer_runs;
 static char stuck_name[64];
 static int stuck_value;
 
@@ -62,7 +70,7 @@ static void codec_set(const char *name, int value) {
 int audio_mixer_codec_read(const char *name, int *value) {
     int result = -1;
     pthread_mutex_lock(&codec_mutex);
-    for (int i = 0; i < codec_count; i++) {
+    for (int i = 0; i < codec_count && !codec_unreadable; i++) {
         if (strcmp(codec[i].name, name) == 0) {
             *value = codec[i].value;
             result = 0;
@@ -105,6 +113,16 @@ int system_exec(const char *command) {
         usleep(amixer_delay_ms * 1000);
 
     pthread_mutex_lock(&codec_mutex);
+    amixer_runs++;
+    if (amixer_failures > 0) {
+        amixer_failures--;
+        pthread_mutex_unlock(&codec_mutex);
+        pthread_mutex_lock(&out_mutex);
+        printf("AMIXER_FAILED\n");
+        fflush(stdout);
+        pthread_mutex_unlock(&out_mutex);
+        return 1 << 8; // system(): exit status 1
+    }
     for (char *line = batch; line && *line;) {
         char *next = strchr(line, '\n');
         char name[64];
@@ -172,6 +190,23 @@ int main(void) {
             pthread_mutex_unlock(&codec_mutex);
         } else if (sscanf(line, "amixer_delay %d", &value) == 1) {
             amixer_delay_ms = (unsigned)value;
+        } else if (sscanf(line, "amixer_fail %d", &value) == 1) {
+            pthread_mutex_lock(&codec_mutex);
+            amixer_failures = value;
+            pthread_mutex_unlock(&codec_mutex);
+        } else if (sscanf(line, "codec_fail %d", &value) == 1) {
+            pthread_mutex_lock(&codec_mutex);
+            codec_unreadable = value;
+            pthread_mutex_unlock(&codec_mutex);
+        } else if (strcmp(line, "reads") == 0) {
+            pthread_mutex_lock(&codec_mutex);
+            const int runs = amixer_runs;
+            pthread_mutex_unlock(&codec_mutex);
+            out("READS %u %d\n", audio_mixer_codec_reads(), runs);
+        } else if (strncmp(line, "reset_control ", 14) == 0) {
+            out("RESETCTL %d\n", audio_mixer_is_reset_control(line + 14));
+        } else if (strcmp(line, "recheck") == 0) {
+            audio_mixer_recheck();
         } else if (strcmp(line, "init") == 0) {
             audio_mixer_init();
         } else if (strcmp(line, "apply") == 0) {

@@ -50,7 +50,7 @@ MUTANTS = [
     ("boot: headphones live from boot when untouched", M, [
         ("context.line_out = mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] != 0;", "context.line_out = true;")]),
     ("boot: a headphone level change does not make them live", M, [
-        ("        mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] = 1;\n        context.line_out = true;\n",
+        ("        mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] = 1;\n        if (!line_out_by_source)\n            context.line_out = true;\n",
          "        mixer.value[AUDIO_MIXER_PHONES_AT_BOOT] = 1;\n")]),
     ("boot: any change makes the headphones live", M, [
         ("    return field == AUDIO_MIXER_HEADPHONES || field == AUDIO_MIXER_MIC",
@@ -89,8 +89,45 @@ MUTANTS = [
          "    mixer.value[field] = clamp_field(field, value);\n    ini_putl(AUDIO_MIXER_SECTION, field_key[field], mixer.value[field], SETTING_INI);\n    if (is_headphone_level")]),
     ("apply in the caller's thread", M, [("    if (worker_running)\n        pthread_cond_signal(&work_cond);",
                                           "    if (0)\n        pthread_cond_signal(&work_cond);")]),
-    ("no watcher", M, [("const int has = codec_has_last_batch();", "const int has = codec_has_last_batch() >= 0;")]),
-    ("watcher never gives up", M, [("#define AUDIO_MIXER_WATCH_RETRIES 3", "#define AUDIO_MIXER_WATCH_RETRIES 1000")]),
+    ("no watcher", M, [("const int has = codec_has_last_batch(full);", "const int has = codec_has_last_batch(full) >= 0;")]),
+    ("watcher: no backoff after the retries", M, [("#define AUDIO_MIXER_WATCH_RETRIES 3", "#define AUDIO_MIXER_WATCH_RETRIES 1000")]),
+    # the four of the final review that survived (x3, x4, x5, x7)
+    ("review x3: ADC volume never written", R, [('    cset(&cb, "ADC volume", DIGITAL_VOLUME_OLD);\n', "")]),
+    ("review x4: HDMI level is not a headphone level", M, [
+        ("field == AUDIO_MIXER_AV || field == AUDIO_MIXER_HDMI;", "field == AUDIO_MIXER_AV;")]),
+    ("review x5: unused output-mixer gains not reset to 0 dB", R, [
+        ('    if (!out_mic)\n        cset(&cb, "MIC1_G boost stage output mixer control", OUTPUT_GAIN_0DB);\n', "")]),
+    ("review x7: set() does not clamp", M, [
+        ("    mixer.value[field] = clamp_field(field, value);\n    if (is_headphone_level",
+         "    mixer.value[field] = (uint8_t)value;\n    if (is_headphone_level")]),
+    # review defect 2: the output mixers while the line out is off
+    ("line out off: sources stay in the output mixers", R, [
+        ("const bool connect = line_out || rec_mix;", "const bool connect = true;")]),
+    ("line out off: the DAC stays in the output mixers", R, [
+        ("const int out_dac = connect && dac_on;", "const int out_dac = dac_on;")]),
+    ("line out off: the recorded mix loses its sources", R, [
+        ("const bool connect = line_out || rec_mix;", "const bool connect = line_out;")]),
+    # review defect 9
+    ("HDMI in: a level change switches the line out on", M, [
+        ("        if (!line_out_by_source)\n            context.line_out = true;", "        context.line_out = true;")]),
+    # review defect 7 and the 250 ms watcher
+    ("watcher: quick pass reads every control", M, [
+        ("        if (!full && !is_reset_control(name))\n            continue;\n", "")]),
+    ("watcher: no full pass", M, [
+        ("const bool full = recheck_now || rechecking || backoff || ++pass >= AUDIO_MIXER_WATCH_FULL;",
+         "const bool full = recheck_now || rechecking || backoff;")]),
+    ("watcher: quick pass misses the line out volume", M, [('"MIC1 boost AMP gain control", "ADC input gain control", "ADC volume",',
+                                                            '"MIC1 boost AMP gain control", "ADC input gain control", "ADC volume", "x",'),
+                                                           ('"LADC input Mixer MIC1 boost Switch", "lineout volume", "DAC volume",',
+                                                            '"LADC input Mixer MIC1 boost Switch", "DAC volume",')]),
+    ("watcher: recheck ignored", M, [("    recheck_now = true;\n", "")]),
+    ("watcher: stops for good when the codec cannot be read", M, [
+        ("                unreadable = true;\n                backoff = next_backoff(backoff);",
+         "                unreadable = true;\n                backoff = 1000000;")]),
+    ("watcher: no backoff when the codec cannot be read", M, [
+        ("                unreadable = true;\n                backoff = next_backoff(backoff);",
+         "                unreadable = true;")]),
+    ("amixer: exit status ignored", M, [("            ok = status == 0;", "            ok = true;")]),
 ]
 
 

@@ -70,7 +70,8 @@ int audio_mixer_get(audio_mixer_field_t field);
 int audio_mixer_max(audio_mixer_field_t field);
 // Clamp and store one value (memory only): audio_mixer_apply() sends it to the codec,
 // audio_mixer_save() writes it to setting.ini. Changing a headphone level (Volume, Mic, Line In,
-// A/V In, HDMI In) also makes the headphones live now and from every boot (AUDIO_MIXER_PHONES_AT_BOOT).
+// A/V In, HDMI In) also makes the headphones live from every boot (AUDIO_MIXER_PHONES_AT_BOOT), and
+// now, unless a source has muted the line out (HDMI in).
 void audio_mixer_set(audio_mixer_field_t field, int value);
 // Write the values changed since the last save to setting.ini. Call it from the UI, which
 // writes the other settings (under lvgl_mutex), never from the worker.
@@ -82,14 +83,25 @@ bool audio_mixer_unsaved(void);
 void audio_mixer_apply(void);
 // Same, but wait (at most timeout_ms) until the codec has the current state.
 bool audio_mixer_apply_wait(unsigned timeout_ms);
-// While idle, the worker compares the codec with the last batch every 2 s (a few ioctls,
-// no process) and applies again when it differs: libmedia_mpp's AW_MPI_SYS_Init() resets
-// part of the mixer whenever the record daemon starts (boot, SD check, SD format) and
-// when a DVR file is played, at a time the app does not know.
+// While idle, the worker compares the codec with the last batch every 250 ms (the 12 controls a
+// libmedia_mpp reset writes: 12 ioctls, no process; every 2 s all of them) and applies again when
+// it differs: libmedia_mpp's AW_MPI_SYS_Init() resets part of the mixer whenever the record daemon
+// starts (boot, SD check, card insertion, SD repair / format) and when a DVR file is played, at a
+// time the app does not know. A codec that cannot be read, an amixer that fails, or a codec that
+// does not keep a value: logged, tried again with a backoff up to 60 s, never given up.
+
+// The record daemon is (re)started now or within a few seconds (Storage page scripts): compare the
+// whole codec at once and every 50 ms for the next 6 s.
+void audio_mixer_recheck(void);
+// Host test: codec controls read by the watcher so far, and the controls of the quick pass.
+unsigned audio_mixer_codec_reads(void);
+bool audio_mixer_is_reset_control(const char *name);
 
 // Line out allowed (an analog source) or muted (HDMI in), as the old dvr_enable_line_out(). At
 // boot it is muted until the first call with true, like the stock firmware that left the record
-// daemon's (silent) mixer in place until then, unless AUDIO_MIXER_PHONES_AT_BOOT is set.
+// daemon's (silent) mixer in place until then, unless AUDIO_MIXER_PHONES_AT_BOOT is set. While it
+// is off, only what Record Headphone Mix records stays in the output mixers (a record daemon
+// reset that switches the line out on then has nothing to play, as on a stock goggle).
 void audio_mixer_set_line_out(bool enable);
 // HDMI-in audio (src/core/hdmi_audio.c, only with [hdmi] audio_in=1): a live digital source plays
 // into the DAC. Its level is AUDIO_MIXER_HDMI; unlike playback it is mixed with the other live
