@@ -205,8 +205,13 @@ part_out() {
     it_status
     app_cont
 
-    # PH1-PH3 -> function 3 (I2S0 BCLK/LRCK/DOUT); rc.sh leaves PH1=uart4, PH2/PH3=off
-    reg_wr 0x0300B0FC $(((ph & ~0xfff0) | 0x3330))
+    # PH1-PH3 -> function 3 (I2S0 BCLK/LRCK/DOUT); rc.sh leaves PH1=uart4, PH2/PH3=off.
+    # Only if PH0 and PH4 (HDZero RX/TX reset GPIOs) read back as outputs, i.e. the read is sane.
+    if [ $((ph & 0xf)) -eq 1 ] && [ $(((ph >> 16) & 0xf)) -eq 1 ]; then
+        reg_wr 0x0300B0FC $(((ph & ~0xfff0) | 0x3330))
+    else
+        log "PH_CFG0 not as expected (PH0/PH4 not outputs), pin mux left alone"
+    fi
     log "PH_CFG0 now $(reg_rd 0x0300B0FC)"
 
     # 15 s of tone: 192-byte period doubled 14 times = 16.4 s
