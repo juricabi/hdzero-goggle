@@ -9,8 +9,9 @@
 # app runs; reads that do not repeat or are implausible lead to no write; FIFO registers
 # and IT66121 reg 0x17 are never read; only commands of the goggle's busybox are used.
 # Usage: sh utilities/probe/test/run_tests.sh   (QUICK=1: fewer kill points; ONLY="test probe bay";
-#   SHELLS="dash busybox_sh")
-#   ROOTFS=<extracted goggle rootfs>: also check every command against that rootfs.
+#   SHELLS="dash busybox_sh goggle_ash")
+#   ROOTFS=<extracted goggle rootfs>: also check every command against that rootfs, take the
+#   applet list from it, and (with qemu-arm) run everything under the goggle's own ash too.
 #   KIT_DIR=<dir>: test another copy of the scripts (test/mutants.sh uses it).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -245,7 +246,13 @@ show() {
     tail -25 "$1" 2> /dev/null
 }
 
-SHELLS=${SHELLS:-"dash busybox_sh"}
+# shells: dash, the host's busybox ash, and with ROOTFS + qemu-arm the goggle's own busybox
+# 1.27 ash (its builtins differ: no "command", no printf)
+GOGGLE_ASH=""
+if [ -n "${ROOTFS:-}" ] && [ -x "$ROOTFS/bin/busybox" ] && command -v qemu-arm > /dev/null 2>&1; then
+    GOGGLE_ASH="qemu-arm -L $ROOTFS $ROOTFS/bin/busybox sh"
+fi
+SHELLS=${SHELLS:-"dash busybox_sh${GOGGLE_ASH:+ goggle_ash}"}
 GROUPS_=${ONLY:-"test probe bay"}
 stopped_now() { # 0 if the fake app is stopped right now
     for p in $(app_pids); do [ "$(awk '{ print $3 }' "/proc/$p/stat" 2> /dev/null)" = T ] && return 0; done
@@ -259,6 +266,8 @@ dirs_released() {
 nwrites() { [ "$(grep -c . "$M/soc_writes")" -eq "$1" ]; }
 for shn in $SHELLS; do
     sh=$(echo "$shn" | tr '_' ' ')
+    lbl=$shn
+    [ "$shn" = goggle_ash ] && sh=$GOGGLE_ASH && lbl="goggle-ash(qemu)"
     command -v "${sh%% *}" > /dev/null 2>&1 || {
         echo "SKIP $sh"
         continue
@@ -284,7 +293,7 @@ for shn in $SHELLS; do
         need one-app-running apps_ok 1
         need tone-removed test ! -e "$R/tmp/hdmi_tone.raw"
         need helpers-gone gone hdmi_audio_test.sh
-        verdict "$sh: hdmi_audio_test ssh: both parts, everything restored, app paused only around access" "$o"
+        verdict "$lbl: hdmi_audio_test ssh: both parts, everything restored, app paused only around access" "$o"
         stop_apps
 
         # 2. the latch returns another register for one of the three reads: no write
@@ -297,7 +306,7 @@ for shn in $SHELLS; do
         need all-back all_back
         need no-violation no_viol
         need one-app-running apps_ok 1
-        verdict "$sh: hdmi_audio_test: an interleaved latch access is detected, PH_CFG0 not written" "$o"
+        verdict "$lbl: hdmi_audio_test: an interleaved latch access is detected, PH_CFG0 not written" "$o"
         stop_apps
         # 3. race during the verify read after the write: the restore still puts PH1-PH3 back
         setup "$T"
@@ -308,7 +317,7 @@ for shn in $SHELLS; do
         need all-back all_back
         need no-violation no_viol
         need one-app-running apps_ok 1
-        verdict "$sh: hdmi_audio_test: race on the verify read, PH_CFG0 still restored" "$o"
+        verdict "$lbl: hdmi_audio_test: race on the verify read, PH_CFG0 still restored" "$o"
         stop_apps
         # 4. a latch that always answers with something else (the old stub): nothing written
         setup "$T"
@@ -320,7 +329,7 @@ for shn in $SHELLS; do
         need ctl-left grep -q "I2S0 CTL read not trusted" "$o"
         need no-violation no_viol
         need one-app-running apps_ok 1
-        verdict "$sh: hdmi_audio_test: implausible reads (wrong register) lead to no SoC write" "$o"
+        verdict "$lbl: hdmi_audio_test: implausible reads (wrong register) lead to no SoC write" "$o"
         stop_apps
         # 5. an aww of the app keeps running: no window, nothing written, app resumed
         setup "$T"
@@ -333,7 +342,7 @@ for shn in $SHELLS; do
         need logged grep -q "did not settle" "$o"
         need no-violation no_viol
         need one-app-running apps_ok 1
-        verdict "$sh: hdmi_audio_test: aww running, nothing touched, app resumed" "$o"
+        verdict "$lbl: hdmi_audio_test: aww running, nothing touched, app resumed" "$o"
         stop_apps
         # 6. SD-card mode: the app is started first, exactly once
         setup "$T"
@@ -344,7 +353,7 @@ for shn in $SHELLS; do
         need no-violation no_viol
         need mode grep -q "mode sd" "$o"
         need ph-restored grep -q "PH_CFG0 restored: 0x35517751" "$o"
-        verdict "$sh: hdmi_audio_test sd: app started once, everything restored" "$o"
+        verdict "$lbl: hdmi_audio_test sd: app started once, everything restored" "$o"
         stop_apps
         # 7. SD-card mode, the SD card does not take the report: /tmp instead, the app starts
         setup "$T"
@@ -352,7 +361,7 @@ for shn in $SHELLS; do
         need one-app-running apps_ok 1
         need report-in-tmp test -s "$R/tmp/hdmi_audio_test_1.txt"
         need all-back all_back
-        verdict "$sh: hdmi_audio_test sd: report not writable on the SD card, app still started" "$R/tmp/hdmi_audio_test_1.txt"
+        verdict "$lbl: hdmi_audio_test sd: report not writable on the SD card, app still started" "$R/tmp/hdmi_audio_test_1.txt"
         stop_apps
 
         # 8. killed at many points (TERM / INT / HUP): app resumed, everything back
@@ -386,7 +395,7 @@ for shn in $SHELLS; do
             fi
             stop_apps
         done
-        if [ "$nf" = 0 ]; then ok "$sh: hdmi_audio_test killed at $nk points ($ns while the app was stopped): app running, all registers back"; else bad "$sh: hdmi_audio_test kill: $nf of $nk"; fi
+        if [ "$nf" = 0 ]; then ok "$lbl: hdmi_audio_test killed at $nk points ($ns while the app was stopped): app running, all registers back"; else bad "$lbl: hdmi_audio_test kill: $nf of $nk"; fi
         # 9. SIGKILL (no trap possible) while the app is stopped: the guardian resumes it
         setup "$T"
         start_fake_app
@@ -401,7 +410,7 @@ for shn in $SHELLS; do
         sleep 2.5
         need caught-stopped test "$i" -lt 200
         need one-app-running apps_ok 1
-        verdict "$sh: hdmi_audio_test SIGKILLed while the app is stopped: the guardian resumed it" /dev/null
+        verdict "$lbl: hdmi_audio_test SIGKILLed while the app is stopped: the guardian resumed it" /dev/null
         stop_apps
         pkill -f "$KIT/hdmi_audio_test.sh" 2> /dev/null
         ;;
@@ -429,7 +438,7 @@ for shn in $SHELLS; do
             need one-app-running apps_ok 1
             need no-mount-in-test sh -c "! grep -q mount '$M/mounts' 2> /dev/null"
             need helpers-gone gone hdmi_audio_probe.sh
-            verdict "$sh: probe $md: app runs once, read-only (no SoC write, no FIFO, no 0x17), banks back" "$o"
+            verdict "$lbl: probe $md: app runs once, read-only (no SoC write, no FIFO, no 0x17), banks back" "$o"
             stop_apps
         done
         # an amixer that hangs and ignores TERM: stopped by the time limit, app started
@@ -439,7 +448,7 @@ for shn in $SHELLS; do
         need stopped grep -q "stopped after 1 s: amixer -c 0 contents" "$o"
         need part2 grep -q "part 2" "$o"
         need one-app-running apps_ok 1
-        verdict "$sh: probe: a hanging command is stopped by its time limit" "$o"
+        verdict "$lbl: probe: a hanging command is stopped by its time limit" "$o"
         stop_apps
         pkill -f "amixer -c 0 contents" 2> /dev/null
         # the whole part 1 hangs: the guardian ends it and the app starts
@@ -447,7 +456,7 @@ for shn in $SHELLS; do
         STUB_HANG_CARD=0 PROBE_TL=60 PROBE_GUARD=3 env_bg "$sh" sd hdmi_audio_probe.sh
         sleep 9
         need one-app-running apps_ok 1
-        verdict "$sh: probe sd: part 1 hangs, the guardian ends it, app started once" "$R/mnt/extsd/hdmi_audio_probe_1.txt"
+        verdict "$lbl: probe sd: part 1 hangs, the guardian ends it, app started once" "$R/mnt/extsd/hdmi_audio_probe_1.txt"
         kill "$BGPID" 2> /dev/null
         wait "$BGPID" 2> /dev/null
         stop_apps
@@ -460,7 +469,7 @@ for shn in $SHELLS; do
         wait "$BGPID" 2> /dev/null
         sleep 2.5
         need one-app-running apps_ok 1
-        verdict "$sh: probe sd SIGKILLed in part 1: the guardian started the app" "$R/mnt/extsd/hdmi_audio_probe_1.txt"
+        verdict "$lbl: probe sd SIGKILLed in part 1: the guardian started the app" "$R/mnt/extsd/hdmi_audio_probe_1.txt"
         stop_apps
         pkill -f "$KIT/hdmi_audio_probe.sh" 2> /dev/null
         # killed in SSH mode at many points
@@ -490,7 +499,7 @@ for shn in $SHELLS; do
             fi
             stop_apps
         done
-        if [ "$nf" = 0 ]; then ok "$sh: probe killed at $nk points ($ns while the app was stopped): app running, bank registers back"; else bad "$sh: probe kill: $nf of $nk"; fi
+        if [ "$nf" = 0 ]; then ok "$lbl: probe killed at $nk points ($ns while the app was stopped): app running, bank registers back"; else bad "$lbl: probe kill: $nf of $nk"; fi
         ;;
     esac
 
@@ -507,7 +516,7 @@ for shn in $SHELLS; do
         need no-violation no_viol
         need where grep -q "goggle-side connector" "$o"
         need voltage grep -q "3.3 V or 1.8 V" "$o"
-        verdict "$sh: bay sd: runs on a stock goggle, pins and PG_CFG0 back, app started once" "$o"
+        verdict "$lbl: bay sd: runs on a stock goggle, pins and PG_CFG0 back, app started once" "$o"
         stop_apps
         # SSH mode with the app running: refuses, starts nothing (no second app), stops nothing
         setup "$T"
@@ -517,7 +526,7 @@ for shn in $SHELLS; do
         need refused grep -q "REFUSED: the goggle app is running" "$o"
         need one-app-running apps_ok 1
         need nothing-driven test ! -s "$R/sys/class/gpio/gpio192/direction"
-        verdict "$sh: bay ssh with the app running: refused, no second app" "$o"
+        verdict "$lbl: bay ssh with the app running: refused, no second app" "$o"
         stop_apps
         # SSH mode without an app (stopped by hand): runs, and does not start the app
         setup "$T"
@@ -527,7 +536,7 @@ for shn in $SHELLS; do
         need released dirs_released
         need all-back all_back
         need no-app-started apps_ok 0
-        verdict "$sh: bay ssh without the app: runs, puts everything back, starts no app" "$o"
+        verdict "$lbl: bay ssh without the app: runs, puts everything back, starts no app" "$o"
         stop_apps
         # SD-card mode but an app runs already: refused, still one app
         setup "$T"
@@ -536,7 +545,7 @@ for shn in $SHELLS; do
         o="$R/mnt/extsd/bay_gpio_1.txt"
         need refused grep -q "REFUSED" "$o"
         need one-app-running apps_ok 1
-        verdict "$sh: bay sd with an app running: refused, one app" "$o"
+        verdict "$lbl: bay sd with an app running: refused, one app" "$o"
         stop_apps
         # Wi-Fi loaded / PG0-2 in use (sdc1 function) / GPIO requested: refused, nothing driven
         for case_ in wifi mux gpio; do
@@ -552,7 +561,7 @@ for shn in $SHELLS; do
             need nothing-driven test ! -s "$R/sys/class/gpio/gpio192/direction"
             need no-soc-write nwrites 0
             need one-app-running apps_ok 1
-            verdict "$sh: bay refuses ($case_), nothing driven, app started" "$o"
+            verdict "$lbl: bay refuses ($case_), nothing driven, app started" "$o"
             stop_apps
         done
         # killed at many points: pins released, PG_CFG0 back, app started once
@@ -580,7 +589,7 @@ for shn in $SHELLS; do
             fi
             stop_apps
         done
-        if [ "$nf" = 0 ]; then ok "$sh: bay killed at $nk points: pins released, PG_CFG0 back, app started once"; else bad "$sh: bay kill: $nf of $nk"; fi
+        if [ "$nf" = 0 ]; then ok "$lbl: bay killed at $nk points: pins released, PG_CFG0 back, app started once"; else bad "$lbl: bay kill: $nf of $nk"; fi
         ;;
     esac
 done

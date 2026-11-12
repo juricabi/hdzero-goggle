@@ -61,7 +61,7 @@ log() {
     [ -t 1 ] && echo "$*"
     return 0
 }
-have() { command -v "$1" > /dev/null 2>&1; }
+have() { type "$1" > /dev/null 2>&1; } # the goggle's ash has no "command" builtin
 hex() { awk -v v="$(($1))" 'BEGIN { printf "0x%08x", v }'; }
 hex2() { awk -v v="$(($1))" 'BEGIN { printf "0x%02x", v }'; }
 is_hex() { # 0x followed by hex digits only
@@ -247,7 +247,8 @@ beep() { # $1 count, $2 on-time in us
 # and the lock file is held (the record daemon's HDMI audio bridge takes the same lock).
 lat_lock() {
     have flock && [ -d "$TMPD" ] && [ -w "$TMPD" ] || return 0
-    { command exec 9> "$TMPD/.sunxi_dump.lock"; } 2> /dev/null || return 0
+    # (a failed exec redirection ends the shell - checked above; the EXIT trap would still run)
+    exec 9> "$TMPD/.sunxi_dump.lock"
     lk=0
     while ! flock -n 9 2> /dev/null; do
         lk=$((lk + 1))

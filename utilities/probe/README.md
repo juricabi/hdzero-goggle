@@ -91,7 +91,9 @@ released. Send `bay_gpio_N.txt` and the contact/voltage notes.
   also when a script is killed at many points (TERM/INT/HUP; SIGKILL: the guardian), that an
   interleaved or implausible latch read leads to no write, that no FIFO register is read,
   and that only commands of the goggle's busybox are used. `ROOTFS=<extracted rootfs>`
-  checks the commands against a real image. `QUICK=1` for fewer kill points.
+  checks the commands against a real image and, with `qemu-arm`, runs everything under
+  the goggle's own busybox 1.27 ash as well (it has no `command` builtin, and a failed
+  `exec` redirection ends it). `QUICK=1` for fewer kill points.
 * `sh utilities/probe/test/mutants.sh`: 14 mutants with one safety property broken each
   (e.g. the app never resumed, no trap, a single latch read); the tests must fail on every
   one. `MUT_OLD=<dir>` also runs an older kit (the review's mutant).
