@@ -33,7 +33,11 @@
 #include <string.h>
 #include <time.h>
 
-#include "../../src/module/module.c"
+// (the Makefile names it: make SRC=<a copy of src/module> runs the tests against the copy)
+#ifndef MODULE_C
+#define MODULE_C "../../src/module/module.c"
+#endif
+#include MODULE_C
 
 #ifndef SLACK_MS
 #define SLACK_MS 300
@@ -67,19 +71,33 @@ hw_revision_t getHwRevision() {
     return batch1 ? HW_REV_1 : HW_REV_2; // batch 2: bay power switched by the power thread
 }
 
-// bay pins for module.c's pin check: inputs reading 1, 0, 1; every call counted
-static int pins_exported, pin_calls;
+// bay pins for module.c's pin check: inputs reading 1, 0, 1; every call counted; a read
+// before the pins were set to inputs is counted (review defect 4); get_pin can be made to
+// hang (a check that does not end)
+static int pins_exported, pin_calls, pins_inputs, reads_not_inputs, get_pin_hang_ms;
 bool softspi_open() {
     pin_calls++;
     pins_exported = 1;
+    pins_inputs = 0; // exported: still in the function rc.sh left them in
     return true;
+}
+void softspi_float_all() {
+    pin_calls++;
+    pins_inputs = pins_exported;
 }
 void softspi_close() {
     pin_calls++;
     pins_exported = 0;
+    pins_inputs = 0;
 }
 int softspi_get_pin(softspi_pin_t pin) {
     pin_calls++;
+    reads_not_inputs += !pins_inputs;
+    if (get_pin_hang_ms) {
+        const int ms = get_pin_hang_ms;
+        get_pin_hang_ms = 0;
+        usleep(ms * 1000);
+    }
     return pin != SOFTSPI_DAT;
 }
 
@@ -557,6 +575,7 @@ int main(void) {
     pc = module_pin_check_result();
     check(pc.seq == seq + 2 && pc.levels == 5 && pc.toggled == 0 && !pc.why && !pins_exported && !pc.running,
           "Module None: PG0 1, PG1 0, PG2 1 read as inputs, pins unexported again");
+    check(reads_not_inputs == 0, "  set to inputs before the first read (not left \"IO disabled\")");
     check(pc.pg_bank_mv == 0, "  PG bank supply unknown without the register dump");
     g_setting.wifi.enable = true;
     module_wifi_changed();
@@ -579,6 +598,24 @@ int main(void) {
     check(pc.seq == seq + 4 && pc.levels == 5 && !pc.running, "  (that check read the pins before WiFi started)");
     g_setting.wifi.enable = false;
     module_wifi_changed();
+    // review defect 5: the pins not released within 3 s: WiFi must not start
+    get_pin_hang_ms = 3600;
+    module_check_pins();
+    usleep(30000);
+    g_setting.wifi.enable = true;
+    t = t_now();
+    const bool released = module_wifi_changed();
+    waited = t_now() - t;
+    snprintf(what, sizeof(what), "pins still held after 3 s (a check that hangs): WiFi refused after %llu ms",
+             (unsigned long long)waited);
+    check(!released && waited >= 3000 && waited < 3000 + SLACK_MS, what);
+    g_setting.wifi.enable = false;
+    module_wifi_changed();
+    usleep(800000); // the hanging check ends
+    g_setting.wifi.enable = true;
+    check(module_wifi_changed(), "  WiFi on again once nothing holds the pins: allowed");
+    g_setting.wifi.enable = false;
+    module_wifi_changed();
 
     printf("WiFi SDIO interlock (bay_pins_busy(), stand-in sysfs files):\n");
     char dir[] = "/tmp/module_bay_test.XXXXXX";
@@ -595,7 +632,11 @@ int main(void) {
             bool busy;
             const char *what;
         } cases[] = {
-            {"", "", false, "no driver, no register dump: free"},
+            // review defect 6: a register that cannot be read counts as busy
+            {"", "", true, "no driver, register dump missing: busy (pin function unknown)"},
+            {"", "garbage\n", true, "no driver, register dump echoes only the address: busy"},
+            {"", "garbage garbage garbage\n", true, "no driver, register dump answers garbage: busy"},
+            {"", "0x0300b0d8: 0x777 \n", false, "a short value, trailing blank (0x777: PG0-PG2 IO disabled): free"},
             {"x", "", true, "WiFi driver loaded: busy"},
             {"", "0x0300b0d8: 0x22777777\n", false, "PG0-PG5 IO disabled (rc.sh, 0x22777777): free"},
             {"", "0x0300b0d8: 0x22222222\n", true, "PG0-PG5 in SDC1 (function 2): busy"},
@@ -605,10 +646,27 @@ int main(void) {
             {"", "0x0300b0d8: 0x22777771\n", false, "PG0 output (function 1, module control): free"},
         };
         for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            const char *why;
             put_file(drv, cases[i].driver);
             put_file(dump, cases[i].dump);
-            check(bay_pins_busy() == cases[i].busy, cases[i].what);
+            check(bay_pins_busy_why(&why) == cases[i].busy, cases[i].what);
         }
+        // Check Pins with the pin function unknown: not read, and says so
+        put_file(drv, "");
+        put_file(dump, "");
+        g_setting.module.type = MODULE_NONE;
+        module_settings_changed(false);
+        settle();
+        module_check_pins();
+        settle();
+        pc = module_pin_check_result();
+        check(pc.levels == -1 && pc.why && strcmp(pc.why, "Not read: pin state unknown") == 0 && pc.pg_bank_mv == 0,
+              "Check Pins, register dump not readable: \"Not read: pin state unknown\", bank voltage unknown");
+        put_file(dump, "0x0300b0d8: 0x22777777\n");
+        module_check_pins();
+        settle();
+        pc = module_pin_check_result();
+        check(pc.levels == 5 && !pc.why, "Check Pins, PG0-PG2 IO disabled (rc.sh): read");
 
         // the worker leaves the pins alone while they are busy and checks again
         g_setting.module.type = MODULE_RAPIDFIRE;

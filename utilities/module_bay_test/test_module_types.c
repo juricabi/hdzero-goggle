@@ -659,6 +659,32 @@ int main(void) {
                    (unsigned long long)power_ev[n_power - 1].t, power_ev[n_power - 1].what);
     }
 
+    // ---- SteadyView register reads (review defect 10) ----
+    printf("SteadyView, channel set-up and a change (each reads the RTC6705 register first):\n");
+    g_setting.module.channel = 28; // F4
+    select_type(MODULE_STEADYVIEW, 0);
+    sleep_ms(50);
+    trace_reset();
+    power(1);
+    sleep_ms(3500);
+    analog_channel_set(5); // A5
+    sleep_ms(400);
+    {
+        // the goggle drives DATA again only once CS is up, i.e. once the RTC6705 has let go of it
+        int turns = 0, turns_bad = 0;
+        for (int k = 1; k < n_edges; k++) {
+            const int cs_out = (edges[k - 1].out >> SOFTSPI_CS) & 1;
+            if (cs_out && !((edges[k - 1].out >> SOFTSPI_DAT) & 1) && ((edges[k].out >> SOFTSPI_DAT) & 1)) {
+                turns++;
+                turns_bad += !((edges[k].line >> SOFTSPI_CS) & 1);
+            }
+        }
+        snprintf(what, sizeof(what), "register reads (%d): DATA an output again only after CS is up", turns);
+        check(turns >= 2 && !turns_bad, what);
+    }
+    power(0);
+    sleep_ms(100);
+
     // ---- Switch ----
     printf("Switch, channel 8 (A8) right after bay power-on:\n");
     g_setting.module.channel = 8;

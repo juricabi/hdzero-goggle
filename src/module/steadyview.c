@@ -156,11 +156,10 @@ static uint32_t rtc6705ReadRegister(uint8_t read) {
         softspi_set_pin(SOFTSPI_CLK, 0);
     }
 
-    // Change pin back to output
-    softspi_set_direction(SOFTSPI_OUTPUT);
-
+    // CS up first: the RTC6705 stops driving DATA; only then the goggle drives it again,
+    // straight to its idle high (no low step, no moment with both driving it)
     softspi_set_pin(SOFTSPI_CS, 1);
-    softspi_set_pin(SOFTSPI_DAT, 1);
+    softspi_drive_pin(SOFTSPI_DAT, 1);
 
     return registerData;
 }

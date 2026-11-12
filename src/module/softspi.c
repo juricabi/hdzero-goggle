@@ -10,14 +10,19 @@
 
 #include "softspi.h"
 
+// sysfs GPIO (utilities/module_bay_test/test_softspi.c points it at a directory of its own)
+#ifndef SOFTSPI_GPIO_SYSFS
+#define SOFTSPI_GPIO_SYSFS "/sys/class/gpio"
+#endif
+
 static const int pins_gpio[SOFTSPI_PINS] = {GPIO_MODULE_CLK, GPIO_MODULE_DAT, GPIO_MODULE_CS};
 static int pins_fd[SOFTSPI_PINS] = {-1, -1, -1};
 static int dir_fd[SOFTSPI_PINS] = {-1, -1, -1};
 
 static int open_attr(int gpio, const char *attr, int flags) {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "/sys/class/gpio/gpio%d/%s", gpio, attr);
-    return open(buf, flags);
+    char buf[128];
+    snprintf(buf, sizeof(buf), SOFTSPI_GPIO_SYSFS "/gpio%d/%s", gpio, attr);
+    return open(buf, flags | O_CLOEXEC);
 }
 
 static void write_attr(int fd, const char *text) {
@@ -37,7 +42,7 @@ bool softspi_open() {
     for (int i = 0; i < SOFTSPI_PINS; i++) {
         if (pins_fd[i] < 0) {
             // (fails with EBUSY if still exported from an earlier run: that is fine)
-            fs_printf("/sys/class/gpio/export", "%d", pins_gpio[i]);
+            fs_printf(SOFTSPI_GPIO_SYSFS "/export", "%d", pins_gpio[i]);
             pins_fd[i] = open_attr(pins_gpio[i], "value", O_RDWR);
             dir_fd[i] = open_attr(pins_gpio[i], "direction", O_RDWR);
         }
@@ -68,13 +73,13 @@ void softspi_float_all() {
 
 void softspi_release_gpio(int port_num) {
 #ifndef EMULATOR_BUILD
-    char buf[64];
+    char buf[128];
     // input first: a pin left driving high would feed an unpowered module through
     // its input protection diodes while the bay power is off
-    fs_printf("/sys/class/gpio/export", "%d", port_num);
-    snprintf(buf, sizeof(buf), "/sys/class/gpio/gpio%d/direction", port_num);
+    fs_printf(SOFTSPI_GPIO_SYSFS "/export", "%d", port_num);
+    snprintf(buf, sizeof(buf), SOFTSPI_GPIO_SYSFS "/gpio%d/direction", port_num);
     fs_printf(buf, "in");
-    fs_printf("/sys/class/gpio/unexport", "%d", port_num);
+    fs_printf(SOFTSPI_GPIO_SYSFS "/unexport", "%d", port_num);
 #else
     (void)port_num;
 #endif
@@ -91,7 +96,7 @@ void softspi_close() {
             close(pins_fd[i]);
         dir_fd[i] = -1;
         pins_fd[i] = -1;
-        fs_printf("/sys/class/gpio/unexport", "%d", pins_gpio[i]);
+        fs_printf(SOFTSPI_GPIO_SYSFS "/unexport", "%d", pins_gpio[i]);
     }
 }
 

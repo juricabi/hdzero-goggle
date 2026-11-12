@@ -55,22 +55,24 @@ void module_source_changed();
 void module_power_changed(int on);
 // WiFi page: call after g_setting.wifi.enable changed, before WiFi is started
 // (returns once the bay pins are released and no pin check is reading them, at
-// most a few seconds) and after it was stopped.
-void module_wifi_changed();
+// most 3 s) and after it was stopped.  False: WiFi is on, but the pins were not
+// released within the 3 s: WiFi must not be started.
+bool module_wifi_changed();
 module_status_t module_status();
 
-// Bay pin check (Module Bay page; reads, never drives).  The worker reads PG0-PG2
-// as inputs for 100 ms, only while it does not control the bay and never while
-// WiFi is on or the pins are in the SDIO function, and the PG bank supply as the
-// SoC reports it (PIO_POW_VAL).  Shows the wiring mod and a module that pulls or
-// drives the lines before a Module is selected.
+// Bay pin check (Module Bay page, "Check Pins"; reads, never drives).  The worker
+// sets PG0-PG2 to GPIO inputs and reads them for 100 ms, only while it does not
+// control the bay and never while WiFi is on or the pins may be in the SDIO function
+// (or their function cannot be read), and the PG bank supply as the SoC reports it
+// (PIO_POW_VAL).  Shows the wiring mod and a module that pulls or drives the lines
+// before a Module is selected.  Afterwards the pins are GPIO inputs, unexported.
 typedef struct {
     unsigned seq;     // number of checks done (0: none yet)
     bool running;     // a check is pending or running
     int pg_bank_mv;   // 1800 or 3300 (PIO_POW_VAL bit 6: < 2.0 V / > 2.5 V), 0: unknown
     int levels;       // bit i: PGi read high; -1: not read (why)
     int toggled;      // bit i: PGi changed while it was read
-    const char *why;  // why the levels were not read, NULL: they were
+    const char *why;  // why the levels were not read ("Not read: ...", a language key), NULL: they were
 } module_pin_check_t;
 void module_check_pins();
 module_pin_check_t module_pin_check_result();

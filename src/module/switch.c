@@ -11,21 +11,20 @@
 // the module's own band (Fat Shark style switch selection; also the "BAY:1-8" mode
 // of a Furious True-D).  Like every type, the pins stay inputs until MODULE_BOOT_MS
 // (2.0 s) after bay power-on.  The Mode list picks which SoC pin carries which bit,
-// because the bay wiring is not known (docs/module-bay.md): all six orders.  A
-// label gives the weight of each pin's bit, "PG0=4 PG1=1 PG2=2": PG1 is bit 0,
-// PG2 bit 1, PG0 bit 2.  The first three are the orders offered before, so their
-// setting.ini values keep their meaning.
+// because the bay wiring is not known (docs/module-bay.md): all six orders, shown
+// as "Wiring A (standard)" ... "Wiring F" (the table of which SoC pin carries which
+// bit is in docs/module-bay.md).  The first three are the orders offered before, so
+// their setting.ini values keep their meaning.
 static const softspi_pin_t pin_orders[][3] = {
     // bit 0       bit 1        bit 2
-    {SOFTSPI_CLK, SOFTSPI_DAT, SOFTSPI_CS},  // PG0=1 PG1=2 PG2=4 (pkendall's order)
-    {SOFTSPI_DAT, SOFTSPI_CS, SOFTSPI_CLK},  // PG0=4 PG1=1 PG2=2 (rapidFIRE convention CH1 = DATA, CH2 = CS, CH3 = CLK)
-    {SOFTSPI_CS, SOFTSPI_DAT, SOFTSPI_CLK},  // PG0=4 PG1=2 PG2=1 (ELRS rapidFIRE backpack: CS1 = NSS, CS2 = DATA, CS3 = CLK)
-    {SOFTSPI_CLK, SOFTSPI_CS, SOFTSPI_DAT},  // PG0=1 PG1=4 PG2=2
-    {SOFTSPI_DAT, SOFTSPI_CLK, SOFTSPI_CS},  // PG0=2 PG1=1 PG2=4
-    {SOFTSPI_CS, SOFTSPI_CLK, SOFTSPI_DAT},  // PG0=2 PG1=4 PG2=1
+    {SOFTSPI_CLK, SOFTSPI_DAT, SOFTSPI_CS},  // A: PG0=1 PG1=2 PG2=4 (pkendall's order, the standard)
+    {SOFTSPI_DAT, SOFTSPI_CS, SOFTSPI_CLK},  // B: PG0=4 PG1=1 PG2=2 (rapidFIRE convention CH1 = DATA, CH2 = CS, CH3 = CLK)
+    {SOFTSPI_CS, SOFTSPI_DAT, SOFTSPI_CLK},  // C: PG0=4 PG1=2 PG2=1 (ELRS rapidFIRE backpack: CS1 = NSS, CS2 = DATA, CS3 = CLK)
+    {SOFTSPI_CLK, SOFTSPI_CS, SOFTSPI_DAT},  // D: PG0=1 PG1=4 PG2=2
+    {SOFTSPI_DAT, SOFTSPI_CLK, SOFTSPI_CS},  // E: PG0=2 PG1=1 PG2=4
+    {SOFTSPI_CS, SOFTSPI_CLK, SOFTSPI_DAT},  // F: PG0=2 PG1=4 PG2=1
 };
-#define SWITCH_MODE_NAMES "PG0=1 PG1=2 PG2=4\nPG0=4 PG1=1 PG2=2\nPG0=4 PG1=2 PG2=1\n" \
-                          "PG0=1 PG1=4 PG2=2\nPG0=2 PG1=1 PG2=4\nPG0=2 PG1=4 PG2=1"
+#define SWITCH_MODE_NAMES "Wiring A (standard)\nWiring B\nWiring C\nWiring D\nWiring E\nWiring F"
 
 // At init the pins go from inputs straight to code 2 for 200 ms before the channel
 // code: a state that is not part of the rapidFIRE SPI set-up (all three high,

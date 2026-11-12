@@ -61,9 +61,14 @@ _Static_assert(MODULE_TYPES == 5, "the range check of [module] type in settings.
 #define CHECK_STEP_MS   2
 
 // What bay_pins_busy() looks at (variables so that the host test can point them
-// at files of its own; neither exists in the emulator).
+// at files of its own).  The emulator has no SoC registers and no SDIO host: no
+// register dump there, and the pins count as free.
 static const char *wlan_driver_path = "/sys/module/xradio_wlan";
+#ifdef EMULATOR_BUILD
+static const char *reg_dump_path = NULL;
+#else
 static const char *reg_dump_path = "/sys/class/sunxi_dump/dump";
+#endif
 
 /*
  * Threads: the dial (input thread, lvgl_mutex held), ELRS, the menu and the bay
@@ -166,25 +171,28 @@ static int fold(int count, int ch) {
 // ---- bay pins and WiFi ----
 
 // /sys/class/sunxi_dump/dump is one address latch for every process: the HDMI audio bridge
-// (record daemon) and the probe kit take this lock around their reads (src/record/appmsg.h
-// HDMIA_LOCK_FILE), and so does read_reg().
+// (record daemon), the probe kit and the app's own awr / aww calls take this lock around their
+// accesses (src/record/appmsg.h HDMIA_LOCK_FILE), and so does read_reg().
 #define SUNXI_DUMP_LOCK "/tmp/.sunxi_dump.lock"
 
 static bool read_reg_once(uint32_t addr, uint32_t *val);
 
 // Reads an SoC register through the sunxi_dump driver (as the awr script does): under the
-// shared lock, three reads that must agree (a reader that does not lock, such as awr, can still
-// move the latch between the address and the value).
+// shared lock (not taken within 1 s: no read), three reads that must agree (a process that does
+// not lock, such as a stock script, can still move the latch between the address and the value).
+// False: the value is not known.
 static bool read_reg(uint32_t addr, uint32_t *val) {
+    if (!reg_dump_path)
+        return false;
     int lk = open(SUNXI_DUMP_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-    if (lk >= 0) {
-        for (int i = 0; i < 20 && flock(lk, LOCK_EX | LOCK_NB) != 0; i++)
-            usleep(50000); // at most 1 s, as the bridge
-    }
+    if (lk < 0)
+        return false;
+    bool locked = false;
+    for (int i = 0; i < 20 && !(locked = flock(lk, LOCK_EX | LOCK_NB) == 0); i++)
+        usleep(50000); // at most 1 s, as the bridge
     uint32_t a = 0, b = 1, c = 2;
-    const bool ok = read_reg_once(addr, &a) && read_reg_once(addr, &b) && read_reg_once(addr, &c) && a == b && b == c;
-    if (lk >= 0)
-        close(lk); // releases the lock
+    const bool ok = locked && read_reg_once(addr, &a) && read_reg_once(addr, &b) && read_reg_once(addr, &c) && a == b && b == c;
+    close(lk); // releases the lock
     if (ok)
         *val = a;
     return ok;
@@ -193,7 +201,10 @@ static bool read_reg(uint32_t addr, uint32_t *val) {
 static bool read_reg_once(uint32_t addr, uint32_t *val) {
     char buf[64];
     bool ok = false;
-    int fd = open(reg_dump_path, O_RDWR);
+    const char *dump = reg_dump_path;
+    if (!dump)
+        return false;
+    int fd = open(dump, O_RDWR | O_CLOEXEC);
     if (fd < 0)
         return false;
     int n = snprintf(buf, sizeof(buf), "0x%08x", addr);
@@ -207,9 +218,14 @@ static bool read_reg_once(uint32_t addr, uint32_t *val) {
             for (char *p = strstr(buf, "0x"); p; p = strstr(p + 2, "0x"))
                 last = p;
             if (last) {
+                // a number, followed by nothing but the end of the line; and not the address
+                // itself (an answer that only echoes the latch is not a value)
                 char *end;
                 unsigned long v = strtoul(last, &end, 16);
-                ok = end != last;
+                ok = end > last + 2 && v != addr;
+                while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')
+                    end++;
+                ok = ok && *end == 0;
                 *val = v;
             }
         }
@@ -218,16 +234,27 @@ static bool read_reg_once(uint32_t addr, uint32_t *val) {
     return ok;
 }
 
-// PG0-PG2 belong to the WiFi SDIO bus right now: the WiFi driver is loaded or the
-// SDIO host has them in its pin function.  Exporting them then would cut WiFi off.
-static bool bay_pins_busy(void) {
-    if (access(wlan_driver_path, F_OK) == 0)
+// PG0-PG2 may belong to the WiFi SDIO bus right now: the WiFi driver is loaded, the SDIO
+// host has them in its pin function, or their function cannot be read (then they are left
+// alone too, and looked at again later).  Exporting them then could cut WiFi off.  *why:
+// what was found (log), NULL when free.
+static bool bay_pins_busy_why(const char **why) {
+    *why = NULL;
+    if (access(wlan_driver_path, F_OK) == 0) {
+        *why = "WiFi driver loaded";
         return true;
+    }
+    if (!reg_dump_path)
+        return false; // emulator: no SDIO host
     uint32_t cfg;
-    if (read_reg(PIO_PG_CFG0, &cfg)) {
-        for (int pin = 0; pin < 3; pin++) {
-            if (((cfg >> (4 * pin)) & 0x7) == PIO_FUNC_SDC1)
-                return true;
+    if (!read_reg(PIO_PG_CFG0, &cfg)) {
+        *why = "PG_CFG0 not readable (sunxi_dump missing, busy or answers disagree)";
+        return true;
+    }
+    for (int pin = 0; pin < 3; pin++) {
+        if (((cfg >> (4 * pin)) & 0x7) == PIO_FUNC_SDC1) {
+            *why = "PG0-PG2 in the SDC1 (WiFi SDIO) function";
+            return true;
         }
     }
     return false;
@@ -245,24 +272,31 @@ static void timed_wait(pthread_cond_t *cond, uint64_t until_ms) {
 // ---- worker ----
 
 // The pin check (worker thread, lock released): never while the worker controls
-// the bay, WiFi is on or the SDIO host has the pins.  Reading means exporting
-// them as GPIO inputs, which module control's close() leaves them as anyway.
+// the bay, WiFi is on or the SDIO host may have the pins.  Reading means exporting
+// them and setting them to GPIO inputs first (after rc.sh they are "IO disabled",
+// function 7, whose data register the datasheet leaves undefined).  Afterwards they
+// stay GPIO inputs (function 0), unexported, as module control's close() leaves
+// them: the SDIO host sets its own function again when WiFi starts, as it does after
+// rc.sh's function 7 at every boot (docs/module-bay.md).
 static void run_pin_check(bool controlling, bool wifi_on) {
     module_pin_check_t r = {.levels = -1};
-    uint32_t pow;
+    uint32_t pow = 0;
     if (read_reg(PIO_POW_VAL, &pow))
         r.pg_bank_mv = (pow & PIO_POW_VAL_PG) ? 1800 : 3300;
     // (the reasons are shown on the Module Bay page, through the language files)
+    const char *busy_why = NULL;
     if (controlling) {
-        r.why = "module control active";
+        r.why = "Not read: set Module to None first";
     } else if (wifi_on) {
-        r.why = "WiFi on";
-    } else if (bay_pins_busy()) {
-        r.why = "used by WiFi (SDIO)";
+        r.why = "Not read: switch WiFi off first";
+    } else if (bay_pins_busy_why(&busy_why)) {
+        r.why = strncmp(busy_why, "PG_CFG0", 7) == 0 ? "Not read: pin state unknown" : "Not read: pins in use by WiFi";
     } else if (!softspi_open()) {
         softspi_close();
-        r.why = "no GPIO access";
+        r.why = "Not read: no GPIO access";
     } else {
+        softspi_float_all(); // inputs before the first read
+        usleep(CHECK_STEP_MS * 1000);
         int first = -1, toggled = 0;
         for (int t = 0; t < CHECK_MS; t += CHECK_STEP_MS) {
             int now = 0;
@@ -277,8 +311,8 @@ static void run_pin_check(bool controlling, bool wifi_on) {
         r.levels = first;
         r.toggled = toggled;
     }
-    LOGI("module: pin check: PG bank %d mV, levels %d, toggled %d%s%s", r.pg_bank_mv, r.levels, r.toggled,
-         r.why ? ", not read: " : "", r.why ? r.why : "");
+    LOGI("module: pin check: PG bank %d mV, levels %d, toggled %d%s%s%s%s", r.pg_bank_mv, r.levels, r.toggled,
+         r.why ? ", " : "", r.why ? r.why : "", busy_why ? ": " : "", busy_why ? busy_why : "");
     pthread_mutex_lock(&lock);
     r.seq = check_result.seq + 1;
     check_result = r;
@@ -335,10 +369,11 @@ static void *module_worker(void *arg) {
                 wake_at = on + MODULE_BOOT_MS;
             } else if (on) {
                 pthread_mutex_unlock(&lock);
-                const bool busy = bay_pins_busy();
+                const char *why;
+                const bool busy = bay_pins_busy_why(&why);
                 pthread_mutex_lock(&lock);
                 if (busy != sdio_busy)
-                    LOGW("module: bay pins %s", busy ? "in use by the WiFi SDIO bus (driver loaded or PG0-2 in SDC1 function), left alone" : "free again");
+                    LOGW("module: bay pins %s%s", busy ? "left alone, checked again in 5 s: " : "free again", busy ? why : "");
                 sdio_busy = busy;
                 if (want != wanted() || power_on_ms != on)
                     continue; // changed meanwhile (a new power-on starts the wait again)
@@ -562,9 +597,10 @@ void module_power_changed(int on) {
     pthread_mutex_unlock(&lock);
 }
 
-void module_wifi_changed() {
+bool module_wifi_changed() {
     if (!started)
-        return;
+        return true;
+    bool released = true;
     pthread_mutex_lock(&lock);
     poke();
     if (g_setting.wifi.enable) {
@@ -574,10 +610,13 @@ void module_wifi_changed() {
         const uint64_t deadline = now_ms() + WIFI_RELEASE_MS;
         while ((active || check_busy) && now_ms() < deadline)
             timed_wait(&idle, deadline);
-        if (active || check_busy)
-            LOGE("module: bay pins still held while WiFi starts");
+        if (active || check_busy) {
+            LOGE("module: bay pins still held after %d ms: WiFi must not start", WIFI_RELEASE_MS);
+            released = false;
+        }
     }
     pthread_mutex_unlock(&lock);
+    return released;
 }
 
 void module_check_pins() {
@@ -590,7 +629,7 @@ void module_check_pins() {
 }
 
 module_pin_check_t module_pin_check_result() {
-    module_pin_check_t r = {.levels = -1, .why = "no module bay"};
+    module_pin_check_t r = {.levels = -1, .why = "Not read: no GPIO access"}; // (no module bay)
     if (!started)
         return r;
     pthread_mutex_lock(&lock);
