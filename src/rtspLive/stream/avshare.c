@@ -179,6 +179,7 @@ int avshare_uninit(void)
 {
 	CHECK_IsInitialized(0);
 
+	gAvshare.ptrConnect = NULL; // before the detach (avshare_dropConnections() from a signal handler)
 	if(shmdt(gAvshare.bufShare)==-1)
 	{
 		aloge("remove share mem failed\n");
@@ -744,6 +745,24 @@ void avshare_stopMedia(int media_type)
 
     if( gMediaUsers[0] + gMediaUsers[1] == 0 ) {
         avshare_uninit();
+    }
+}
+
+// Called on the way out (exit, SIGTERM/SIGINT/SIGHUP, crash): clear this process' connect flags,
+// so the record process stops the live encoders at once. Only stores to the shared memory: safe
+// in a signal handler. (The record process also notices a reader that died without it.)
+void avshare_dropConnections(void)
+{
+    uint8_t* volatile connect = gAvshare.ptrConnect;
+    int i;
+
+    if( (gAvshare.bufShare == NULL) || (connect == NULL) ) {
+        return;
+    }
+    for( i=0; i<MEDIA_NUM; i++ ) {
+        if( gMediaUsers[i] > 0 ) {
+            ((volatile uint8_t*)connect)[i] = 0;
+        }
     }
 }
 

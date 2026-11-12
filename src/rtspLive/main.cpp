@@ -59,7 +59,17 @@ void signal_segv(int sig)
 {
 	aloge( "signal sigsegv\n" );
 
+	avshare_dropConnections();
 	abort();
+}
+
+// SIGTERM (killall), SIGINT, SIGHUP: tell the record process the readers are gone, then die
+// of the signal as before.
+static void signal_quit(int sig)
+{
+	avshare_dropConnections();
+	signal(sig, SIG_DFL);
+	raise(sig);
 }
 
 void dump_bytes(uint8_t* data, int len)
@@ -510,6 +520,11 @@ int main(int argc, char *argv[])
 		aloge( "already runing... exit!\n");
 		exit(1);
 	}
+	// from here on this is the stream reader: never leave the connect flags set behind
+	atexit(avshare_dropConnections);
+	signal(SIGTERM, signal_quit);
+	signal(SIGINT, signal_quit);
+	signal(SIGHUP, signal_quit);
 
     LiveContext_t liveCtx;
     ZeroMemory(&liveCtx, sizeof(liveCtx));

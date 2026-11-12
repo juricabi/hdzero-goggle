@@ -67,7 +67,8 @@ start_record() {
     sleep 0.3
 }
 
-# start_live CONF LOG  -> LIVE_PID (rtspLive -nt, the conf next to the binary or in the ARM root)
+# start_live CONF LOG  -> LIVE_PID (rtspLive as on the goggle: no arguments, server in its own
+# thread, the main thread polls the goggle messages; the conf next to the binary or in the ARM root)
 start_live() {
     local conf=$1 log=$2 run=$WORK/run/live
     rm -rf "$run"
@@ -82,10 +83,10 @@ start_live() {
         cp -L "$sys/usr/lib/libstdc++.so.6" "$root/usr/lib/"
         cp "$conf" "$root/data/confs/record.conf"
         cp "$ARM_RTSPLIVE" "$run/rtspLive"
-        (cd "$run" && exec stdbuf -oL qemu-arm -L "$root" ./rtspLive -nt > "$log" 2>&1) &
+        (cd "$run" && exec stdbuf -oL qemu-arm -L "$root" ./rtspLive > "$log" 2>&1) &
     else
         cp "$BIN/rtspLive" "$run/rtspLive"
-        (cd "$run" && exec stdbuf -oL ./rtspLive -nt > "$log" 2>&1) &
+        (cd "$run" && exec stdbuf -oL ./rtspLive > "$log" 2>&1) &
     fi
     LIVE_PID=$!
     for _ in $(seq 100); do grep -q "LIVE555 Media Server" "$log" 2>/dev/null && break; sleep 0.1; done
@@ -109,7 +110,8 @@ stop_record() {
 
 # leftovers of killed processes: the ring segment and the message queues
 cleanup_ipc() {
-    pkill -f "$WORK/run/live/rtspLive" 2>/dev/null
+    pkill -x rtspLive 2>/dev/null
+    pkill -f "qemu-arm -L $WORK/run/live" 2>/dev/null
     pkill -f "$BIN/record_host" 2>/dev/null
     for k in 0x00568066; do ipcrm -M $k 2>/dev/null; done
     for k in 0x00005680 0x00005682; do ipcrm -Q $k 2>/dev/null; done
