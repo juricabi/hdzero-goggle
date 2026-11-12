@@ -1,6 +1,4 @@
 #!/bin/sh
-. "$(dirname "$0")/model.sh"
-outside_window arecord "$@"
 echo "stub arecord $*"
 case "$*" in "-l" | "-L") exit 0 ;; esac
 for a in "$@"; do w=$a; done

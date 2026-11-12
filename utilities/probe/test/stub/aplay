@@ -1,6 +1,4 @@
 #!/bin/sh
-. "$(dirname "$0")/model.sh"
-outside_window aplay "$@"
 echo "stub aplay $*"
 case "$*" in *" -l"* | *" -L"* | "-l" | "-L") exit 0 ;; esac
 exec busybox sleep "${STUB_APLAY_S:-1}"

@@ -226,7 +226,11 @@ need() { # $1 label, then a command: a failing command adds the label to WHY
     shift
     "$@" || WHY="$WHY [$nl]"
 }
+not_left_stopped() { # the scripts' final app_unstop_all logs this only if the app was left stopped
+    [ ! -f "$1" ] || ! grep -q "was stopped: resumed" "$1"
+}
 verdict() { # $1 test name, $2 report file
+    need app-not-left-stopped not_left_stopped "$2"
     if [ -z "$WHY" ]; then ok "$1"; else
         bad "$1:$WHY"
         show "$2"
@@ -392,6 +396,7 @@ for shn in $SHELLS; do
             need no-violation no_viol
             need tone-removed test ! -e "$R/tmp/hdmi_tone.raw"
             need helpers-gone gone hdmi_audio_test.sh
+            need app-not-left-stopped not_left_stopped "$R/mnt/extsd/hdmi_audio_test_1.txt"
             if [ -n "$WHY" ]; then
                 nf=$((nf + 1))
                 echo "  killed with $sig after $d s:$WHY"
@@ -496,6 +501,7 @@ for shn in $SHELLS; do
             need banks-back all_back
             need no-violation no_viol
             need helpers-gone gone hdmi_audio_probe.sh
+            need app-not-left-stopped not_left_stopped "$R/mnt/extsd/hdmi_audio_probe_1.txt"
             if [ -n "$WHY" ]; then
                 nf=$((nf + 1))
                 echo "  killed after $d s:$WHY"
@@ -586,6 +592,7 @@ for shn in $SHELLS; do
             need all-back all_back
             need no-violation no_viol
             need helpers-gone gone bay_gpio_pattern.sh
+            need app-not-left-stopped not_left_stopped "$R/mnt/extsd/bay_gpio_1.txt"
             if [ -n "$WHY" ]; then
                 nf=$((nf + 1))
                 echo "  killed after $d s:$WHY"
