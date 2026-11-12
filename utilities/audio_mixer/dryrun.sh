@@ -19,7 +19,7 @@ OUT=${1:-$(mktemp -d)}
 DUMP=$ROOT/mkapp/app/app/record/audio/audiocodec/alsa-util/amixer-record.txt
 mkdir -p "$OUT"
 
-${CC:-cc} -std=gnu99 -Wall -Wextra -Werror -I"$ROOT/src" -o "$OUT/dryrun" \
+${CC:-cc} -std=gnu99 -Wall -Wextra -Werror -DHDZGOGGLE2 -I"$ROOT/src" -o "$OUT/dryrun" \
     "$HERE/dryrun.c" "$ROOT/src/core/audio_mixer_routing.c"
 
 scenario() {

@@ -84,6 +84,9 @@ bool audio_mixer_rx_audio(void);
 void audio_mixer_value_str(audio_mixer_field_t field, int value, char *buf, size_t size);
 
 // The amixer batch (amixer -s syntax) for a state; returns the length like snprintf.
+// Every control the mixer owns is set once. Order: a line out that goes off first, then
+// gains and every path that is on, the line out, and last the paths that are off, so a
+// change never leaves the output or the ADC without its sources in between (docs/audio.md).
 size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const audio_mixer_context_t *context, char *buf, size_t size);
 
 // Defaults for a setting.ini that still has the old [record] audio_source (0 = Mic, 1 = Line In, 2 = A/V In).

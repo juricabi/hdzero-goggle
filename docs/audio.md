@@ -41,6 +41,16 @@ their meaning comes from the Allwinner driver (`sound/soc/sunxi/sun8iw16-codec.c
 (36 `cset` lines, every routing control set explicitly); `src/core/audio_mixer.c`
 writes it to `/tmp/audio_mixer.cmd` and runs `amixer -q -s < /tmp/audio_mixer.cmd`.
 
+The batch is ordered so that a change never disconnects everything in between:
+a line out that goes off is switched off first; then the gains, every switch that
+ends up on, the line out (switched on last when it is on), and only then every
+switch that ends up off (and the output mixer gains of the sources that are off,
+back to 0 dB). With no source connected, DAPM powers the line out down, which
+switches the headphone PA off and on again (a click; the Goggle 2 driver also
+sleeps `pa_msleep_time` = 160 ms in the PA-off event). Switching the only source,
+starting or ending playback, or As Heard <-> Custom therefore overlaps the old and
+the new path for the few milliseconds of the batch instead of leaving a gap.
+
 | Audio page        | setting.ini `[mixer]` | controls                                                           |
 |-------------------|-----------------------|--------------------------------------------------------------------|
 | Mic               | `mic` 0..8            | 0 = output mixer switch off, 1..8 = `MIC1_G ...` 0..7 (-4.5..+6 dB)  |
