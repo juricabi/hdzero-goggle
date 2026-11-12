@@ -56,17 +56,29 @@ typedef struct {
     bool playback; // DVR playback is running
 } audio_mixer_context_t;
 
-// Load the [mixer] settings; a setting.ini without them is migrated from [record] audio_source,
-// and so is every field missing from the section.
+// setting.ini [mixer] key of a field
+const char *audio_mixer_key(audio_mixer_field_t field);
+
+// Load the [mixer] settings and start the worker that writes them to the codec.
+// A setting.ini without them is migrated from [record] audio_source, and so is every
+// field missing from the section.
 void audio_mixer_init(void);
 
 int audio_mixer_get(audio_mixer_field_t field);
 int audio_mixer_max(audio_mixer_field_t field);
-// Clamp, store and save one value; call audio_mixer_apply() afterwards.
+// Clamp and store one value (memory only): audio_mixer_apply() sends it to the codec,
+// audio_mixer_save() writes it to setting.ini.
 void audio_mixer_set(audio_mixer_field_t field, int value);
+// Write the values changed since the last save to setting.ini. Call it from the UI, which
+// writes the other settings (under lvgl_mutex), never from the worker.
+void audio_mixer_save(void);
+bool audio_mixer_unsaved(void);
 
-// Write the whole routing to the codec (one amixer process).
+// Write the whole routing to the codec. Returns at once: a worker runs one amixer process
+// for the latest state, so a burst of calls ends in one or two batches.
 void audio_mixer_apply(void);
+// Same, but wait (at most timeout_ms) until the codec has the current state.
+bool audio_mixer_apply_wait(unsigned timeout_ms);
 // Apply again after `ms` milliseconds (from a separate thread).
 void audio_mixer_apply_later(unsigned ms);
 // The record daemon was (re)started: its AW_MPI_SYS_Init resets part of the codec mixer
@@ -74,6 +86,7 @@ void audio_mixer_apply_later(unsigned ms);
 void audio_mixer_record_daemon_restarted(void);
 
 void audio_mixer_set_line_out(bool enable);
+// DVR playback on (waits until the codec has it, so the file starts with its routing) / off.
 void audio_mixer_set_playback(bool active);
 
 // Audio output of the built-in analog receiver: the audio_on of every rtc6715.init(1, ...)

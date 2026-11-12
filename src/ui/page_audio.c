@@ -16,8 +16,12 @@
 /*
  * Audio mixer page. Every row is one [mixer] field of setting.ini:
  * sliders apply while they move (click to grab, dial, click to release),
- * toggles apply on click.
+ * toggles apply on click. Applying runs in the mixer's worker; setting.ini is
+ * written when a toggle is clicked, a slider is released, the page is left, or
+ * SAVE_DELAY_MS after the last dial step of a slider that is still grabbed.
  */
+
+#define SAVE_DELAY_MS 1000
 
 typedef enum {
     ITEM_SLIDER,
@@ -66,6 +70,12 @@ static lv_coord_t row_dsc[] = {UI_AUDIO_ROWS};
 static slider_group_t sliders[ARRAY_SIZE(items)];
 static btn_group_t toggles[ARRAY_SIZE(items)];
 static int focused = -1; // row of the grabbed slider
+static lv_timer_t *save_timer;
+
+static void save_timer_cb(lv_timer_t *timer) {
+    lv_timer_pause(timer);
+    audio_mixer_save();
+}
 
 static bool is_dvr_source_row(int row) {
     const audio_mixer_field_t field = items[row].field;
@@ -163,6 +173,10 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     update_items();
 
+    // runs in lv_timer_handler(), under lvgl_mutex like the input handlers
+    save_timer = lv_timer_create(save_timer_cb, SAVE_DELAY_MS, NULL);
+    lv_timer_pause(save_timer);
+
     return page;
 }
 
@@ -172,6 +186,8 @@ static void release_slider(bool back_to_submenu) {
 
     lv_obj_remove_style(sliders[focused].slider, &style_silder_select, LV_PART_MAIN);
     focused = -1;
+    lv_timer_pause(save_timer);
+    audio_mixer_save();
     if (back_to_submenu)
         app_state_push(APP_STATE_SUBMENU);
 }
@@ -183,6 +199,7 @@ static void page_audio_enter(void) {
 static void page_audio_exit(void) {
     // submenu_exit() has already set the main menu state
     release_slider(false);
+    audio_mixer_save();
 }
 
 static void page_audio_on_roller(uint8_t key) {
@@ -205,6 +222,9 @@ static void page_audio_on_roller(uint8_t key) {
     audio_mixer_set(field, value);
     update_slider(focused);
     audio_mixer_apply();
+    // saved on release, or once the dial rests
+    lv_timer_reset(save_timer);
+    lv_timer_resume(save_timer);
 }
 
 static void page_audio_on_click(uint8_t key, int sel) {
@@ -232,6 +252,7 @@ static void page_audio_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&toggles[sel]);
         const int value = btn_group_get_sel(&toggles[sel]) == 0 ? item->btn0_value : !item->btn0_value;
         audio_mixer_set(item->field, value);
+        audio_mixer_save();
         update_items();
         audio_mixer_apply();
     }

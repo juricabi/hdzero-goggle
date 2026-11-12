@@ -59,7 +59,8 @@ void dvr_enable_line_out(bool enable) {
 
 void dvr_select_audio_source(uint8_t source) {
     (void)source;
-    audio_mixer_apply();
+    // synchronous like before: a recording that starts next has its routing
+    audio_mixer_apply_wait(1000);
 }
 
 // video input config

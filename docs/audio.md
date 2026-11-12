@@ -41,6 +41,17 @@ their meaning comes from the Allwinner driver (`sound/soc/sunxi/sun8iw16-codec.c
 (36 `cset` lines, every routing control set explicitly); `src/core/audio_mixer.c`
 writes it to `/tmp/audio_mixer.cmd` and runs `amixer -q -s < /tmp/audio_mixer.cmd`.
 
+Applying is asynchronous: callers only mark the state as changed, and a worker
+thread writes the latest state, so a burst of dial steps ends in one or two amixer
+runs instead of one per step, and the input thread (which holds `lvgl_mutex`) never
+waits for amixer or the driver's PA sleep. Two callers still wait for the codec,
+as before: the recording start (`dvr_select_audio_source()`, so a recording never
+starts with the previous routing) and the start of DVR playback.
+`setting.ini` is written from the UI thread like every other setting: on a toggle
+click, when a slider is released, when the page is left, and 1 s after the last
+dial step of a slider that is still grabbed (so a power cut loses at most that
+last second, never a released value).
+
 The batch is ordered so that a change never disconnects everything in between:
 a line out that goes off is switched off first; then the gains, every switch that
 ends up on, the line out (switched on last when it is on), and only then every
