@@ -319,10 +319,13 @@ static void page_wifi_update_settings() {
     ini_putl("wifi", "rf_channel", g_setting.wifi.rf_channel, SETTING_INI);
     ini_puts("wifi", "root_pw", g_setting.wifi.root_pw, SETTING_INI);
     settings_put_bool("wifi", "ssh", g_setting.wifi.ssh);
-    settings_put_bool("wifi", "stream_audio", g_setting.wifi.stream_audio);
-
+    // Stream Audio (this build): written only when it changes, so a goggle that never had it
+    // switched on keeps setting.ini and the app partition's record.conf as stock leaves them.
+    if (settings_get_bool("wifi", "stream_audio", g_setting_defaults.wifi.stream_audio) != g_setting.wifi.stream_audio)
+        settings_put_bool("wifi", "stream_audio", g_setting.wifi.stream_audio);
     // Live stream audio: read by record and rtspLive (started below) from the record conf
-    ini_putl("live", "audio", g_setting.wifi.stream_audio ? 1 : 0, REC_CONF);
+    if (ini_getl("live", "audio", -1, REC_CONF) != (g_setting.wifi.stream_audio ? 1 : 0))
+        ini_putl("live", "audio", g_setting.wifi.stream_audio ? 1 : 0, REC_CONF);
 
     // Prepare WiFi interfaces
     if (!page_wifi_bootup_pending) {
@@ -331,8 +334,15 @@ static void page_wifi_update_settings() {
     page_wifi_update_services();
 
     // The WiFi chip's SDIO bus is on the module bay pins (PG0-PG2): module control
-    // lets go of them before WiFi starts and may take them again once it is off.
-    module_wifi_changed();
+    // lets go of them before WiFi starts and may take them again once it is off. If it
+    // has not let go within 3 s, WiFi is not started now and shows Off.
+    if (!module_wifi_changed()) {
+        LOGE("WiFi not started: the module bay still holds PG0-PG2 (the WiFi SDIO bus)");
+        g_setting.wifi.enable = false;
+        settings_put_bool("wifi", "enable", false);
+        btn_group_set_sel(&page_wifi.page_1.enable.button, 1);
+        module_wifi_changed();
+    }
 
     // Activate WiFi services
     if (g_setting.wifi.enable) {
@@ -402,11 +412,12 @@ static void page_wifi_update_page_1_notes() {
 }
 
 static void page_wifi_update_page_3_notes() {
-    static char buf[256];
-    snprintf(buf, sizeof(buf), "%s:\n    %s,%s.\n",
+    static char buf[512];
+    snprintf(buf, sizeof(buf), "%s:\n    %s,%s.\n%s.\n",
              _lang("Password Requirements"),
              _lang("Minimum 8 characters"),
-             _lang("maximum 64 characters"));
+             _lang("maximum 64 characters"),
+             _lang("Stream Audio: sound set on the Audio page"));
     lv_label_set_text(page_wifi.page_3.note, buf);
 }
 
