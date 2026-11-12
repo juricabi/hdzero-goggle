@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <sys/file.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -164,8 +165,32 @@ static int fold(int count, int ch) {
 
 // ---- bay pins and WiFi ----
 
-// Reads an SoC register through the sunxi_dump driver (as the awr script does).
+// /sys/class/sunxi_dump/dump is one address latch for every process: the HDMI audio bridge
+// (record daemon) and the probe kit take this lock around their reads (src/record/appmsg.h
+// HDMIA_LOCK_FILE), and so does read_reg().
+#define SUNXI_DUMP_LOCK "/tmp/.sunxi_dump.lock"
+
+static bool read_reg_once(uint32_t addr, uint32_t *val);
+
+// Reads an SoC register through the sunxi_dump driver (as the awr script does): under the
+// shared lock, three reads that must agree (a reader that does not lock, such as awr, can still
+// move the latch between the address and the value).
 static bool read_reg(uint32_t addr, uint32_t *val) {
+    int lk = open(SUNXI_DUMP_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (lk >= 0) {
+        for (int i = 0; i < 20 && flock(lk, LOCK_EX | LOCK_NB) != 0; i++)
+            usleep(50000); // at most 1 s, as the bridge
+    }
+    uint32_t a = 0, b = 1, c = 2;
+    const bool ok = read_reg_once(addr, &a) && read_reg_once(addr, &b) && read_reg_once(addr, &c) && a == b && b == c;
+    if (lk >= 0)
+        close(lk); // releases the lock
+    if (ok)
+        *val = a;
+    return ok;
+}
+
+static bool read_reg_once(uint32_t addr, uint32_t *val) {
     char buf[64];
     bool ok = false;
     int fd = open(reg_dump_path, O_RDWR);
