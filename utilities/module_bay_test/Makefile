@@ -7,6 +7,7 @@ SRC = ../../src/module
 OUT ?= /tmp/module_bay_test
 
 # module.c built as for the Goggle 2 emulator, against recording module types
+# (bay_pins_busy() is not compiled out there: its sysfs paths are variables)
 ROOT = ../..
 WORKER_CFLAGS = -O1 -g -std=gnu99 -DEMULATOR_BUILD -DHDZGOGGLE2=1 -D_GNU_SOURCE \
 	-I$(ROOT)/src -I$(ROOT)/src/core -I$(ROOT)/lib/log/include -I$(ROOT)/lib/lvgl -I$(ROOT)/lib/minIni/src
@@ -19,7 +20,8 @@ $(OUT)/test_trued_uart: test_trued_uart.c $(SRC)/bitbang_uart.c $(SRC)/trued_pro
 
 $(OUT)/test_module_worker: test_module_worker.c $(SRC)/module.c $(SRC)/module.h $(SRC)/module_def.h
 	mkdir -p $(OUT)
-	$(CC) $(WORKER_CFLAGS) -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -o $@ test_module_worker.c -lpthread
+	$(CC) $(WORKER_CFLAGS) -DSDIO_RECHECK_MS=500 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers \
+		-o $@ test_module_worker.c -lpthread
 
 # the real Switch, rapidFIRE and True-D types on the real worker, recording pins
 TYPES_SRC = $(SRC)/module.c $(SRC)/switch.c $(SRC)/rapidfire.c $(SRC)/trued.c $(SRC)/trued_proto.c \

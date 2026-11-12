@@ -8,21 +8,27 @@
 // resend), the pin release on power-off, Pin Control, the WiFi interlock, that no
 // request blocks its caller, the stored channels (Switch list, type round trips,
 // built-in receiver vs bay module on the Goggle 2, nothing stored while the bay is
-// not controlled) and the source change.
+// not controlled), the source change, and the SDIO half of the WiFi interlock:
+// bay_pins_busy() against stand-in files for /sys/module/xradio_wlan and the
+// sunxi_dump register answer (PG_CFG0), and the worker leaving the pins alone
+// while they are in the SDC1 function.
 //
 // Timing: lower bounds are exact (the worker must not act early), upper bounds
-// have SLACK_MS for a loaded host.
+// have SLACK_MS (300, -DSLACK_MS=... for a slow host) for a loaded host.
 //
 //   make -C utilities/module_bay_test test
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "../../src/module/module.c"
 
+#ifndef SLACK_MS
 #define SLACK_MS 300
+#endif
 
 // ---- stand-ins for the rest of the firmware ----
 
@@ -171,6 +177,19 @@ static void settle(void) {
         usleep(10000);
     }
     usleep(200000); // a transfer in progress
+}
+
+// writes text to path (the stand-in for a sysfs file), "": removes it
+static void put_file(const char *path, const char *text) {
+    if (!*text) {
+        unlink(path);
+        return;
+    }
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fputs(text, f);
+        fclose(f);
+    }
 }
 
 static void power_on(void) { module_power_changed(1); }
@@ -338,6 +357,59 @@ int main(void) {
     g_setting.source.analog_module = SETTING_SOURCES_ANALOG_MODULE_INTERNAL;
     module_source_changed();
     check(analog_channel_get() == 40, "toggled back to Built-in: L8 again");
+
+    printf("WiFi SDIO interlock (bay_pins_busy(), stand-in sysfs files):\n");
+    char dir[] = "/tmp/module_bay_test.XXXXXX";
+    if (!mkdtemp(dir)) {
+        check(0, "temporary directory");
+    } else {
+        char drv[64], dump[64];
+        snprintf(drv, sizeof(drv), "%s/xradio_wlan", dir);
+        snprintf(dump, sizeof(dump), "%s/dump", dir);
+        wlan_driver_path = drv;
+        reg_dump_path = dump;
+        static const struct {
+            const char *driver, *dump;
+            bool busy;
+            const char *what;
+        } cases[] = {
+            {"", "", false, "no driver, no register dump: free"},
+            {"x", "", true, "WiFi driver loaded: busy"},
+            {"", "0x0300b0d8: 0x22777777\n", false, "PG0-PG5 IO disabled (rc.sh, 0x22777777): free"},
+            {"", "0x0300b0d8: 0x22222222\n", true, "PG0-PG5 in SDC1 (function 2): busy"},
+            {"", "0x0300b0d8: 0x22777277\n", true, "only PG2 in SDC1: busy"},
+            {"", "0x0300b0d8 0x22777727\n", true, "only PG1 in SDC1 (answer without a colon): busy"},
+            {"", "0x0300b0d8: 0x22772777\n", false, "only PG3 in SDC1 (not a bay pin): free"},
+            {"", "0x0300b0d8: 0x22777771\n", false, "PG0 output (function 1, module control): free"},
+        };
+        for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            put_file(drv, cases[i].driver);
+            put_file(dump, cases[i].dump);
+            check(bay_pins_busy() == cases[i].busy, cases[i].what);
+        }
+
+        // the worker leaves the pins alone while they are busy and checks again
+        g_setting.module.type = MODULE_TRUED;
+        g_setting.module.pins = true;
+        module_settings_changed(false);
+        settle();
+        power_off();
+        settle();
+        put_file(dump, "0x0300b0d8: 0x22222222\n");
+        power_on();
+        t = t_now();
+        sleep_until(t + 1000 + SLACK_MS);
+        check(count('i', t, 1000000) == 0 && module_status() == MODULE_STATUS_SDIO,
+              "pins in SDC1 at set-up: no init, status \"pins in use by WiFi\"");
+        put_file(dump, "0x0300b0d8: 0x22777777\n");
+        uint64_t freed = t_now();
+        sleep_until(freed + SDIO_RECHECK_MS + SLACK_MS);
+        check(find_from('i', freed, &e) && e.t < freed + SDIO_RECHECK_MS + SLACK_MS && module_status() == MODULE_STATUS_ACTIVE,
+              "pins freed: set up at the next check");
+        unlink(drv);
+        unlink(dump);
+        rmdir(dir);
+    }
 
     printf("%s\n", failures ? "FAILED" : "ALL PASSED");
     return failures ? 1 : 0;
