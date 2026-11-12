@@ -166,8 +166,9 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
                                            240, 40, 1, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
 
     lbl_module_mode = create_label_item(cont, _lang("Mode"), 1, ROW_MODE, 1);
+    // (wide enough for the Switch pin orders, "PG0=1 PG1=2 PG2=4")
     btn_module_mode = create_dropdown_item(cont, "None", 2, ROW_MODE,
-                                           240, 40, 1, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
+                                           320, 40, 2, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
 
     create_btn_group_item(&btn_pins, cont, 2, _lang("Pin Control"), _lang("Off"), _lang("On"), "", "", ROW_PINS);
     btn_group_set_sel(&btn_pins, g_setting.module.pins ? 1 : 0);
