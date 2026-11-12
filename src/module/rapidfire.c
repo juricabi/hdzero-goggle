@@ -6,6 +6,26 @@
 #include "rapidfire.h"
 #include "softspi.h"
 
+// ImmersionRC rapidFIRE SPI API on the bay pins (CS, DATA, CLK), with pkendall's
+// timing from his analog-module-control branch (used on a Goggle 1).  The goggle
+// only writes: nothing here reads a pin or depends on an answer, so a module that
+// only listens (a True-D in its rapidFIRE mode) gets the same as a rapidFIRE.
+//
+//   2.0 s after bay power-on (the ExpressLRS backpack's VRX_BOOT_DELAY):
+//   init      pins from input straight to all three high, 200 ms; all low, 200 ms
+//             (the SPI mode entry, as the ExpressLRS backpack does it); then CS
+//             high, CLK and DATA low (idle, kept while the module is controlled)
+//   mode      100 ms later 'D' '=' 0x01 crc mode
+//   channel   right after: 'B' '=' 0x01 crc band (IMRC numbering), 100 ms, 'C' '='
+//             0x01 crc channel (1-8); crc = sum of bytes 0-3 with the value in byte
+//             3, the value again in byte 4
+//   again     5.0 s after bay power-on: band and channel once more (a module that
+//             boots slower); channel changes in between wait for it
+// Each command goes out 3 times, 10 ms apart: CS low, 16 us, 5 bytes MSB first
+// (DATA set while CLK is low, CLK high >= 9 us, low >= 8 us, each plus one sysfs
+// write), 16 us, CS high.  The receiver should sample DATA on the rising CLK edge
+// while CS is low and should not rely on the SPI mode entry (it may boot after it).
+
 #define SPAM_COUNT 3
 
 #define RF_API_DIR_GRTHAN  '>'
@@ -41,11 +61,8 @@ static void rapidfire_set_mode() {
 }
 
 static void rapidfire_init() {
-    softspi_init();
-
-    softspi_set_pin(SOFTSPI_CLK, 1);
-    softspi_set_pin(SOFTSPI_CS, 1);
-    softspi_set_pin(SOFTSPI_DAT, 1);
+    softspi_open();       // inputs
+    softspi_drive_all(1); // straight to high, no low step before the entry
     if (!module_sleep_ms(200))
         return;
     softspi_set_pin(SOFTSPI_CLK, 0);
@@ -90,6 +107,7 @@ static void send_spi(uint8_t *buf, uint8_t len) {
     }
     usleep(16);
     softspi_set_pin(SOFTSPI_CS, 1);
+    softspi_set_pin(SOFTSPI_DAT, 0); // idle: CS high, CLK and DATA low
 }
 
 // One command, SPAM_COUNT times (the rapidFIRE sometimes misses a packet).  False
@@ -122,6 +140,6 @@ module_def_t rapidfire_module = {
     .set_channel = rapidfire_set_channel,
     .set_mode = rapidfire_set_mode,
     .mode_names = "legacy\nrapidFIRE 1\nrapidFIRE 2",
-    .boot_ms = 0,
-    .boot_resend_ms = 0,
+    .boot_ms = 2000,        // as the ExpressLRS backpack (VRX_BOOT_DELAY)
+    .boot_resend_ms = 5000, // a module that boots slower (a True-D's boot screen ends ~3.5 s)
 };
