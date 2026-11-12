@@ -11,6 +11,7 @@
  *   amixer_delay <ms>      every amixer run takes that long (Goggle 2 PA-off sleep)
  *   init | apply | save | wait | rx | dump | unsaved | mark (prints MARK)
  *   set <key> <value> | get <key> | line_out <0|1> | playback <0|1> | live_dac <0|1>
+ *   inmix <rec key>        is that source recorded through the headphone mix (the page's marker)
  *   sleep <ms>             let the worker run (watcher)
  *   time_apply <n>         n x (set + apply) like dial steps; prints the slowest call
  *
@@ -197,6 +198,8 @@ int main(void) {
             audio_mixer_set(field_of(arg1), value);
         } else if (sscanf(line, "get %255s", arg1) == 1) {
             out("GET %s %d\n", arg1, audio_mixer_get(field_of(arg1)));
+        } else if (sscanf(line, "inmix %255s", arg1) == 1) {
+            out("INMIX %s %d\n", arg1, audio_mixer_recorded_via_mix(field_of(arg1)));
         } else if (sscanf(line, "line_out %d", &value) == 1) {
             audio_mixer_set_line_out(value != 0);
         } else if (sscanf(line, "playback %d", &value) == 1) {

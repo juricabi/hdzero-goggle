@@ -27,9 +27,28 @@ MUTANTS = [
     ("review: AIF1 AD0L/R ADC switches off", R, [
         ('{"AIF1 AD0L Mixer ADCL Switch", 1}', '{"AIF1 AD0L Mixer ADCL Switch", 0}'),
         ('{"AIF1 AD0R Mixer ADCR Switch", 1}', '{"AIF1 AD0R Mixer ADCR Switch", 0}')]),
-    ("review: As Heard inverted", R, [
-        ("const bool as_heard = v[AUDIO_MIXER_DVR_MODE] == AUDIO_MIXER_DVR_AS_HEARD;",
-         "const bool as_heard = v[AUDIO_MIXER_DVR_MODE] != AUDIO_MIXER_DVR_AS_HEARD;")]),
+    ("review: Record What I Hear inverted", R, [
+        ("const bool rec_mix = v[AUDIO_MIXER_REC_MIX] != 0;", "const bool rec_mix = v[AUDIO_MIXER_REC_MIX] == 0;")]),
+    ("mix + direct: a heard mic recorded twice", R, [
+        ("const int adc_mic = v[AUDIO_MIXER_REC_MIC] && !(rec_mix && mon_mic > 0);",
+         "const int adc_mic = v[AUDIO_MIXER_REC_MIC];")]),
+    ("mix + direct: direct a/v only without the mix (old Custom)", R, [
+        ("const int adc_av = v[AUDIO_MIXER_REC_AV] && !(rec_mix && mon_av > 0);",
+         "const int adc_av = !rec_mix && v[AUDIO_MIXER_REC_AV];")]),
+    ("mix + direct: line in left out whenever the mix is on", R, [
+        ("const int adc_line = v[AUDIO_MIXER_REC_LINE_IN] && !(rec_mix && mon_line > 0);",
+         "const int adc_line = v[AUDIO_MIXER_REC_LINE_IN] && !rec_mix;")]),
+    ("mix + direct: configured level instead of the level in effect (playback)", R, [
+        ("const int adc_mic = v[AUDIO_MIXER_REC_MIC] && !(rec_mix && mon_mic > 0);",
+         "const int adc_mic = v[AUDIO_MIXER_REC_MIC] && !(rec_mix && v[AUDIO_MIXER_MIC] > 0);")]),
+    ("page marker: level 0 counted as in the mix", R, [
+        ("settings->value[AUDIO_MIXER_REC_MIX] && settings->value[level] > 0;",
+         "settings->value[AUDIO_MIXER_REC_MIX] && settings->value[level] >= 0;")]),
+    ("migration: Record What I Hear on", R, [("v[AUDIO_MIXER_REC_MIX] = 0;", "v[AUDIO_MIXER_REC_MIX] = 1;")]),
+    ("load: a version 1 [mixer] read as it is", M, [
+        ("if (version < AUDIO_MIXER_VERSION) {", "if (version < 1) {")]),
+    ("load: version 1 keys left behind", M, [
+        ("            ini_puts(AUDIO_MIXER_SECTION, old_keys[i], NULL, SETTING_INI);", "            (void)old_keys[i];")]),
     ("switches in table order (off before on)", R, [
         ("        if (sw[i].on)\n            cset(&cb, sw[i].name, 1);", "        cset(&cb, sw[i].name, sw[i].on);"),
         ("        if (!sw[i].on)\n            cset(&cb, sw[i].name, 0);", "        if (0)\n            cset(&cb, sw[i].name, 0);")]),

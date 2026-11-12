@@ -57,10 +57,10 @@ static const item_t items[] = {
     SLIDER(AUDIO_MIXER_LINE_IN_BOOST, "Line In Boost"),
     SLIDER(AUDIO_MIXER_HEADPHONES, "Headphones"),
     SLIDER(AUDIO_MIXER_PLAYBACK, "Playback Volume"),
-    TOGGLE(AUDIO_MIXER_DVR_MODE, "DVR Audio", "As Heard", "Custom", AUDIO_MIXER_DVR_AS_HEARD),
-    TOGGLE(AUDIO_MIXER_DVR_MIC, "Record Mic", "Yes", "No", 1),
-    TOGGLE(AUDIO_MIXER_DVR_LINE_IN, "Record Line In", "Yes", "No", 1),
-    TOGGLE(AUDIO_MIXER_DVR_AV, "Record A/V In", "Yes", "No", 1),
+    TOGGLE(AUDIO_MIXER_REC_MIX, "Record What I Hear", "Yes", "No", 1),
+    TOGGLE(AUDIO_MIXER_REC_MIC, "Record Mic", "Yes", "No", 1),
+    TOGGLE(AUDIO_MIXER_REC_LINE_IN, "Record Line In", "Yes", "No", 1),
+    TOGGLE(AUDIO_MIXER_REC_AV, "Record A/V In", "Yes", "No", 1),
     SLIDER(AUDIO_MIXER_DVR_LEVEL, "Record Level"),
     {.type = ITEM_BACK, .field = AUDIO_MIXER_FIELD_COUNT, .name = "Back"},
 };
@@ -90,11 +90,6 @@ static void save_timer_cb(lv_timer_t *timer) {
     audio_mixer_save();
 }
 
-static bool is_dvr_source_row(int row) {
-    const audio_mixer_field_t field = items[row].field;
-    return field == AUDIO_MIXER_DVR_MIC || field == AUDIO_MIXER_DVR_LINE_IN || field == AUDIO_MIXER_DVR_AV;
-}
-
 static void update_slider(int row) {
     char buf[32];
     const int value = audio_mixer_get(items[row].field);
@@ -105,23 +100,12 @@ static void update_slider(int row) {
 }
 
 static void update_items(void) {
-    const bool custom = audio_mixer_get(AUDIO_MIXER_DVR_MODE) == AUDIO_MIXER_DVR_CUSTOM;
-
     for (int row = 0; row < ITEM_COUNT; row++) {
         const item_t *item = &items[row];
         if (item->type == ITEM_SLIDER) {
             update_slider(row);
         } else if (item->type == ITEM_TOGGLE) {
             btn_group_set_sel(&toggles[row], audio_mixer_get(item->field) == item->btn0_value ? 0 : 1);
-        }
-
-        // the DVR source selection only matters in custom mode
-        if (is_dvr_source_row(row)) {
-            btn_group_enable(&toggles[row], custom);
-            if (custom)
-                lv_obj_add_flag(pp_audio.p_arr.panel[row], FLAG_SELECTABLE);
-            else
-                lv_obj_clear_flag(pp_audio.p_arr.panel[row], FLAG_SELECTABLE);
         }
     }
 }
@@ -199,9 +183,7 @@ static lv_obj_t *page_audio_create(lv_obj_t *parent, panel_arr_t *arr) {
     }
 
     lv_obj_t *note = lv_label_create(cont);
-    snprintf(buf, sizeof(buf), "%s. %s.",
-             _lang("Levels set the headphone mix, 0 is off"),
-             _lang("As Heard records the sources at these levels, before the headphone volume; Custom records the selected sources directly"));
+    snprintf(buf, sizeof(buf), "%s.", _lang("Levels set the headphone mix, 0 is off"));
     lv_label_set_text(note, buf);
     lv_obj_set_style_text_font(note, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_LEFT, 0);
@@ -284,9 +266,6 @@ static void page_audio_on_click(uint8_t key, int sel) {
             lv_obj_add_style(sliders[sel].slider, &style_silder_select, LV_PART_MAIN);
         }
     } else if (item->type == ITEM_TOGGLE) {
-        if (is_dvr_source_row(sel) && audio_mixer_get(AUDIO_MIXER_DVR_MODE) != AUDIO_MIXER_DVR_CUSTOM) {
-            return;
-        }
         btn_group_toggle_sel(&toggles[sel]);
         const int value = btn_group_get_sel(&toggles[sel]) == 0 ? item->btn0_value : !item->btn0_value;
         audio_mixer_set(item->field, value);

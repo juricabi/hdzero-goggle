@@ -4,10 +4,12 @@
  * Audio mixer for the V536 internal codec (all targets).
  *
  * Every source has its own level in the analog output mixers, which feed the
- * headphone / line-out jack (left + right summed, mono). The DVR either records
- * those output mixers ("as heard": left and right separately, before the sum and
- * before the line-out volume) or a custom set of sources that go straight into
- * the ADC (the path the old "Audio Source" setting used).
+ * headphone / line-out jack (left + right summed, mono): "what I hear". The ADC
+ * (recording, WiFi stream audio and HDMI-out audio alike) takes that mix ("Record
+ * What I Hear": left and right separately, before the sum and before the line-out
+ * volume) and/or each analog source straight from its input at full level ("Record
+ * Mic / Line In / A/V In", the path the old "Audio Source" setting used). A source
+ * that is already in the recorded mix is not added a second time.
  * See docs/audio.md for the signal paths and the register ranges.
  */
 
@@ -19,28 +21,23 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-typedef enum {
-    AUDIO_MIXER_DVR_AS_HEARD = 0, // DVR records the output mixers (the levels), stereo
-    AUDIO_MIXER_DVR_CUSTOM = 1,   // DVR records the selected sources directly
-} audio_mixer_dvr_mode_t;
-
 // Fields of the [mixer] section of setting.ini
 typedef enum {
-    AUDIO_MIXER_MIC = 0,       // mix level, 0 = off, 1..8 = -4.5..+6 dB
-    AUDIO_MIXER_LINE_IN,       // mix level
-    AUDIO_MIXER_AV,            // mix level
+    AUDIO_MIXER_MIC = 0,       // headphone level, 0 = off, 1..8 = -4.5..+6 dB
+    AUDIO_MIXER_LINE_IN,       // headphone level
+    AUDIO_MIXER_AV,            // headphone level
     AUDIO_MIXER_MIC_BOOST,     // MIC1 preamp 0..7
     AUDIO_MIXER_LINE_IN_BOOST, // MIC2 preamp 0..7
     AUDIO_MIXER_HEADPHONES,    // line-out volume 0..31, 0 = off
     AUDIO_MIXER_PLAYBACK,      // line-out volume during DVR playback 0..31, 0 = off
-    AUDIO_MIXER_DVR_MODE,      // audio_mixer_dvr_mode_t
-    AUDIO_MIXER_DVR_MIC,       // custom DVR mode: record the mic, 0/1
-    AUDIO_MIXER_DVR_LINE_IN,   // custom DVR mode: record line in, 0/1
-    AUDIO_MIXER_DVR_AV,        // custom DVR mode: record A/V, 0/1
-    AUDIO_MIXER_DVR_LEVEL,     // ADC input gain 0..7 = -4.5..+6 dB
+    AUDIO_MIXER_REC_MIX,       // Record What I Hear: the headphone mix into the ADC, 0/1
+    AUDIO_MIXER_REC_MIC,       // Record Mic: the mic straight into the ADC (unless in the recorded mix), 0/1
+    AUDIO_MIXER_REC_LINE_IN,   // Record Line In, 0/1
+    AUDIO_MIXER_REC_AV,        // Record A/V In, 0/1
+    AUDIO_MIXER_DVR_LEVEL,     // Record Level: ADC input gain 0..7 = -4.5..+6 dB
     AUDIO_MIXER_RX_AUDIO,      // audio output of the built-in analog receiver (RTC6715), 0/1;
                                // not a codec control (Goggle 2 and BoxPro only)
-    AUDIO_MIXER_HDMI,          // mix level of the live digital source in the DAC (HDMI-in audio)
+    AUDIO_MIXER_HDMI,          // headphone level of HDMI-in audio (the live digital source in the DAC)
     AUDIO_MIXER_FIELD_COUNT
 } audio_mixer_field_t;
 
@@ -58,11 +55,6 @@ typedef struct {
     bool playback; // DVR playback is running
     bool live_dac; // a live digital source plays into the DAC (HDMI-in audio), see audio_mixer_set_live_dac()
 } audio_mixer_context_t;
-
-// The page shows the "HDMI In" level once the HDMI-in audio feature is integrated.
-#ifndef AUDIO_MIXER_HDMI_IN_ROW
-#define AUDIO_MIXER_HDMI_IN_ROW 0
-#endif
 
 // setting.ini [mixer] key of a field
 const char *audio_mixer_key(audio_mixer_field_t field);
@@ -93,9 +85,10 @@ bool audio_mixer_apply_wait(unsigned timeout_ms);
 // when a DVR file is played, at a time the app does not know.
 
 void audio_mixer_set_line_out(bool enable);
-// Hook for HDMI-in audio (default off): a live digital source plays into the DAC. Its level is
-// AUDIO_MIXER_HDMI; unlike playback it is mixed with the other live sources, the line out is on
-// even while HDMI in is the source (Headphones permitting), and As Heard records it (Custom not).
+// HDMI-in audio (src/core/hdmi_audio.c, only with [hdmi] audio_in=1): a live digital source plays
+// into the DAC. Its level is AUDIO_MIXER_HDMI; unlike playback it is mixed with the other live
+// sources, the line out is on even while HDMI in is the source (Volume permitting), and Record What
+// I Hear records it (there is no direct path from the DAC into the ADC).
 void audio_mixer_set_live_dac(bool on);
 // DVR playback on / off. Waits until the codec has it: call it after media_init() (whose
 // AW_MPI_SYS_Init resets the mixer) and before media_exit(), so the line out always has a source.
@@ -107,6 +100,15 @@ bool audio_mixer_rx_audio(void);
 
 // Human readable value of a field ("Off", "-4.5 dB", "27", ...)
 void audio_mixer_value_str(audio_mixer_field_t field, int value, char *buf, size_t size);
+
+// The headphone level field of a Record source switch (AUDIO_MIXER_REC_MIC -> AUDIO_MIXER_MIC, ...),
+// AUDIO_MIXER_FIELD_COUNT for other fields.
+audio_mixer_field_t audio_mixer_level_of(audio_mixer_field_t rec_field);
+// Is that source (a Record source switch field) recorded through the headphone mix (Record What I
+// Hear on and its level above 0)? Then its direct path stays off: it would be recorded twice.
+bool audio_mixer_in_recorded_mix(const audio_mixer_settings_t *settings, audio_mixer_field_t rec_field);
+// The same for the current settings.
+bool audio_mixer_recorded_via_mix(audio_mixer_field_t rec_field);
 
 // The amixer batch (amixer -s syntax) for a state; returns the length like snprintf.
 // Every control the mixer owns is set once. Order: a line out that goes off first, then

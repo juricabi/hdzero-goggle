@@ -14,6 +14,8 @@
  *                    -> ADC input mixer ("l_output/r_output mixer" switches: left ADC <- left
  *                       output mixer, right <- right; before the sum and the line-out volume)
  *   ADC input mixer -> ADC input gain -> ADC -> AIF1 -> record daemon (48 kHz stereo AAC)
+ * The ADC input mixers are plain DAPM mixers (one bit per input in L/R_ADCMIX_SRC, summed), so
+ * the output mixer and the direct inputs can be on together (docs/audio.md).
  */
 
 #include <stdio.h>
@@ -44,10 +46,10 @@ static const uint8_t field_max[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_LINE_IN_BOOST] = AUDIO_MIXER_BOOST_MAX,
     [AUDIO_MIXER_HEADPHONES] = AUDIO_MIXER_VOLUME_MAX,
     [AUDIO_MIXER_PLAYBACK] = AUDIO_MIXER_VOLUME_MAX,
-    [AUDIO_MIXER_DVR_MODE] = AUDIO_MIXER_DVR_CUSTOM,
-    [AUDIO_MIXER_DVR_MIC] = 1,
-    [AUDIO_MIXER_DVR_LINE_IN] = 1,
-    [AUDIO_MIXER_DVR_AV] = 1,
+    [AUDIO_MIXER_REC_MIX] = 1,
+    [AUDIO_MIXER_REC_MIC] = 1,
+    [AUDIO_MIXER_REC_LINE_IN] = 1,
+    [AUDIO_MIXER_REC_AV] = 1,
     [AUDIO_MIXER_DVR_LEVEL] = AUDIO_MIXER_DVR_LEVEL_MAX,
     [AUDIO_MIXER_RX_AUDIO] = 1,
     [AUDIO_MIXER_HDMI] = AUDIO_MIXER_LEVEL_MAX,
@@ -81,18 +83,37 @@ void audio_mixer_defaults_from_audio_source(audio_mixer_settings_t *settings, lo
     // libmedia_mpp's line-out volume, which DVR playback used until now.
     v[AUDIO_MIXER_PLAYBACK] = 27;
 
-    // DVR: exactly the one source of the old "Audio Source" setting, straight into the ADC.
-    v[AUDIO_MIXER_DVR_MODE] = AUDIO_MIXER_DVR_CUSTOM;
-    v[AUDIO_MIXER_DVR_MIC] = dvr_source == 0;
-    v[AUDIO_MIXER_DVR_LINE_IN] = dvr_source == 1;
-    v[AUDIO_MIXER_DVR_AV] = dvr_source == 2;
+    // Recording: exactly the one source of the old "Audio Source" setting, straight into the
+    // ADC; the headphone mix is not recorded.
+    v[AUDIO_MIXER_REC_MIX] = 0;
+    v[AUDIO_MIXER_REC_MIC] = dvr_source == 0;
+    v[AUDIO_MIXER_REC_LINE_IN] = dvr_source == 1;
+    v[AUDIO_MIXER_REC_AV] = dvr_source == 2;
 
     // Built-in analog receiver audio: the old rtc6715.init(1, audio_source == A/V In)
     // (off with the old default, Mic).
     v[AUDIO_MIXER_RX_AUDIO] = old_value == 2;
 
-    // HDMI-in audio, when integrated: 0 dB, the level of DVR playback.
+    // HDMI-in audio (only with HDMI In Audio on): 0 dB, the level of DVR playback.
     v[AUDIO_MIXER_HDMI] = OUTPUT_GAIN_0DB + 1;
+}
+
+audio_mixer_field_t audio_mixer_level_of(audio_mixer_field_t rec_field) {
+    switch (rec_field) {
+    case AUDIO_MIXER_REC_MIC:
+        return AUDIO_MIXER_MIC;
+    case AUDIO_MIXER_REC_LINE_IN:
+        return AUDIO_MIXER_LINE_IN;
+    case AUDIO_MIXER_REC_AV:
+        return AUDIO_MIXER_AV;
+    default:
+        return AUDIO_MIXER_FIELD_COUNT;
+    }
+}
+
+bool audio_mixer_in_recorded_mix(const audio_mixer_settings_t *settings, audio_mixer_field_t rec_field) {
+    const audio_mixer_field_t level = audio_mixer_level_of(rec_field);
+    return level < AUDIO_MIXER_FIELD_COUNT && settings->value[AUDIO_MIXER_REC_MIX] && settings->value[level] > 0;
 }
 
 typedef struct {
@@ -127,7 +148,8 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
         v[i] = clamp(settings->value[i], field_max[i]);
 
     const bool playback = context->playback;
-    const bool as_heard = v[AUDIO_MIXER_DVR_MODE] == AUDIO_MIXER_DVR_AS_HEARD;
+    // Record What I Hear: the output mixers into the ADC
+    const bool rec_mix = v[AUDIO_MIXER_REC_MIX] != 0;
 
     // Sources in the output mixer: muted while a DVR file plays, so only the file is heard.
     const int mon_mic = playback ? 0 : v[AUDIO_MIXER_MIC];
@@ -136,7 +158,7 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
 
     // The DAC is a digital source with two uses: DVR playback (alone), or a live source such as
     // HDMI-in audio, mixed with the others at its own level. Either way it reaches the ADC only
-    // through the output mixers (As Heard); the AIF1 DA -> AD loopback switches are never set.
+    // through the output mixers (Record What I Hear); the AIF1 DA -> AD loopbacks are never set.
     const bool live_dac = context->live_dac && !playback;
     const int mon_dac = live_dac ? v[AUDIO_MIXER_HDMI] : 0;
     const int dac_on = playback || mon_dac > 0;
@@ -144,10 +166,13 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
     const int dac_volume = playback ? DAC_PLAYBACK
                                     : (mon_dac ? DAC_PLAYBACK + 2 * (mon_dac - 1 - OUTPUT_GAIN_0DB) : DIGITAL_VOLUME_OLD);
 
-    // Sources straight into the ADC (custom DVR mode only)
-    const int adc_mic = !as_heard && v[AUDIO_MIXER_DVR_MIC];
-    const int adc_line = !as_heard && v[AUDIO_MIXER_DVR_LINE_IN];
-    const int adc_av = !as_heard && v[AUDIO_MIXER_DVR_AV];
+    // Sources straight into the ADC at full level (Record Mic / Line In / A/V In), heard or not.
+    // A source that is already in the recorded mix stays out: it would be recorded twice. (The
+    // levels in effect count: while a file plays the live sources leave the mix, and a source
+    // switched to Record Yes is then recorded directly.)
+    const int adc_mic = v[AUDIO_MIXER_REC_MIC] && !(rec_mix && mon_mic > 0);
+    const int adc_line = v[AUDIO_MIXER_REC_LINE_IN] && !(rec_mix && mon_line > 0);
+    const int adc_av = v[AUDIO_MIXER_REC_AV] && !(rec_mix && mon_av > 0);
 
     // Line out volume; 0 switches the line out off
     const int volume = playback ? v[AUDIO_MIXER_PLAYBACK] : v[AUDIO_MIXER_HEADPHONES];
@@ -156,15 +181,15 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
 
     // Every switch the mixer owns, with the value it gets. They are written in two passes, the
     // ones that end up on before the ones that end up off: a path that stays never drops out,
-    // and a change (another source, playback on/off, As Heard/Custom) never leaves the line
-    // out or the ADC without a source in between. Without a connected source, DAPM powers the
-    // line out down (PA off, then on again: a click, and on the Goggle 2 the driver sleeps
-    // 160 ms in the PA-off event).
+    // and a change (another source, playback on/off, the mix or a direct source on/off) never
+    // leaves the line out or the ADC without a source in between. Without a connected source,
+    // DAPM powers the line out down (PA off, then on again: a click, and on the Goggle 2 the
+    // driver sleeps 160 ms in the PA-off event).
     const struct {
         const char *name;
         int on;
     } sw[] = {
-        // output mixers: headphone mix, and the recording in As Heard
+        // output mixers: headphone mix, and the recording with Record What I Hear
         {"Left Output Mixer MIC1Booststage Switch", mon_mic > 0},
         {"Right Output Mixer MIC1Booststage Switch", mon_mic > 0},
         {"Left Output Mixer MIC2Booststage Switch", mon_line > 0},
@@ -184,8 +209,8 @@ size_t audio_mixer_build_commands(const audio_mixer_settings_t *settings, const 
         {"RADC input Mixer MIC2 boost Switch", adc_line},
         {"LADC input Mixer LINEINL Switch", adc_av},
         {"RADC input Mixer LINEINR Switch", adc_av},
-        {"LADC input Mixer l_output mixer Switch", as_heard},
-        {"RADC input Mixer r_output mixer Switch", as_heard},
+        {"LADC input Mixer l_output mixer Switch", rec_mix},
+        {"RADC input Mixer r_output mixer Switch", rec_mix},
         {"LADC input Mixer r_output mixer Switch", 0},
         {"RADC input Mixer l_output mixer Switch", 0},
         {"AIF1 AD0L Mixer ADCL Switch", 1},

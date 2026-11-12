@@ -15,7 +15,9 @@
 #include "util/system.h"
 
 #define AUDIO_MIXER_SECTION "mixer"
-#define AUDIO_MIXER_VERSION 1
+// 2: Record What I Hear and the Record source switches (rec_*) replaced the As Heard / Custom mode
+// (dvr_mode, dvr_mic, dvr_line_in, dvr_av) of version 1, which was never released.
+#define AUDIO_MIXER_VERSION 2
 
 // The last batch stays there, handy to see what was sent to the codec.
 #ifndef EMULATOR_BUILD
@@ -40,14 +42,17 @@ static const char *const field_key[AUDIO_MIXER_FIELD_COUNT] = {
     [AUDIO_MIXER_LINE_IN_BOOST] = "line_in_boost",
     [AUDIO_MIXER_HEADPHONES] = "headphones",
     [AUDIO_MIXER_PLAYBACK] = "playback",
-    [AUDIO_MIXER_DVR_MODE] = "dvr_mode",
-    [AUDIO_MIXER_DVR_MIC] = "dvr_mic",
-    [AUDIO_MIXER_DVR_LINE_IN] = "dvr_line_in",
-    [AUDIO_MIXER_DVR_AV] = "dvr_av",
+    [AUDIO_MIXER_REC_MIX] = "rec_mix",
+    [AUDIO_MIXER_REC_MIC] = "rec_mic",
+    [AUDIO_MIXER_REC_LINE_IN] = "rec_line_in",
+    [AUDIO_MIXER_REC_AV] = "rec_av",
     [AUDIO_MIXER_DVR_LEVEL] = "dvr_level",
     [AUDIO_MIXER_RX_AUDIO] = "rx_audio",
     [AUDIO_MIXER_HDMI] = "hdmi",
 };
+
+// keys of version 1 (test builds only), removed when the section is migrated
+static const char *const old_keys[] = {"dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av"};
 
 /*
  * Threads: the UI (page, source switches) changes `mixer` / `context` and asks for an apply;
@@ -92,12 +97,17 @@ void audio_mixer_init(void) {
     audio_mixer_settings_t defaults;
     audio_mixer_defaults_from_audio_source(&defaults, audio_source);
 
-    if (ini_getl(AUDIO_MIXER_SECTION, "version", 0, SETTING_INI) < AUDIO_MIXER_VERSION) {
+    const long version = ini_getl(AUDIO_MIXER_SECTION, "version", 0, SETTING_INI);
+    if (version < AUDIO_MIXER_VERSION) {
+        // No [mixer] yet (stock firmware, fresh install), or one of a test build: the stock
+        // behaviour of [record] audio_source, whatever the section had.
         mixer = defaults;
+        for (size_t i = 0; i < sizeof(old_keys) / sizeof(old_keys[0]); i++)
+            ini_puts(AUDIO_MIXER_SECTION, old_keys[i], NULL, SETTING_INI);
         for (int i = 0; i < AUDIO_MIXER_FIELD_COUNT; i++)
             ini_putl(AUDIO_MIXER_SECTION, field_key[i], mixer.value[i], SETTING_INI);
         ini_putl(AUDIO_MIXER_SECTION, "version", AUDIO_MIXER_VERSION, SETTING_INI);
-        LOGI("audio mixer: migrated from record/audio_source=%ld", audio_source);
+        LOGI("audio mixer: migrated from record/audio_source=%ld (mixer version %ld)", audio_source, version);
     } else {
         for (int i = 0; i < AUDIO_MIXER_FIELD_COUNT; i++) {
             const long value = ini_getl(AUDIO_MIXER_SECTION, field_key[i], defaults.value[i], SETTING_INI);
@@ -154,13 +164,12 @@ static void write_batch(const audio_mixer_settings_t *settings, const audio_mixe
 
     const size_t len = audio_mixer_build_commands(settings, ctx, cmd, sizeof(cmd));
     const uint8_t *v = settings->value;
-    LOGI("audio mixer: mic=%d line_in=%d av=%d boost=%d/%d phones=%d playback=%d dvr=%s(%d%d%d) dvr_level=%d rx=%d hdmi=%d line_out=%d playing=%d live_dac=%d",
-         v[AUDIO_MIXER_MIC], v[AUDIO_MIXER_LINE_IN], v[AUDIO_MIXER_AV],
+    LOGI("audio mixer: mic=%d line_in=%d av=%d hdmi=%d boost=%d/%d phones=%d playback=%d rec mix=%d direct=%d%d%d level=%d rx=%d line_out=%d playing=%d live_dac=%d",
+         v[AUDIO_MIXER_MIC], v[AUDIO_MIXER_LINE_IN], v[AUDIO_MIXER_AV], v[AUDIO_MIXER_HDMI],
          v[AUDIO_MIXER_MIC_BOOST], v[AUDIO_MIXER_LINE_IN_BOOST],
          v[AUDIO_MIXER_HEADPHONES], v[AUDIO_MIXER_PLAYBACK],
-         v[AUDIO_MIXER_DVR_MODE] == AUDIO_MIXER_DVR_AS_HEARD ? "as_heard" : "custom",
-         v[AUDIO_MIXER_DVR_MIC], v[AUDIO_MIXER_DVR_LINE_IN], v[AUDIO_MIXER_DVR_AV],
-         v[AUDIO_MIXER_DVR_LEVEL], v[AUDIO_MIXER_RX_AUDIO], v[AUDIO_MIXER_HDMI],
+         v[AUDIO_MIXER_REC_MIX], v[AUDIO_MIXER_REC_MIC], v[AUDIO_MIXER_REC_LINE_IN], v[AUDIO_MIXER_REC_AV],
+         v[AUDIO_MIXER_DVR_LEVEL], v[AUDIO_MIXER_RX_AUDIO],
          ctx->line_out, ctx->playback, ctx->live_dac);
 
     FILE *fp = fopen(AUDIO_MIXER_CMD_FILE, "w");
@@ -373,6 +382,13 @@ void audio_mixer_set_playback(bool active) {
 
 bool audio_mixer_rx_audio(void) {
     return mixer.value[AUDIO_MIXER_RX_AUDIO] != 0;
+}
+
+bool audio_mixer_recorded_via_mix(audio_mixer_field_t rec_field) {
+    pthread_mutex_lock(&mixer_mutex);
+    const bool in_mix = audio_mixer_in_recorded_mix(&mixer, rec_field);
+    pthread_mutex_unlock(&mixer_mutex);
+    return in_mix;
 }
 
 static void db_str(int tenths, char *buf, size_t size) {

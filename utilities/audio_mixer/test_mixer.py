@@ -8,12 +8,15 @@ codec's signal graph (codec_model.py, from the driver's DAPM routes).
 For every target (Goggle, Goggle 2, BoxPro):
   routing     a matrix of mixer states: which sources reach the recording (left, right) and
               the headphones, through which gains; every batch line a real control in range,
-              never a digital DAC/ADC loopback; the live DAC hook (HDMI-in audio) included
-  loading     migration from each old Audio Source, clamping, fields missing from [mixer]
+              never a digital DAC/ADC loopback; HDMI-in audio (the live DAC) included; Record
+              What I Hear and the direct Record switches together, never a source twice
+  loading     migration from each old Audio Source, clamping, fields missing from [mixer], a
+              [mixer] of the unreleased version 1
   migration   old firmware (libmedia_mpp reset + audio_sel.sh) vs new, per old Audio Source:
               recording, headphones and the analog receiver's audio switch must be the same
               (the one documented difference: booting straight into HDZero, docs/audio.md)
-  transitions a change never leaves the line out / the recording without a source in between
+  transitions a change never leaves the line out / the recording without a source in between,
+              and a source recorded before and after is recorded all the way through
   worker      apply never blocks, a burst of steps coalesces, setting.ini only on save
   watcher     a libmedia_mpp reset after the routing is undone; a control the codec does not
               keep does not make it loop
@@ -37,10 +40,14 @@ import codec_model as cm  # noqa: E402
 
 TARGETS = ["HDZGOGGLE", "HDZGOGGLE2", "HDZBOXPRO"]
 KEYS = ["mic", "line_in", "av", "mic_boost", "line_in_boost", "headphones", "playback",
-        "dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av", "dvr_level", "rx_audio", "hdmi"]
+        "rec_mix", "rec_mic", "rec_line_in", "rec_av", "dvr_level", "rx_audio", "hdmi"]
 MAX = {"mic": 8, "line_in": 8, "av": 8, "mic_boost": 7, "line_in_boost": 7, "headphones": 31,
-       "playback": 31, "dvr_mode": 1, "dvr_mic": 1, "dvr_line_in": 1, "dvr_av": 1, "dvr_level": 7,
+       "playback": 31, "rec_mix": 1, "rec_mic": 1, "rec_line_in": 1, "rec_av": 1, "dvr_level": 7,
        "rx_audio": 1, "hdmi": 8}
+OLD_KEYS = ["dvr_mode", "dvr_mic", "dvr_line_in", "dvr_av"]  # [mixer] version 1 (never released)
+VERSION = "2"
+# the Record source switch of each analog source, and its headphone level
+DIRECT = {"mic": "rec_mic", "line_in": "rec_line_in", "av": "rec_av"}
 # DAC -> ADC and ADC -> DAC digital loopbacks: the mixer must never switch them on
 LOOPBACKS = ["AIF1 AD0L Mixer AIF1 DA0L Switch", "AIF1 AD0R Mixer AIF1 DA0R Switch",
              "DACL Mixer ADCL Switch", "DACR Mixer ADCR Switch"]
@@ -138,7 +145,7 @@ def codec_lines(state):
 
 
 def mixer_ini(values):
-    return "[mixer]\n" + "".join(f"{k}={v}\n" for k, v in values.items()) + "version=1\n"
+    return "[mixer]\n" + "".join(f"{k}={v}\n" for k, v in values.items()) + f"version={VERSION}\n"
 
 
 def query(queries, prefix):
@@ -182,18 +189,20 @@ def expected(v, line_out=True, playback=False, live_dac=False):
 
     adc = {("ADC input gain control", v["dvr_level"]), ("ADC volume", 160)}
     record_l, record_r = {}, {}
-    if v["dvr_mode"] == 0:  # As Heard: left ADC <- left output mixer, right ADC <- right
+    if v["rec_mix"]:  # Record What I Hear: left ADC <- left output mixer, right ADC <- right
         for source, gains in mix.items():
             record_l[source] = {(frozenset(gains | adc), "L")}
             record_r[source] = {(frozenset(gains | adc), "R")}
-    else:  # Custom: straight into both ADCs, only the preamp in front
-        direct = {"mic": {("MIC1 boost AMP gain control", v["mic_boost"])},
-                  "line_in": {("MIC2 boost AMP gain control", v["line_in_boost"])},
-                  "av": set()}
-        for source, key in (("mic", "dvr_mic"), ("line_in", "dvr_line_in"), ("av", "dvr_av")):
-            if v[key]:
-                record_l[source] = {(frozenset(direct[source] | adc), None)}
-                record_r[source] = {(frozenset(direct[source] | adc), None)}
+    # Record Mic / Line In / A/V In: straight into both ADCs, only the preamp in front; a source
+    # that is in the recorded mix (the mix as it is: playback takes the live sources out) is
+    # recorded once, at its mix level
+    direct = {"mic": {("MIC1 boost AMP gain control", v["mic_boost"])},
+              "line_in": {("MIC2 boost AMP gain control", v["line_in_boost"])},
+              "av": set()}
+    for source, key in DIRECT.items():
+        if v[key] and not (v["rec_mix"] and source in mix):
+            record_l[source] = {(frozenset(direct[source] | adc), None)}
+            record_r[source] = {(frozenset(direct[source] | adc), None)}
     return {"record_l": record_l, "record_r": record_r, "phones_l": phones, "phones_r": dict(phones)}
 
 
@@ -203,7 +212,7 @@ def migration_spec(target, audio_source):
     dt = cm.DEVICE_TREE[target]
     return {"mic": 0, "line_in": 0, "av": 8, "mic_boost": dt["MIC1 boost AMP gain control"],
             "line_in_boost": dt["MIC2 boost AMP gain control"], "headphones": 31, "playback": 27,
-            "dvr_mode": 1, "dvr_mic": int(sel == 0), "dvr_line_in": int(sel == 1), "dvr_av": int(sel == 2),
+            "rec_mix": 0, "rec_mic": int(sel == 0), "rec_line_in": int(sel == 1), "rec_av": int(sel == 2),
             "dvr_level": 3, "rx_audio": int(audio_source == 2), "hdmi": 4}
 
 
@@ -228,29 +237,48 @@ def check_batches(test, batches):
 # ---------------------------------------------------------------------------------------------
 # tests
 
+def mix_only(**values):  # Record What I Hear, no direct source
+    return dict({"rec_mix": 1, "rec_mic": 0, "rec_line_in": 0, "rec_av": 0}, **values)
+
+
+def direct_only(**values):  # the stock path: direct sources only
+    return dict({"rec_mix": 0, "rec_mic": 0, "rec_line_in": 0, "rec_av": 0}, **values)
+
+
 ROUTING_STATES = [
-    ("as heard mic + av", {"dvr_mode": 0, "mic": 4, "av": 3, "mic_boost": 2, "headphones": 25, "dvr_level": 3}, {}),
-    ("as heard line in + av", {"dvr_mode": 0, "line_in": 6, "line_in_boost": 2, "av": 4, "headphones": 31, "dvr_level": 5}, {}),
-    ("as heard, headphones off still records", {"dvr_mode": 0, "mic": 8, "headphones": 0, "dvr_level": 2, "mic_boost": 4}, {}),
-    ("custom mic, hear a/v", {"dvr_mode": 1, "dvr_mic": 1, "av": 8, "mic_boost": 5, "headphones": 31, "dvr_level": 3}, {}),
-    ("custom line in + a/v, hear mic", {"dvr_mode": 1, "dvr_line_in": 1, "dvr_av": 1, "mic": 2, "line_in_boost": 6, "headphones": 12, "dvr_level": 0}, {}),
-    ("custom nothing selected", {"dvr_mode": 1, "av": 8, "headphones": 31, "dvr_level": 3}, {}),
-    ("all max", {"dvr_mode": 0, "mic": 8, "line_in": 8, "av": 8, "mic_boost": 7, "line_in_boost": 7, "headphones": 31, "dvr_level": 7}, {}),
-    ("all off", {"dvr_mode": 1, "headphones": 0}, {}),
-    ("hdmi in (line out off)", {"dvr_mode": 0, "mic": 4, "av": 8, "headphones": 31, "dvr_level": 3}, {"line_out": 0}),
-    ("playback", {"dvr_mode": 0, "mic": 4, "av": 8, "headphones": 31, "playback": 20, "dvr_level": 3}, {"playback": 1}),
-    ("playback after hdmi in", {"dvr_mode": 1, "dvr_av": 1, "av": 8, "headphones": 31, "playback": 27, "dvr_level": 3}, {"line_out": 0, "playback": 1}),
-    ("playback volume 0", {"dvr_mode": 1, "dvr_mic": 1, "av": 8, "headphones": 31, "playback": 0, "dvr_level": 3}, {"playback": 1}),
+    ("mix: mic + av", mix_only(mic=4, av=3, mic_boost=2, headphones=25, dvr_level=3), {}),
+    ("mix: line in + av", mix_only(line_in=6, line_in_boost=2, av=4, headphones=31, dvr_level=5), {}),
+    ("mix, headphones off still records", mix_only(mic=8, headphones=0, dvr_level=2, mic_boost=4), {}),
+    ("direct mic, hear a/v (stock)", direct_only(rec_mic=1, av=8, mic_boost=5, headphones=31, dvr_level=3), {}),
+    ("direct line in + a/v, hear mic", direct_only(rec_line_in=1, rec_av=1, mic=2, line_in_boost=6, headphones=12, dvr_level=0), {}),
+    ("nothing recorded", direct_only(av=8, headphones=31, dvr_level=3), {}),
+    ("all max, mix", mix_only(mic=8, line_in=8, av=8, mic_boost=7, line_in_boost=7, headphones=31, dvr_level=7), {}),
+    ("all off", direct_only(headphones=0), {}),
+    # Record What I Hear together with direct sources
+    ("mix + direct mic at level 0: mic direct, a/v from the mix", mix_only(rec_mic=1, mic=0, av=8, headphones=31), {}),
+    ("mix + direct mic at level > 0: once, at its mix level", mix_only(rec_mic=1, mic=5, av=8, mic_boost=3, headphones=31), {}),
+    ("mix + all direct, some heard", mix_only(rec_mic=1, rec_line_in=1, rec_av=1, mic=0, line_in=2, av=7, dvr_level=4), {}),
+    ("mix of nothing + direct a/v", mix_only(rec_av=1, mic=0, line_in=0, av=0, headphones=31), {}),
+    ("hdmi in (line out off), mix", mix_only(mic=4, av=8, headphones=31, dvr_level=3), {"line_out": 0}),
+    ("hdmi in (line out off), direct line in", direct_only(rec_line_in=1, av=8, headphones=31), {"line_out": 0}),
+    ("playback, mix", mix_only(mic=4, av=8, headphones=31, playback=20, dvr_level=3), {"playback": 1}),
+    ("playback, mix + direct mic: mic direct while the file plays", mix_only(rec_mic=1, mic=4, av=8, playback=27), {"playback": 1}),
+    ("playback after hdmi in", direct_only(rec_av=1, av=8, headphones=31, playback=27, dvr_level=3), {"line_out": 0, "playback": 1}),
+    ("playback volume 0", direct_only(rec_mic=1, av=8, headphones=31, playback=0, dvr_level=3), {"playback": 1}),
     ("out of range in setting.ini", {"mic": 99, "line_in": -3, "av": 12, "mic_boost": 8, "line_in_boost": 100,
-                                     "headphones": 200, "playback": 40, "dvr_mode": 5, "dvr_mic": 7, "dvr_line_in": 2,
-                                     "dvr_av": -1, "dvr_level": 9, "rx_audio": 3, "hdmi": 11}, {}),
-    # HDMI-in audio in the DAC (hook, default off): mixed with the mic, line out on despite HDMI in
-    ("live dac, as heard, with mic", {"dvr_mode": 0, "mic": 4, "av": 0, "hdmi": 6, "headphones": 25, "dvr_level": 3},
+                                     "headphones": 200, "playback": 40, "rec_mix": 5, "rec_mic": 7, "rec_line_in": 2,
+                                     "rec_av": -1, "dvr_level": 9, "rx_audio": 3, "hdmi": 11}, {}),
+    # HDMI In Audio on: the bridge plays HDMI-in audio into the DAC (live_dac); mixed with the mic,
+    # line out on despite HDMI in, recorded only with Record What I Hear
+    ("hdmi in audio, mix, with mic", mix_only(mic=4, av=0, hdmi=6, headphones=25, dvr_level=3),
      {"line_out": 0, "live_dac": 1}),
-    ("live dac, custom mic: not recorded", {"dvr_mode": 1, "dvr_mic": 1, "mic": 4, "hdmi": 1, "headphones": 31},
+    ("hdmi in audio, direct mic: hdmi not recorded", direct_only(rec_mic=1, mic=4, hdmi=1, headphones=31),
      {"line_out": 0, "live_dac": 1}),
-    ("live dac at level 0, hdmi in", {"dvr_mode": 0, "mic": 4, "hdmi": 0, "headphones": 31}, {"line_out": 0, "live_dac": 1}),
-    ("live dac during playback", {"dvr_mode": 0, "mic": 4, "hdmi": 8, "playback": 27}, {"live_dac": 1, "playback": 1}),
+    ("hdmi in audio + direct mic at level > 0, mix", mix_only(rec_mic=1, mic=3, hdmi=4, headphones=31),
+     {"line_out": 0, "live_dac": 1}),
+    ("hdmi in audio at level 0, hdmi in", mix_only(mic=4, hdmi=0, headphones=31), {"line_out": 0, "live_dac": 1}),
+    ("hdmi in audio during playback", mix_only(mic=4, hdmi=8, playback=27), {"live_dac": 1, "playback": 1}),
+    ("hdmi in audio off (stock): line out off", mix_only(mic=4, hdmi=8, av=8, headphones=31), {"line_out": 0, "live_dac": 0}),
 ]
 
 
@@ -289,13 +317,41 @@ def test_loading(h):
         ok(f"{h.target} load clamps")
 
     # a field missing from [mixer] comes from the old setting
-    _, queries, _, _, _ = h.run("[record]\naudio_source=2\n[mixer]\nversion=1\nmic=5\n", ["init"] + [f"get {k}" for k in KEYS])
+    _, queries, _, _, _ = h.run(f"[record]\naudio_source=2\n[mixer]\nversion={VERSION}\nmic=5\n", ["init"] + [f"get {k}" for k in KEYS])
     got = {q.split()[1]: int(q.split()[2]) for q in query(queries, "GET ")}
     want = dict(migration_spec(h.target, 2), mic=5)
     if got != want:
         fail(f"{h.target} load missing fields", f"got {got}, want {want}")
     else:
         ok(f"{h.target} load missing fields")
+
+    # a [mixer] of the unreleased version 1 (As Heard / Custom): taken over like a stock
+    # setting.ini, the old keys removed
+    for audio_source in (0, 1, 2):
+        test = f"{h.target} load version 1 [mixer], audio_source={audio_source}"
+        old = ("[record]\naudio_source=%d\n[mixer]\nmic=4\nline_in=3\nav=2\nheadphones=12\ndvr_mode=0\ndvr_mic=1\n"
+               "dvr_line_in=1\ndvr_av=1\ndvr_level=6\nhdmi=7\nversion=1\n" % audio_source)
+        _, queries, _, _, after = h.run(old, ["init"] + [f"get {k}" for k in KEYS])
+        got = {q.split()[1]: int(q.split()[2]) for q in query(queries, "GET ")}
+        want = migration_spec(h.target, audio_source)
+        section = after.split("[mixer]", 1)[-1]
+        written = dict(re.findall(r"^(\w+)=(-?\d+)$", section, re.M))
+        if got != want:
+            fail(test, f"got {got}, want {want}")
+        elif any(k in written for k in OLD_KEYS) or written.get("version") != VERSION:
+            fail(test, f"[mixer] written as {written}")
+        else:
+            ok(test)
+
+    # the page's "in the mix" marker: Record What I Hear on and the source's level above 0
+    for values, want in ((mix_only(mic=3, line_in=0, av=8), {"rec_mic": 1, "rec_line_in": 0, "rec_av": 1}),
+                         (direct_only(rec_mic=1, mic=3, av=8), {"rec_mic": 0, "rec_line_in": 0, "rec_av": 0})):
+        _, queries, _, _, _ = h.run(mixer_ini(values), ["init"] + [f"inmix {k}" for k in DIRECT.values()])
+        got = {q.split()[1]: int(q.split()[2]) for q in query(queries, "INMIX ")}
+        if got != want:
+            fail(f"{h.target} in recorded mix", f"{values}: got {got}, want {want}")
+        else:
+            ok(f"{h.target} in recorded mix")
 
     # migration from each old Audio Source (and what the old firmware made of odd values)
     for audio_source in (0, 1, 2, 3, -1, 258):
@@ -311,7 +367,7 @@ def test_loading(h):
             fail(test, f"receiver audio {query(queries, 'RX ')}")
             continue
         written = dict(re.findall(r"^(\w+)=(-?\d+)$", after.split("[mixer]", 1)[-1], re.M))
-        if {k: int(written.get(k, -99)) for k in KEYS} != want or written.get("version") != "1":
+        if {k: int(written.get(k, -99)) for k in KEYS} != want or written.get("version") != VERSION:
             fail(test, f"[mixer] written as {written}")
             continue
         ok(test)
@@ -388,29 +444,44 @@ def test_migration(h):
 
 TRANSITIONS = [
     # name, start values, start context, change (set lines / context), dac active during the batch
-    ("switch the only source (mic -> a/v)", {"dvr_mode": 0, "mic": 4, "headphones": 31, "dvr_level": 3}, [],
+    ("switch the only source (mic -> a/v)", mix_only(mic=4, headphones=31, dvr_level=3), [],
      ["set mic 0", "set av 8", "apply"], False),
-    ("a/v -> mic, custom recording mic -> a/v", {"dvr_mode": 1, "dvr_mic": 1, "av": 8, "headphones": 31}, [],
-     ["set av 0", "set mic 3", "set dvr_mic 0", "set dvr_av 1", "apply"], False),
-    ("as heard -> custom while recording", {"dvr_mode": 0, "mic": 4, "headphones": 31}, [],
-     ["set dvr_mode 1", "set dvr_mic 1", "apply"], False),
-    ("custom -> as heard while recording", {"dvr_mode": 1, "dvr_av": 1, "av": 8, "headphones": 31}, [],
-     ["set dvr_mode 0", "apply"], False),
-    ("playback starts", {"dvr_mode": 1, "dvr_av": 1, "av": 8, "headphones": 31, "playback": 27}, [],
+    ("a/v -> mic, direct recording mic -> a/v", direct_only(rec_mic=1, av=8, headphones=31), [],
+     ["set av 0", "set mic 3", "set rec_mic 0", "set rec_av 1", "apply"], False),
+    ("mix -> direct mic while recording", mix_only(mic=4, headphones=31), [],
+     ["set rec_mix 0", "set rec_mic 1", "apply"], False),
+    ("direct a/v -> mix (a/v heard) while recording", direct_only(rec_av=1, av=8, headphones=31), [],
+     ["set rec_mix 1", "apply"], False),
+    ("direct mic -> mix: mic level 0 -> 4 with Record Mic and the mix", mix_only(rec_mic=1, mic=0, av=8, headphones=31), [],
+     ["set mic 4", "apply"], False),
+    ("mix -> direct mic: mic level 4 -> 0 with Record Mic and the mix", mix_only(rec_mic=1, mic=4, av=8, headphones=31), [],
+     ["set mic 0", "apply"], False),
+    ("Record What I Hear off with direct mic and mic heard", mix_only(rec_mic=1, mic=4, av=8, headphones=31), [],
+     ["set rec_mix 0", "apply"], False),
+    ("playback starts", direct_only(rec_av=1, av=8, headphones=31, playback=27), [],
      ["playback 1"], True),
-    ("playback ends", {"dvr_mode": 1, "dvr_av": 1, "av": 8, "headphones": 31, "playback": 27}, ["playback 1"],
+    ("playback ends", direct_only(rec_av=1, av=8, headphones=31, playback=27), ["playback 1"],
      ["playback 0"], True),
-    ("hdmi in: line out off", {"dvr_mode": 0, "mic": 4, "av": 8, "headphones": 31}, [],
+    ("playback starts, mix + direct mic", mix_only(rec_mic=1, mic=4, av=8, headphones=31, playback=27), [],
+     ["playback 1"], True),
+    ("hdmi in: line out off", mix_only(mic=4, av=8, headphones=31), [],
      ["line_out 0"], False),
-    ("headphones 0", {"dvr_mode": 0, "av": 8, "headphones": 20}, [],
+    ("headphones 0", mix_only(av=8, headphones=20), [],
      ["set headphones 0", "apply"], False),
-    ("hdmi-in audio starts (mic heard)", {"dvr_mode": 0, "mic": 4, "hdmi": 4, "headphones": 31}, ["line_out 0"],
+    ("hdmi-in audio starts (mic heard)", mix_only(mic=4, hdmi=4, headphones=31), ["line_out 0"],
      ["live_dac 1"], True),
-    ("hdmi-in audio: the only source changes (dac -> mic)", {"dvr_mode": 0, "hdmi": 4, "headphones": 31},
+    ("hdmi-in audio: the only source changes (dac -> mic)", mix_only(hdmi=4, headphones=31),
      ["line_out 0", "live_dac 1"], ["set hdmi 0", "set mic 4", "apply"], True),
-    ("playback while hdmi-in audio plays", {"dvr_mode": 0, "mic": 4, "hdmi": 4, "headphones": 31, "playback": 27},
+    ("hdmi-in audio ends (hdmi in still shown)", mix_only(mic=4, hdmi=4, headphones=31),
+     ["line_out 0", "live_dac 1"], ["live_dac 0"], True),
+    ("playback while hdmi-in audio plays", mix_only(mic=4, hdmi=4, headphones=31, playback=27),
      ["line_out 0", "live_dac 1"], ["playback 1"], True),
 ]
+
+
+def recorded_sources(state, dac):
+    result = cm.evaluate(state, dac_active=dac)
+    return set(result["record_l"]) | set(result["record_r"])
 
 
 def test_transitions(h):
@@ -428,14 +499,22 @@ def test_transitions(h):
         state = dict(before)
         powered = [cm.line_out_powered(state, dac)]
         capture = [cm.capture_connected(state, dac)]
+        recorded = [recorded_sources(state, dac)]
         for name_value in batch:
             state = cm.apply(state, [name_value])
             powered.append(cm.line_out_powered(state, dac))
             capture.append(cm.capture_connected(state, dac))
+            recorded.append(recorded_sources(state, dac))
         if state != after:
             fail(test, "replaying the batch does not give the codec state")
             continue
         problems = []
+        # a source that is recorded before and after the change is recorded all the way through
+        # (e.g. the mic moving between its direct path and the mix)
+        kept = recorded[0] & recorded[-1]
+        gap = next((i for i, r in enumerate(recorded) if not kept <= r), None)
+        if gap is not None:
+            problems.append(f"{sorted(kept - recorded[gap])} not recorded in between (after '{batch[gap - 1][0]}')")
         if powered[0] and powered[-1] and not all(powered):
             problems.append(f"line out unpowered in between (after '{batch[powered.index(False) - 1][0]}')")
         if capture[0] and capture[-1] and not all(capture):
@@ -452,7 +531,7 @@ def test_transitions(h):
 
 def test_worker(h):
     test = f"{h.target} worker"
-    values = {"dvr_mode": 0, "av": 8, "headphones": 31}
+    values = mix_only(av=8, headphones=31)
     ini = mixer_ini(values)
     lines = codec_lines(base_codec(h.target)) + ["init", "wait", "mark", "amixer_delay 150",
                                                  "time_apply 20", "unsaved", "wait", "dump"]
@@ -481,7 +560,7 @@ def test_worker(h):
 
 def test_watcher(h):
     test = f"{h.target} watcher"
-    values = {"dvr_mode": 1, "dvr_line_in": 1, "av": 8, "headphones": 31}
+    values = direct_only(rec_line_in=1, av=8, headphones=31)
     lines = codec_lines(base_codec(h.target, libmedia=False)) + ["init", "wait", "dump", "mark"]
     lines += codec_lines(dict(cm.LIBMEDIA_RESET)) + [f"sleep {WATCH_MS * 8}", "dump"]
     batches, _, _, log, _ = h.run(mixer_ini(values), lines)
