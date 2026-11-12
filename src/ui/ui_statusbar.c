@@ -58,7 +58,7 @@ LV_IMG_DECLARE(img_wifi);
 
 // "RF: Analog <channel>" with the channel name of the analog source (the bay
 // module's list when it is the source), or without a channel when the goggle does
-// not tune the bay module (type Unknown, Pin Control off, WiFi on).
+// not tune the bay module (Module None, WiFi on).
 static void statusbar_analog_text(char *buf, size_t size) {
     if (analog_channel_tunable())
         snprintf(buf, size, "%s: %s %s", _lang("RF"), _lang("Analog"), analog_channel_current_name());
@@ -228,8 +228,8 @@ void statubar_update(void) {
     static source_t source_last = SOURCE_HDZERO;
     static setting_sources_hdzero_band_t hdzero_band_last = SETTING_SOURCES_HDZERO_BAND_RACEBAND;
     static int analog_list_last = -1;
-    // the analog channel list changes with Source > Analog Module, the Module Bay type
-    // and whether the bay is controlled (Pin Control, WiFi)
+    // the analog channel list changes with Source > Analog Module, the Module Bay
+    // Module and whether the bay is controlled (Module None, WiFi)
     const int analog_list = (analog_channel_tunable() ? 0x10000 : 0) | (module_bay_is_source() ? 0x100 : 0) | analog_channel_count();
     uint8_t channel_changed = (hdzero_channel_last != g_setting.scan.channel) || (analog_channel_last != analog_channel_get()) ||
                               (analog_list_last != analog_list);

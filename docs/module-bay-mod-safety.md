@@ -454,7 +454,7 @@ checks, all pass):
 * rapidFIRE: ≥ 100 µs between any two CS / CLK edges and DATA changes only while
   CLK is low, whatever the scheduler does: every wait ends only once the clock has
   passed an absolute deadline [analysis]; also under a storm of signals that cut
-  every sleep short [sim]. Typical 13.8-14.6 ms per frame on a PC [sim]; on the
+  every sleep short [sim]. Typical 13.5-14.8 ms per frame on a PC [sim]; on the
   goggle not measured [hw].
 * Pins inputs again within one frame after a bay power-off, WiFi on or a Module
   change. [sim]

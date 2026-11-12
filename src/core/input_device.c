@@ -75,8 +75,8 @@ void exit_tune_channel() {
 }
 
 // Analog channel can be tuned from the goggle: the internal receiver (Goggle 2,
-// BoxPro) always, the module bay only when it is controlled (a module type set in
-// Module Bay, Pin Control on, WiFi off).  The dial walks the list of the analog
+// BoxPro) always, the module bay only when it is controlled (a Module chosen in
+// Module Bay, WiFi off).  The dial walks the list of the analog
 // source (8 entries for a Switch module in the bay, module.c analog_channel_*);
 // the stored channel stays one of the 48.
 static void analog_apply_channel(int pos) {

@@ -143,8 +143,8 @@ static void change_channel_analog(uint8_t channel) {
         return;
     }
     // Only for an analog receiver the goggle tunes: the built-in one (Goggle 2,
-    // BoxPro) or a controlled bay module.  An uncontrolled bay module (type Unknown,
-    // Pin Control Off, WiFi on) is left alone, picture and stored channel included.
+    // BoxPro) or a controlled bay module.  An uncontrolled bay module (Module None,
+    // WiFi on) is left alone, picture and stored channel included.
     if (!analog_channel_tunable()) {
         LOGI("VTX channel %d not applied: the goggle does not control the bay module", channel);
         return;

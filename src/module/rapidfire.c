@@ -37,7 +37,7 @@
 // and gap (furiousdfw docs/bay-standards.md, section 4); a real rapidFIRE takes up to
 // ~80 kHz (>= 6.25 us per level).  81 waits per frame: >= 8.1 ms guaranteed; each wait
 // overshoots by the timer slack (50 us for a normal thread), the wake-up latency and
-// the sysfs writes, never less: ~13.5-14.5 ms per frame on a PC, an estimated
+// the sysfs writes, never less: ~13.5-14.8 ms per frame on a PC, an estimated
 // ~12-20 ms on the goggle (not measured).
 
 #define SPAM_COUNT 3

@@ -152,7 +152,7 @@ driven at most:
 | Module | after the request |
 |---|---|
 | Switch | ~1 ms (its waits are abortable) |
-| rapidFIRE | the frame on the wire: ≤ ~15 ms (13.8-14.6 ms per frame in the host test; the goggle not measured) |
+| rapidFIRE | the frame on the wire: ≤ ~15 ms (13.5-14.8 ms per frame in the host test runs; the goggle not measured) |
 | SteadyView | one register access plus its fixed waits (≤ ~12 ms); 70 ms during the mode set's power pulse |
 | SteadyView X | during set-up: until insmod of soft_uart returns; then close() waits 100 ms and unloads it |
 
@@ -239,7 +239,7 @@ deadline 100 µs after that write, so:
   the scheduler does: a sleep can only end late, and one that ends early (a signal,
   an error) is repeated. 81 waits: ≥ 8.1 ms per frame;
 * **typical**: each wait overshoots by the timer slack (50 µs for a normal
-  thread), the wake-up latency and the sysfs writes: 13.8-14.6 ms per frame on a
+  thread), the wake-up latency and the sysfs writes: 13.5-14.8 ms per frame on a
   PC (host test); on the goggle not measured, estimated ~12-20 ms.
 
 The requirement this meets: a True-D with MOD 1.17 reads a bay edge ≤ 43.1 µs
