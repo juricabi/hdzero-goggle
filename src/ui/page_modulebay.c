@@ -202,6 +202,8 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     create_label_item(cont, _lang("Check Pins"), 1, ROW_CHECK, 1);
     lbl_check = create_label_item(cont, _lang("Click: read PG0-PG2 as inputs, nothing driven"), 2, ROW_CHECK, 4);
+    // up to the page's right edge, so that a longer translation scrolls instead of being cut off
+    lv_obj_set_width(lbl_check, 610);
 
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
     create_label_item(cont, buf, 1, ROW_BACK, 1);
