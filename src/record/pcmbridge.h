@@ -10,7 +10,11 @@
  * Started / stopped by HDMIA_cmdSTART / HDMIA_cmdSTOP (appmsg.h). The route comes from
  * HDMIA_REQ_FILE (written by src/core/hdmi_audio.c); the result goes to
  * HDMIA_STATE_FILE. record.conf [hdmi_audio] latency_ms=60 stays a user setting.
- * Every SoC register it changes (PH1-PH3 function, I2S0 CTL fields) is put back on stop.
+ * The only SoC register it changes is I2S0 CTL (I2S mode, clock master: after each open of
+ * hw:snddaudio0), put back on stop. It never touches pin functions: PH1-PH3 are switched
+ * once per boot by hdmi_audio_boot, and a route to I2S0 is refused unless that is in
+ * effect for this boot (hdmi_boot_out_ready()). Failures whose reason starts with
+ * "refused" are not worth a retry in this boot.
  * ======================================================================== */
 #ifdef __cplusplus
 extern "C" {
