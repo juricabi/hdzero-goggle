@@ -74,6 +74,33 @@ void exit_tune_channel() {
     channel_osd_mode = 0;
 }
 
+// Analog channel can be tuned from the goggle: the internal receiver always, the
+// module bay only when a controllable module type is set in Module Bay.
+static bool analog_tunable(void) {
+#if defined(HDZGOGGLE2)
+    if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL)
+        return true;
+    return module_num_channels() > 0;
+#elif defined(HDZGOGGLE)
+    return module_num_channels() > 0;
+#else
+    return true;
+#endif
+}
+
+static void analog_apply_channel(uint8_t channel) {
+#if defined(HDZGOGGLE)
+    module_set_channel(channel);
+#elif defined(HDZGOGGLE2)
+    if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_EXTERNAL)
+        module_set_channel(channel);
+    else
+        rtc6715.set_ch(channel - 1);
+#else
+    rtc6715.set_ch(channel - 1);
+#endif
+}
+
 void tune_channel(uint8_t action) {
     static uint8_t channel = 0;
 
@@ -81,6 +108,10 @@ void tune_channel(uint8_t action) {
         return;
 
     if (g_source_info.source != SOURCE_HDZERO && g_source_info.source != SOURCE_AV_MODULE) {
+        return;
+    }
+
+    if (g_source_info.source == SOURCE_AV_MODULE && !analog_tunable()) {
         return;
     }
 
@@ -149,11 +180,7 @@ void tune_channel(uint8_t action) {
                 g_setting.source.analog_channel = channel;
                 ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
                 dvr_cmd(DVR_STOP);
-#if defined HDZGOGGLE
-                module_set_channel(channel);
-#else
-                rtc6715.set_ch(g_setting.source.analog_channel - 1);
-#endif
+                analog_apply_channel(g_setting.source.analog_channel);
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
                 }
@@ -189,7 +216,7 @@ void tune_channel_confirm() {
 #elif defined HDZGOGGLE2
     if (g_source_info.source == SOURCE_HDZERO) {
         tune_channel(DIAL_KEY_CLICK);
-    } else if (g_source_info.source == SOURCE_AV_MODULE && g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL) {
+    } else if (g_source_info.source == SOURCE_AV_MODULE) { // internal, or a controlled bay module
         tune_channel(DIAL_KEY_CLICK);
     }
 #endif
@@ -274,9 +301,7 @@ static void btn_press(void) // long press left key
 #elif defined HDZGOGGLE2
             if (g_source_info.source == SOURCE_HDZERO) {
                 tune_channel(DIAL_KEY_PRESS);
-            } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                tune_channel(DIAL_KEY_PRESS);
-            } else if (g_source_info.source == SOURCE_AV_MODULE && g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL) {
+            } else if (g_source_info.source == SOURCE_AV_MODULE) { // internal, or a controlled bay module
                 tune_channel(DIAL_KEY_PRESS);
             } else {
                 (*btn_press_callback)();

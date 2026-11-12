@@ -140,6 +140,10 @@ static void page_on_click(uint8_t key, int sel) {
         break;
 
     case 1:
+        if (lv_obj_has_flag(btn_module_mode, LV_OBJ_FLAG_HIDDEN)) {
+            // this type has no mode setting: row 1 is "< Back", left to the menu's back handling
+            break;
+        }
         if (!page_item_focused) {
             lv_obj_t *list = lv_dropdown_get_list(btn_module_mode);
             lv_dropdown_open(btn_module_mode);

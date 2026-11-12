@@ -15,6 +15,7 @@
 #include "../core/ht.h"
 #include "../core/osd.h"
 #include "../core/settings.h"
+#include "../module/module.h"
 #include "../ui/page_common.h"
 #include "beep.h"
 #include "defines.h"
@@ -1189,8 +1190,8 @@ void Set_HT_dat(uint16_t ch0, uint16_t ch1, uint16_t ch2) {
 void external_analog_module_power() {
     // Batch 2 goggles only
     if (getHwRevision() >= HW_REV_2) {
-        static bool pwr = 0;
-        static bool pwr_last = -1;
+        static int pwr = 0;
+        static int pwr_last = -1; // (was bool: -1 read as true, so a power-on at boot was never sent)
 
         if (g_app_state == APP_STATE_SLEEP) { // go sleep
             pwr = 0;
@@ -1206,6 +1207,7 @@ void external_analog_module_power() {
         if (pwr_last != pwr) {
             pwr_last = pwr;
             DM5680_ExternalAnalog_Power(pwr);
+            module_power_changed(pwr); // bay module pins: released while off, module set up again when on
         }
     }
 }

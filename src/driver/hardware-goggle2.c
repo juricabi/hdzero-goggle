@@ -15,6 +15,7 @@
 #include "../core/ht.h"
 #include "../core/osd.h"
 #include "../core/settings.h"
+#include "../module/module.h"
 #include "../ui/page_common.h"
 #include "beep.h"
 #include "defines.h"
@@ -1182,6 +1183,7 @@ void external_analog_module_power() {
         if (pwr_last != pwr) {
             pwr_last = pwr;
             DM5680_ExternalAnalog_Power(pwr);
+            module_power_changed(pwr); // bay module pins: released while off, module set up again when on
         }
     }
 }

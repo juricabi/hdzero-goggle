@@ -50,7 +50,7 @@ static lv_obj_t *root_page;
  * To contain all menu pages.
  */
 
-#define PAGE_PACK_MAX_NUM 19
+#define PAGE_PACK_MAX_NUM 20 // Goggle 2: 19 pages + Module Bay
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
@@ -220,7 +220,10 @@ void menu_nav(uint8_t key) {
         if (selected >= page_packs_count)
             selected -= page_packs_count;
     }
-    lv_event_send(lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), selected), LV_EVENT_CLICKED, NULL);
+    lv_obj_t *entry = lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), selected);
+    lv_event_send(entry, LV_EVENT_CLICKED, NULL);
+    // more entries than fit (Goggle 2 with Module Bay): keep the selected one on screen
+    lv_obj_scroll_to_view(entry, LV_ANIM_OFF);
 }
 
 static void menu_reinit(void) {
@@ -319,8 +322,11 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_focus_chart;
     page_packs[page_packs_count++] = &pp_clock;
     page_packs[page_packs_count++] = &pp_input;
-#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+#if defined(HDZBOXPRO)
     page_packs[page_packs_count++] = &pp_analog_rssi;
+#elif defined(HDZGOGGLE2)
+    page_packs[page_packs_count++] = &pp_analog_rssi;
+    page_packs[page_packs_count++] = &pp_modulebay;
 #elif defined(HDZGOGGLE)
     page_packs[page_packs_count++] = &pp_modulebay;
 #endif
@@ -339,7 +345,11 @@ void main_menu_init(void) {
     root_page = lv_menu_page_create(menu, "aaa");
 
     lv_obj_t *section = lv_menu_section_create(root_page);
-    lv_obj_clear_flag(section, LV_OBJ_FLAG_SCROLLABLE);
+    // scrolled only by menu_nav() (lv_obj_scroll_to_view) when the entries do not fit
+    lv_obj_add_flag(section, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(section, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(section, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(section, LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM);
 
     for (uint32_t i = 0; i < page_packs_count; i++) {
         main_menu_create_entry(menu, section, page_packs[i]);

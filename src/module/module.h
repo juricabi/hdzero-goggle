@@ -13,6 +13,7 @@ void module_init();
 void module_set_mode();
 void module_close();
 void module_set_channel(int channel);
+void module_power_changed(int on);
 
 int module_num_channels();
 char *module_channel_str(int channel);

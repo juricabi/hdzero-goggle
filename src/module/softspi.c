@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "driver/gpio.h"
+#include "util/filesystem.h"
 
 #include "softspi.h"
 
@@ -36,12 +37,20 @@ void softspi_init() {
 
 void softspi_release_gpio(int port_num)
 {
-	char buf[64];
+    char buf[64];
+    // input first: a pin left driving high would feed an unpowered module through
+    // its input protection diodes while the bay power is off
+    sprintf(buf, "/sys/class/gpio/gpio%d/direction", port_num);
+    fs_printf(buf, "in");
     sprintf(buf, "echo \"%d\">/sys/class/gpio/unexport", port_num);
     system(buf);
 }
 
 void softspi_close() {
+    if (dat_dir_fd != -1) {
+        close(dat_dir_fd);
+        dat_dir_fd = -1;
+    }
     if (pins_fd[SOFTSPI_CLK] != -1) {
         close(pins_fd[SOFTSPI_CLK]);
         pins_fd[SOFTSPI_CLK] = -1;
