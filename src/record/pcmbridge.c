@@ -34,6 +34,11 @@
 #define PB_I2S0_MODE_I2S 0x00000010u
 #define PB_I2S0_MASTER   0x00060000u
 #define PB_SUNXI_DUMP    "/sys/class/sunxi_dump/"
+// PH_CFG0 (PIO 0x0300B000 + 7 * 0x24): rc.sh writes 0x35517751 at boot (PH1 = uart4, PH2/PH3 off),
+// which takes PH1-PH3 away from I2S0 (function 3 in the device tree pin group daudio0@0).
+#define PB_PH_CFG0       0x0300B0FCu
+#define PB_PH1_3_MASK    0x0000fff0u
+#define PB_PH1_3_I2S0    0x00003330u
 
 struct PcmBridge {
     pthread_t tid;
@@ -96,6 +101,14 @@ static int pb_reg_write(uint32_t addr, uint32_t val) {
 
 static void pb_fix_i2s0(void) {
     uint32_t v = 0, w;
+    // Sanity check before a read-modify-write: PH0 and PH4 must read as outputs (function 1),
+    // as rc.sh / gpio_init() leave them; otherwise the read is not trusted and nothing is written.
+    if (pb_reg_read(PB_PH_CFG0, &v) == 0 && (v & 0xfu) == 1u && ((v >> 16) & 0xfu) == 1u &&
+        (v & PB_PH1_3_MASK) != PB_PH1_3_I2S0) {
+        w = (v & ~PB_PH1_3_MASK) | PB_PH1_3_I2S0; // PH0 / PH4 (HDZero RX/TX reset GPIOs) untouched
+        pb_reg_write(PB_PH_CFG0, w);
+        LOGD("i2s0 fix: PH_CFG0 0x%08x -> 0x%08x (PH1-PH3 = I2S0)", v, w);
+    }
     if (pb_reg_read(PB_I2S0_CTL, &v) < 0) {
         LOGE("i2s0 fix: cannot read 0x%08x", PB_I2S0_CTL);
         return;
