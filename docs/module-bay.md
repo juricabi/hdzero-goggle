@@ -1,38 +1,69 @@
 # Module bay control
 
 The goggle can set the channel (and on some modules the mode) of an analog
-receiver module in the expansion module bay. Menu: **Module Bay**.
+receiver module in the expansion module bay: dial, buttons, ELRS backpack. Menu:
+**Module Bay**. It follows pkendall64's analog-module-control.
 
-**It needs a hardware mod, for every module type.** On a stock goggle no
-control signal reaches the analog module: the goggle only powers it. The mod is
-three small wires on the bay board, from three pins of the connector that plugs
-into the goggle to the channel-select positions of the 9-pin analog module
-connector, as described in
-[pkendall64's wiki](https://github.com/pkendall64/hdzero-goggle/wiki/Analog-Module-Backpack-Control)
-for the **original Goggle**. On the **Goggle 2** the same mod is unproven: the
-same SoC pins (PG0-PG2) are the built-in WiFi chip's SDIO bus there, and nothing
-shows that they reach the bay connector at all. The mod puts the module's pins
-on SoC pins and on the WiFi bus: put a series resistor in each wire and go
-through the bench checklist in **[module-bay-mod-safety.md](module-bay-mod-safety.md)**
-before the first power-up with a module.
+**It needs a hardware mod, for every module type.** On a stock goggle no control
+signal reaches the analog module: the goggle only powers it. The mod is three
+wires on the bay board, from three pins of the connector that plugs into the
+goggle to the channel pins 1-3 of the 9-pin module socket
+([pkendall64's wiki](https://github.com/pkendall64/hdzero-goggle/wiki/Analog-Module-Backpack-Control),
+for the original **Goggle 1**; on the **Goggle 2** it is unproven). The wires
+connect the module to SoC pins that are also the WiFi bus: a 4.7 kΩ resistor in
+each wire and the checklist of **[module-bay-mod-safety.md](module-bay-mod-safety.md)**
+come first.
 
-| Setting | |
+**After flashing, nothing changes until you choose a Module.** Module = None is
+the default, and with None the goggle never touches the bay pins: exactly as a
+stock goggle (host tests, below).
+
+## The page
+
+| Row | |
 |---|---|
-| Type | Unknown (default), Switch, rapidFIRE, Steadyview, Steadyview-X, True-D |
-| Mode | depends on the type, see below; greyed out when the type has none |
-| Pin Control | Off (default) / On. The goggle drives the bay pins only while it is On; it needs the wiring mod |
-| Check Pins | reads PG0-PG2 as inputs (never drives) and shows the PG bank supply, see below |
+| Module | **None** (default), Switch (Fat Shark), rapidFIRE, SteadyView, SteadyView X |
+| Mode | depends on the Module (below); greyed out when it has none |
+| Check Pins | click: reads PG0-PG2 as inputs (never drives) and shows the PG bank supply |
+| < Back | |
 
-The status line says whether control is active (with the module's channel),
-paused (WiFi on, pins in use by WiFi, bay unpowered, module still booting) or
-off. It is refreshed while the page is open or only highlighted in the menu.
+A change applies (and is stored) when its list is closed with a click. Below the
+rows: the status line and a three-line note:
 
-**Check Pins** shows "PG bank 1.8 V / 3.3 V" (the SoC's own PIO_POW_VAL
-register, bit 6) and the three levels, "~" for a line that changed during the
-100 ms read. It reads only while the goggle does not control the bay, WiFi is
-off and the pins are not in their SDIO function; reading exports them as GPIO
-inputs, which is also what module control leaves them as. Use it to check the
-wiring and the module (pulled up, pulled down, driving) before Pin Control On.
+* Module control needs the 3-wire bay mod with 4.7k resistors.
+* It pauses while WiFi is on: WiFi uses the same pins.
+* Furious True-D with MOD 1.17: choose rapidFIRE.
+
+**Status** (refreshed while the page is open or only highlighted in the menu):
+
+| text | when |
+|---|---|
+| Bay pins not used | Module = None |
+| Paused while WiFi is on (orange) | WiFi enabled |
+| Paused, pins in use by WiFi (orange) | the WiFi driver is loaded or PG0-PG2 are in their SDIO function (checked again every 5 s) |
+| Waiting for bay power | the bay is switched off (batch 2 hardware) |
+| Waiting for the module to boot | less than 2.0 s since the bay was powered on |
+| Active (green) and the module's channel, e.g. "R1", "CH5" | the goggle controls the module |
+
+**Check Pins** shows "PG bank 3.3 V" or "PG bank 1.8 V" (orange: resistors alone
+cannot drive a 5 V module, module-bay-mod-safety.md section 5), from the SoC's own
+PIO_POW_VAL register (bit 6), and the three levels: "PG0 1 PG1 0 PG2 1", "~" for a
+line that changed during the 100 ms read. It reads only while the goggle does not
+control the bay, WiFi is off and the pins are not in their SDIO function;
+otherwise "not read:" and why (module control active, WiFi on, used by WiFi
+(SDIO), no GPIO access). Reading exports the pins as GPIO inputs and unexports
+them again; they stay GPIO inputs, high-impedance like the "IO disabled" state
+`rc.sh` leaves them in. Use it with Module = None, before choosing a Module.
+
+Every string on the page is in all five language files. The Switch pin orders
+("PG0=1 PG1=2 PG2=4") stay as they are in every language: they are pin labels, and
+a key with "=" is not possible in the language files.
+
+**setting.ini.** `[module] type`: pkendall64's numbering, 0 None, 1 Switch, 2
+rapidFIRE, 3 SteadyView, 4 SteadyView X; any other value (5, the custom True-D
+type of earlier test builds, included) loads as None. `[module] setting`: the Mode
+entry. `[module] channel`: Goggle 2 only (below). `[module] pins` of earlier test
+builds is ignored.
 
 ## Goggle 1 and Goggle 2
 
@@ -42,40 +73,44 @@ wiring and the module (pulled up, pulled down, driving) before Pin Control On.
 | bay module controlled when | always the analog source | also while Built-in is selected (when the bay is powered) |
 | channel stored in setting.ini | `[source] analog_channel` (as upstream) | built-in: `[source] analog_channel` (as upstream); bay: `[module] channel` (new, starts from analog_channel) |
 | WiFi | on the Expansion Module V2, through the bay connector | built in |
-| the mod | pkendall's wiki; supported there: rapidFIRE, Steadyview (batch 2), Steadyview-X, TBS Fusion and 1-of-8 modules (Switch) | unproven |
+| the mod | pkendall64's wiki | unproven |
 
-**Channels.** Each receiver keeps its own channel, always one of the 48
-standard channels (A1-8, B1-8, E1-8, F1-8, R1-8, L1-8); nothing is folded or
-overwritten. With the bay as the analog source, the dial (tune, click / long
-press), the OSD channel, the status bar and the Source page use the bay
-module's channel list. A type with 8 channels (Switch) shows and sends the
-stored channel's place in its band, `(ch - 1) % 8 + 1` (R5 shows as CH5); a
-choice in its list keeps the stored band (CH2 from R5 stores R2), and an ELRS
-VTX channel is stored as it is (F4, shown CH4). Changing the type or Source >
-Analog Module back and forth gives the same channel back. While the bay module
-is not controlled (type Unknown, Pin Control Off, WiFi on) the goggle does not
-tune it, shows no channel for it and stores nothing for it, also not from ELRS.
+**Channels.** Each receiver keeps its own channel, always one of the 48 standard
+channels (A1-8, B1-8, E1-8, F1-8, R1-8, L1-8); nothing is folded or overwritten.
+With the bay as the analog source, the dial (tune, click / long press), the OSD
+channel, the status bar and the Source page use the bay module's channel list. A
+type with 8 channels (Switch) shows and sends the stored channel's place in its
+band, `(ch - 1) % 8 + 1` (R5 shows as CH5); a choice in its list keeps the stored
+band (CH2 from R5 stores R2), and an ELRS VTX channel is stored as it is (F4,
+shown CH4). Changing the Module or Source > Analog Module back and forth gives the
+same channel back. While the bay module is not controlled (Module None, WiFi on)
+the goggle does not tune it, shows no channel for it and stores nothing for it,
+also not from ELRS.
 
-**Goggle 2, Source > Analog Module.** Switching to Expansion sends the bay
-module its mode and channel again (also when the bay stays powered, Power >
-AnalogRX Power = On), in case it was changed by hand meanwhile.
+**Goggle 2, Source > Analog Module.** Switching to Expansion sends the bay module
+its mode and channel again (also when the bay stays powered, Power > AnalogRX
+Power = On), in case it was changed by hand meanwhile.
 
-**Bay power** (batch 2 hardware, Power > AnalogRX Power): while the bay is off
-the pins are inputs. After power-on the module gets time to boot (1 s,
-rapidFIRE 2 s) and is then set up: its mode, then its channel. Batch 1 Goggle 1
-hardware has no bay power switch: the module is set up when the goggle app
-starts.
+**Bay power** (batch 2 hardware: Power > AnalogRX Power, source changes, screen
+sleep, standby): while the bay is off the pins are inputs. **Every Module keeps
+the pins inputs until 2.0 s after every bay power-on**, then sets the module up:
+its mode, then its channel. Batch 1 Goggle 1 hardware has no bay power switch: the
+app start counts as the power-on (2.0 s after it). The 2.0 s count from the
+goggle's power-on command to the DM5680 co-processor; the switch itself follows
+after an unmeasured delay. A True-D's bootloader holds bay pin 1 until ~1.45 s
+after its power-on (furiousdfw `docs/bay-standards.md` 5.1), the ExpressLRS VRx
+backpack waits 2 s too (`VRX_BOOT_DELAY`).
 
 ### Differences from upstream
 
-* Goggle 2, Expansion selected and type Unknown (the default): no analog channel
-  in the status bar, OSD or Source page. Upstream showed the stored channel,
-  which an uncontrolled bay module does not follow; it stays hidden here.
+* Goggle 2, Expansion selected and Module None (the default): no analog channel in
+  the status bar, OSD or Source page. Upstream showed the stored channel, which an
+  uncontrolled bay module does not follow; it stays hidden here.
 * Goggle 2: the bay module's channel is a new key, `[module] channel`;
   `[source] analog_channel` keeps upstream's meaning (the built-in receiver).
 * ELRS VTX channel commands in analog mode are ignored, without restarting the
-  analog pipeline, while the goggle does not control the analog source;
-  applied ones are saved to setting.ini.
+  analog pipeline, while the goggle does not control the analog source; applied
+  ones are saved to setting.ini.
 * MSP: GET_BAND_CHAN / GET_FREQ answer the analog channel in analog mode (255 /
   0 Hz, the backpack's "unknown", for an uncontrolled bay module); upstream
   answered the HDZero channel. The dial's long-press confirm and the ELRS page's
@@ -85,24 +120,23 @@ starts.
 ## The pins and WiFi
 
 The goggle drives SoC pins **PG0/PG1/PG2** = GPIO 192/193/194, named CLK/DAT/CS
-after their role in the SPI-style protocols (pkendall's analog-module-control
-branch, written for the Goggle 1). Which bay-board connector pin each one is,
-and which module CS pin the mod wires it to, is in pkendall's wiki pictures;
-pkendall drove SPI CLK on PG0, DATA on PG1 and CS on PG2, and ExpressLRS wires
-rapidFIRE as CS3 = CLK, CS2 = DATA, CS1 = NSS, so his mod presumably connects
-PG0 → CS3, PG1 → CS2, PG2 → CS1. Nobody has confirmed that here.
+after their role in the SPI-style protocols (pkendall64's analog-module-control,
+written for the Goggle 1). With the standard rapidFIRE wiring (ExpressLRS: CS3 =
+CLK, CS2 = DATA, CS1 = NSS) the mod presumably connects PG0 → socket pin 1 (CS3),
+PG1 → pin 2 (CS2), PG2 → pin 3 (CS1); pkendall64's photos show the socket end, not
+which goggle connector pin is which PG pin. Nobody has checked it on a goggle.
 
-PG0-PG5 are also the SDIO bus (`sdc1`) of the WiFi chip (XR819, `xradio_wlan`)
-on **both** goggles. The official images (Goggle 1 9.5.0, Goggle 2 9.5.1 packages)
+PG0-PG5 are also the SDIO bus (`sdc1`) of the WiFi chip (XR819, `xradio_wlan`) on
+**both** goggles. The official images (Goggle 1 9.5.0, Goggle 2 9.5.1 packages)
 carry the same sys_config: `[sdc1]` on PG00-PG05, function 2, 4-bit; `[wlan]` on
 SDIO bus 1. At boot `rc.sh` switches PG0-PG5 to "IO disabled"
 (`0x0300B0D8 = 0x22777777`); the SDIO host takes them back when WiFi starts. So
 the goggle:
 
-* drives the pins only with a type set, Pin Control On, WiFi disabled (WiFi
-  page) and the bay powered;
-* releases them before the WiFi page starts WiFi, and takes them again after
-  WiFi was stopped;
+* drives the pins only with a Module chosen, WiFi disabled (WiFi page), the bay
+  powered for 2.0 s, and the pins not in use by WiFi;
+* releases them before the WiFi page starts WiFi (and lets a running Check Pins
+  finish first), and takes them again after WiFi was stopped;
 * leaves them alone while `xradio_wlan` is loaded or PG_CFG0 shows any of PG0-PG2
   in its SDC1 function (checked again every 5 s).
 
@@ -111,35 +145,33 @@ whether resistors alone are enough: module-bay-mod-safety.md.
 
 ### Releasing the pins
 
-A release request (bay power off, Pin Control Off, type change, WiFi on) stops a
-transfer at its next abort point, then the type's close() makes the pins
-inputs. The pins stay driven at most:
+A release request (bay power off, Module changed, WiFi on) stops a transfer at its
+next abort point, then the type's close() makes the pins inputs. The pins stay
+driven at most:
 
-| type | after the request |
+| Module | after the request |
 |---|---|
 | Switch | ~1 ms (its waits are abortable) |
-| True-D | the packet on the wire: ≤ ~12 ms (10.4 ms + 2 ms idle-high lead) |
-| rapidFIRE | the SPI frame on the wire: ~5-10 ms on the goggle (not measured; 6-7 ms on the host) |
-| Steadyview | one register access plus its fixed waits (≤ ~12 ms); 70 ms during the mode set's power pulse |
-| Steadyview-X | during set-up: until insmod of soft_uart returns; then close() waits 100 ms and unloads it |
+| rapidFIRE | the frame on the wire: ≤ ~15 ms (13.8-14.6 ms per frame in the host test; the goggle not measured) |
+| SteadyView | one register access plus its fixed waits (≤ ~12 ms); 70 ms during the mode set's power pulse |
+| SteadyView X | during set-up: until insmod of soft_uart returns; then close() waits 100 ms and unloads it |
 
 At a bay power-off the bay is already unpowered meanwhile (the power thread
-switches first and only then tells the worker). module-bay-mod-safety.md has
-what that means for the module.
+switches first and only then tells the worker). module-bay-mod-safety.md has what
+that means for the module.
 
 ## Module types
 
-| Type | Channels | On the pins | Mode |
+| Module | Channels | On the pins | Mode |
 |---|---|---|---|
-| Switch | 8, CH1-CH8 = channels 1-8 of the module's own band | static 3-bit code, active high, code n = CH n+1 | pin order, below |
-| rapidFIRE | 48 (A B E F R L) | ImmersionRC SPI (CS, DATA, CLK), each command 3x | legacy / rapidFIRE 1 / rapidFIRE 2 |
-| Steadyview | 48 | RTC6705 SPI; mode set through a bay power cycle (batch 2 only) | Diversity / Mix 1-3 |
-| Steadyview-X | 48 | 115200 baud UART through `soft_uart.ko` (TX = PG0, RX = PG1), CS low | Diversity / Mix 1-3 |
-| True-D | 48 | LINK command at 9600 8N1 on all three pins at once | none |
+| Switch (Fat Shark) | 8, CH1-CH8 = channels 1-8 of the module's own band | static 3-bit code, active high, code n = CH n+1 | pin order, below |
+| rapidFIRE | 48 (A B E F R L) | ImmersionRC rapidFIRE SPI (CS, DATA, CLK), each command 3x | rapidFIRE 1 / rapidFIRE 2 / Legacy (`D` 0 / 1 / 2) |
+| SteadyView | 48 | RTC6705 register writes; mode set through a bay power cycle (batch 2 only) | Diversity / Mix 1-3 |
+| SteadyView X | 48 | 115200 baud UART through `soft_uart.ko` (TX = PG0, RX = PG1), CS low | Diversity / Mix 1-3 |
 
-After every set-up (power-on, Pin Control On, WiFi off, type change) and every
-mode change the goggle sends the channel itself, whatever the type's set-up
-did.
+After every set-up (power-on, Module chosen, WiFi off) and every mode change the
+goggle sends the channel itself, whatever the type's set-up did. Module and Mode
+are applied together, so a new Module is never set up with the old one's Mode.
 
 ### Switch
 
@@ -148,150 +180,162 @@ wiring is not known. Each label gives the weight of each pin's bit:
 
 | Mode | bit 0 | bit 1 | bit 2 | note |
 |---|---|---|---|---|
-| PG0=1 PG1=2 PG2=4 | PG0 | PG1 | PG2 | pkendall's order |
+| PG0=1 PG1=2 PG2=4 | PG0 | PG1 | PG2 | pkendall64's order |
 | PG0=4 PG1=1 PG2=2 | PG1 | PG2 | PG0 | rapidFIRE convention CH1 = DATA, CH2 = CS, CH3 = CLK |
-| PG0=4 PG1=2 PG2=1 | PG2 | PG1 | PG0 | CS1 = bit 0 with pkendall's presumed wiring (True-D 1-8: D11 = CS1 = bit 0) |
+| PG0=4 PG1=2 PG2=1 | PG2 | PG1 | PG0 | CS1 = bit 0 with the presumed wiring (True-D `BAY:1-8`: D11 = CS1 = bit 0) |
 | PG0=1 PG1=4 PG2=2 | PG0 | PG2 | PG1 | |
 | PG0=2 PG1=1 PG2=4 | PG1 | PG0 | PG2 | |
 | PG0=2 PG1=4 PG2=1 | PG2 | PG0 | PG1 | |
 
-The first three are the orders offered before; stored settings keep their
-meaning. Finding the order on the bench: dial CH1, CH2, CH3, CH5 and see which
-channel the module takes for each.
+Finding the order on the bench: dial CH1, CH2, CH3, CH5 and see which channel the
+module takes for each.
 
-**Sequence and timing** (what the goggle produces):
+**Sequence** (what the goggle produces):
 
-1. pins inputs until the set-up, 1.0 s after bay power-on (batch 1: at app
-   start);
+1. pins inputs until the set-up, 2.0 s after bay power-on;
 2. code 2 for 200 ms, from inputs straight to its levels: not part of the
    rapidFIRE SPI-mode entry (all high, then all low), so a rapidFIRE in legacy
    mode stays in it;
-3. the channel's code, held. Each pin is set on its own (three sysfs writes, a
-   few hundred µs between the first and the last);
-4. channel 8 (code 7, all high) right after power-up: a True-D in its 1-8 mode
-   takes a code after 300 ms, only once its loop runs (~3.5 s after power-on),
-   and takes 7 (what an unconnected bay reads) only after another code. So code
-   7 is preceded by code 6 (channel 7) until 5.0 s after bay power-on and for at
-   least 500 ms; other modules show channel 7 that long. Codes 0-6 go out at
-   once; so does 7 once another code has stood that long.
-5. a release makes the pins inputs: the module reads its own pull-ups (a True-D
-   reads 7 and, once it has taken another code, goes to channel 8 300 ms later).
+3. the channel's code, held. Each pin is set on its own (three sysfs writes, a few
+   hundred µs between the first and the last);
+4. channel 8 (code 7, all high, what an unconnected bay reads) is preceded by code
+   6 (channel 7) until 5.0 s after bay power-on and for at least 500 ms: a True-D
+   in `BAY:1-8` takes 7 only after another code (MOD 1.16: taken; MOD 1.17: read
+   twice). Codes 0-6 go out at once;
+5. a release makes the pins inputs: the module reads its own pull-ups.
 
 ### rapidFIRE
 
 The goggle only writes: nothing reads a pin or waits for an answer, so a module
-that only listens (a True-D in its rapidFIRE mode) gets exactly what a rapidFIRE
-gets. Sequence (src/module/rapidfire.c; times after bay power-on from the host
-test's trace, which has no sysfs cost):
+that only listens (a True-D with MOD 1.17, `BAY:RAPIDFIRE`) gets exactly what a
+rapidFIRE gets. Sequence (`src/module/rapidfire.c`; times after bay power-on from
+the host test's trace, which has no sysfs cost):
 
 | time | pins |
 |---|---|
-| 0-2.0 s | inputs (the module's pull-ups) |
-| 2.000 s | straight to all three high (no low step before), 200 ms |
-| 2.200 s | all three low, 200 ms (SPI mode entry, as the ExpressLRS backpack's `EnableSPIMode()`) |
-| 2.400 s | CS high; idle from now on: CS high, CLK low, DATA low |
-| 2.500 s | mode `D` x3 |
-| 2.55 s | band `B` x3, then 100 ms |
-| 2.70 s | channel `C` x3 |
-| 5.000 s | band `B` x3, 100 ms, channel `C` x3 again (for a module that boots slower); channel and mode changes between 2.4 s and 5.0 s wait for this |
-| later | each channel change: `B` x3, 100 ms, `C` x3; a mode change: 100 ms, `D` x3, then `B`, `C` |
+| 0-2.0 s | inputs |
+| 2.001 s | straight to all three high, CS first (CLK never rises inside an open CS window), 200 ms |
+| 2.202 s | all three low, 200 ms (SPI-mode entry, as the ExpressLRS backpack's `EnableSPIMode()`) |
+| 2.403 s | CS high; idle from now on: CS high, CLK low, DATA low |
+| 2.504 s | mode `D` x3 |
+| 2.579 s | band `B` x3, then 100 ms |
+| 2.755 s | channel `C` x3 |
+| 5.001 s | band `B` x3, 100 ms, channel `C` x3 again (5.177 s), for a module that boots slower; channel and mode changes between 2.4 s and 5.0 s wait for this |
+| later | each channel change: `B` x3, 100 ms, `C` x3 (~0.25 s in all); a mode change: 100 ms, `D` x3, then `B`, `C` |
 
 Command: 5 bytes `cmd '=' 0x01 crc value`, crc = (cmd + '=' + 1 + value) & 0xFF;
-`D` mode 0 legacy / 1 rapidFIRE 1 / 2 rapidFIRE 2; `B` IMRC band 1 F, 2 R, 3 E,
-4 B, 5 A, 6 L; `C` channel 1-8. Each command 3 times, 10 ms between the end of
-one frame and the start of the next. Frame: CS low, ≥ 16 µs, 40 bits MSB first
-(DATA set while CLK is low, then CLK high ≥ 9 µs, CLK low ≥ 8 µs, each step
-plus one sysfs write), ≥ 16 µs, CS high, DATA low. The receiver should sample
-DATA on the rising CLK edge while CS is low, check length and checksum, and not
-depend on seeing the SPI mode entry (it may still boot then). The real bit
-time on the goggle is not measured: the sleeps take longer than asked (Linux
-timer slack, ~50 µs), so expect roughly 100-200 µs per bit and 5-10 ms per
-frame.
+`D` 0 rapidFIRE #1, 1 rapidFIRE #2, 2 legacy (GOROman/rapidFIRE_SPI's enum; only
+0-2 are sent); `B` IMRC band 1 F, 2 R, 3 E, 4 B, 5 A, 6 L; `C` channel 1-8. Each
+command 3 times, 10 ms from the end of one frame to the start of the next.
 
-Against the ExpressLRS backpack (`src/rapidfire.cpp`, VRx "Rapidfire" target):
-the same entry (200 ms high, 200 ms low), the same command bytes and band
-mapping, 3 repeats. The backpack waits 2 s after its own boot before the entry
-(the goggle: 2 s after bay power-on), floats the pins between frames (the goggle
-keeps idle levels), clocks at 1 kHz with 1 ms CS lead and 100 ms CS gaps
-(the goggle: pkendall's much faster timing, known to work on a rapidFIRE) and
-never sends a mode command.
+**Frame** (SPI mode 0, MSB first; the module samples DATA at the CLK rise): CS low,
+DATA = bit 7; per bit: CLK high, CLK low and DATA = the next bit; CS high, DATA
+low. After every pin write the goggle waits until the clock has passed an absolute
+deadline 100 µs after that write, so:
 
-### Steadyview, Steadyview-X
+* **guaranteed**: every CS / CLK level and gap (CS low to the first CLK rise, each
+  CLK high and low, the last CLK fall to CS high) lasts **≥ 100 µs on the pins**,
+  and DATA changes only while CLK is low, ≥ 100 µs before the next rise, whatever
+  the scheduler does: a sleep can only end late, and one that ends early (a signal,
+  an error) is repeated. 81 waits: ≥ 8.1 ms per frame;
+* **typical**: each wait overshoots by the timer slack (50 µs for a normal
+  thread), the wake-up latency and the sysfs writes: 13.8-14.6 ms per frame on a
+  PC (host test); on the goggle not measured, estimated ~12-20 ms.
 
-Steadyview latches its mix mode at power-up: the mode set switches the bay off
-for 70 ms and on again with CLK/DATA at the mode's levels. The bay power thread
+The requirement this meets: a True-D with MOD 1.17 reads a bay edge ≤ 43.1 µs
+after it in its worst case and asks the goggle for ≥ 100 µs per level and gap
+(furiousdfw `docs/bay-standards.md` 4); a real rapidFIRE takes up to ~80 kHz
+(≥ 6.25 µs per level).
+
+**Against MOD 1.17's receiver** (bay-standards 3.1; the host test runs a model of
+it on the goggle's own pin trace): frames are taken without the SPI-mode entry;
+`B` and `C` have the right length and checksum; every change is band x3, then
+channel x3 0.11 s after the last band frame (MOD 1.17 pairs a channel only with a
+band up to 1 s before it, and the senders' gaps are 0.1-0.35 s); `D` is a valid
+frame that the True-D ignores; a channel command alone is never sent (MOD 1.17
+takes one only after 2 s of silence); the 5.0 s resend of the same channel does
+nothing on a True-D that already has it; the lines never float between frames
+(idle levels), so no failed windows. **Against the ExpressLRS VRx backpack**
+(`src/rapidfire.cpp`, the reference sender): the same 2.0 s boot delay, entry
+(200 ms high, 200 ms low), command bytes, band mapping and 3 repeats with band
+then 100 ms then channel. The backpack floats its pins between frames (the goggle
+keeps idle levels), clocks at 1 kHz with 100 ms CS lead and lag (the goggle: ≥ 100
+µs per level, 10 ms between frames) and never sends `D`. pkendall64's original
+frames (≥ 8-16 µs per step) worked on real rapidFIRE modules; the goggle is now
+slower than that and well inside the 80 kHz limit.
+
+### SteadyView, SteadyView X
+
+SteadyView latches its mix mode at power-up: the mode set switches the bay off for
+70 ms and on again with CLK / DATA at the mode's levels. This is the one bay
+power-on with driven pins, by the protocol, only with Module = SteadyView (never
+select it for another module). The bay power thread
 (`external_analog_module_power()`) owns the bay power; the pulse runs under its
-lock and only while the bay is on, so a switch-off requested meanwhile happens
-right after it. Batch 1 Goggle 1 has no bay power switch: no mode list.
-Steadyview-X gets its mix mode at set-up, then its channel.
+lock and only while the bay is on. Batch 1 Goggle 1 has no bay power switch: no
+mode list. A SteadyView (non-X) needs its pin 8 lifted (RSSI on the module, GND
+in the bay; pkendall64's wiki): module-bay-mod-safety.md section 6. SteadyView X
+gets its mix mode at set-up, then its channel.
 
-### True-D (Furious True-D, firmware by the owner's project)
+### Furious True-D
 
-**Requirements:**
-* the wiring mod with series resistors (module-bay-mod-safety.md); the True-D's
-  bootloader drives D13 at 5 V at every reset, whatever its firmware;
-* **True-D firmware MOD 1.16 or later, with its BAY mode set before Pin Control
-  is turned on.** Never use module control with older True-D firmware, or with
-  MOD 1.16 in BAY:AUTO: those drive D13 at 5 V push-pull for ~6 s after every
-  power-up.
+Firmware: **MOD 1.17** (furiousdfw `release/1.17/`). Its application never drives
+a bay pin; its one menu setting **BAY** is `RAPIDFIRE` (default: a standard
+rapidFIRE SPI-mode listener), `1-8` (the absolute 3-pin code) or `STEP` (Fat Shark
+up / down).
 
-| goggle type | True-D firmware and BAY mode | wires used |
+| True-D BAY | goggle Module | note |
 |---|---|---|
-| **rapidFIRE** (the main way) | MOD 1.17 or later, BAY:RAPIDFIRE (its default) | all three: CS1 = NSS (D11), CS2 = DATA (D12), CS3 = CLK (D13) |
-| True-D (LINK) | MOD 1.16, BAY:LINK (MOD 1.17 as being worked on drops LINK) | D12 only |
-| Switch | BAY:1-8 (MOD 1.16 or later) | all three, D11 = bit 0, D12 = bit 1, D13 = bit 2: pin order PG0=4 PG1=2 PG2=1 with pkendall's presumed wiring |
+| **RAPIDFIRE** (default) | **rapidFIRE** | the main way: 48 channels A B E F R L; no pull-ups on the True-D side |
+| 1-8 | Switch, pin order "PG0=4 PG1=2 PG2=1" | D11 = CS1 = bit 0 if the presumed wiring holds; channels 1-8 of the True-D's current band |
 
-MOD 1.17 is still being worked on in the True-D project; its pin roles (D11 =
-CS1, D13 = CS3) are inferred there, not measured.
+The custom "True-D" type of earlier test builds is gone (a stored `[module] type =
+5` loads as None): MOD 1.17 has no LINK receiver any more.
 
-**Safe order:**
-1. update the True-D and set its BAY mode in its own menu (with the goggle at
-   type Unknown or Pin Control Off, or outside the goggle);
-2. the bench checklist in module-bay-mod-safety.md;
-3. choose the matching type, then Pin Control On;
-4. keep WiFi off while flying analog: the SDIO traffic is on the same wires.
+**The bootloader.** The True-D's **stock bootloader** drives bay pin 1 (D13, the
+clock wire) high at 5 V for ~100 ms and then low until ~1.39 s after every reset
+or power-on, whatever the firmware; the goggle's 2.0 s input hold keeps clear of it
+and the 4.7 kΩ resistors make it harmless. A **no-LED bootloader** (furiousdfw
+`bootloader/`, written once with an ISP programmer) never drives a bay pin. Both
+cases are covered in module-bay-mod-safety.md (checklist step 6 tells which one a
+module has).
 
-**True-D type ("LINK"):** command `FD 02 02 05 41 EE 00 <ch> <crc hi> <crc lo>`,
-ch 0-47 = A1-8, B1-8, E1-8, F1-8, R1-8, L1-8, CRC-16/XMODEM over the first 8
-bytes, at 9600 8N1 on PG0, PG1 and PG2 at once (only D12 listens):
+**Never** use a True-D with the stock firmware 3.9D, MOD 1.15 or MOD 1.16 in
+`BAY:AUTO` in a wired bay: they drive D13 at 5 V push-pull for ~6 s after every
+power-up. **Never** flash a True-D while it sits in a wired bay.
 
-* bit-banged through the sysfs value files (opened once), every edge at an
-  absolute CLOCK_MONOTONIC deadline from the first start bit, busy-waited at
-  SCHED_FIFO for the ~10.4 ms of a packet;
-* each command 5 times, 30 ms apart; the pins are outputs (idle high) only for
-  that burst and inputs otherwise;
-* sent 1 s after bay power-on and again 3.5 s after power-on, and on every
-  channel change. Changes in between wait for the 3.5 s send, so the True-D gets
-  at most 50 bytes during its 2 s boot screen (it buffers 64).
+**Order:** update the True-D and set its BAY mode outside the goggle (or with
+Module = None); the checklist of module-bay-mod-safety.md; then Module =
+rapidFIRE; keep WiFi off while flying analog.
 
 ### Foxeer Wildfire
 
 What is known (sources below): the Wildfire (72CH, and the newer Wildfire /
-Wildfire Lite 80CH) is a diversity receiver for Fat Shark style bays with its
-own OLED and 5-way button, USB firmware update (80CH), "compatible with all Fat
-Shark goggles". Its manual's Settings list has SWITCHING (Fast / Slow / Off),
-OSD, SHOW RSSI, **FS SWITCH (ON / OFF)**, ALL BANDS and FAN. No SPI or serial
-channel control is documented, and the ExpressLRS backpack has no Wildfire
-target (its VRx targets: rapidFIRE, Steadyview, Fusion, HDZero, Skyzone, Orqa,
-RX5808...).
+Wildfire Lite 80CH) is a diversity receiver for Fat Shark style bays with its own
+OLED and 5-way button, USB firmware update (80CH), "compatible with all Fat Shark
+goggles". Its manual's Settings list has SWITCHING (Fast / Slow / Off), OSD, SHOW
+RSSI, **FS SWITCH (ON / OFF)**, ALL BANDS and FAN (search-result snippets). No SPI
+or serial channel control is documented, and the ExpressLRS backpack has no
+Wildfire target. So **Switch is the likely Module type, unverified**.
 
-What is **not** known: what FS SWITCH does (the name suggests the Fat Shark
-goggle channel buttons, i.e. the three CS pins, but no text found explains it);
-whether it reads the pins as an absolute channel 1-8 or as up/down steps, and
-in which band; whether its CS pins have pull-ups, pull-downs or are ever driven;
-their logic level. So the Switch type may or may not fit.
+Not known: what FS SWITCH does exactly (the name suggests the Fat Shark goggle
+channel lines, the three CS pins); whether it reads the pins as an absolute
+channel 1-8 or as up / down steps, and in which band; whether its pins have
+pull-ups, pull-downs or are ever driven; their logic level; its pin 8.
 
-Bench procedure (after module-bay-mod-safety.md steps 1-2, Pin Control Off):
+Bench procedure (after module-bay-mod-safety.md steps 1-14, Module None):
 1. Wildfire in the bay, bay powered: Check Pins with FS SWITCH OFF, then ON.
-   1 1 1: pull-ups; 0 0 0: pull-downs or nothing connected; "~": it drives a
-   pin: stop. Multimeter across each resistor: ≤ 0.3 V.
-2. FS SWITCH ON, type Switch, pin order PG0=1 PG1=2 PG2=4, Pin Control On. Dial
-   CH1, CH2, CH3, CH5 with a few seconds each and watch the Wildfire's channel:
+   1 1 1: pull-ups; 0 0 0: pull-downs or nothing connected; "~": it drives a pin:
+   stop. Multimeter across each resistor: ≤ 0.3 V.
+2. FS SWITCH ON, Module Switch, pin order PG0=1 PG1=2 PG2=4. Dial CH1, CH2, CH3,
+   CH5 with a few seconds each and watch the Wildfire's channel:
    * it goes to channel n of its band for CHn (in some pin order): absolute, the
      Switch type fits; try the other orders until CH1-CH8 map to 1-8;
-   * it moves by one channel per change, whatever the size: steps; the goggle
-     has no step type, so it cannot be controlled;
+   * it moves by one channel per change, whatever the size: steps; the goggle has
+     no step type, so it cannot be controlled;
    * nothing happens: FS SWITCH is something else, or the wiring is wrong.
+
+HDZero issue #108 reports a bad picture from a Wildfire in the HDZero goggle that
+was fine in an HDO2 (cause unknown); unrelated to the mod.
 
 Sources: Foxeer product pages for the
 [Wildfire 80CH](https://www.foxeer.com/foxeer-wildfire-5-8ghz-80ch-dual-receiver-g-607) and
@@ -299,37 +343,43 @@ Sources: Foxeer product pages for the
 the Foxeer manual
 ([PDF](http://download.foxeer.com/manual/MR1622/WildFire_Goggle_Receiver_User_Manual.pdf),
 [transcription](https://manuals.plus/m/6992f2b851eddfc8f1905d4f2f449bce6b5c4256039b864e3c29ce2bda0c9b57))
-as quoted by search results (the pages themselves could not be opened from
-here); the ExpressLRS Backpack's `targets/`.
+as quoted by search results (the pages themselves could not be opened); the
+ExpressLRS Backpack's `targets/`.
 
 ## ELRS / MSP in analog mode
 
 * VTX channel (MSP_SET_BAND_CHAN / SET_FREQ): applied and stored only when the
-  goggle tunes the analog source (built-in receiver, or a controlled bay
-  module); a Switch module gets the channel's place in its band (A1, B1 ... L1
-  all select CH1).
+  goggle tunes the analog source (built-in receiver, or a controlled bay module);
+  a Switch module gets the channel's place in its band (A1, B1 ... L1 all select
+  CH1).
 * MSP_GET_BAND_CHAN / GET_FREQ: the analog channel; 255 / 0 for an uncontrolled
   bay module.
 * Dial long-press confirm and ELRS page "Send VTX freq": the analog channel.
 
 ## Host tests (no hardware)
 
-`make -C utilities/module_bay_test test`:
+`make -C utilities/module_bay_test test` (plain gcc on a PC, ~2 minutes, real
+time): **136 checks, all pass**.
 
-* `test_trued_uart`: the True-D transmitter's pin trace, with simulated sysfs
-  and interrupt jitter, through two software UART receivers;
-* `test_module_worker`: `module.c` against recording module types whose init
-  sends no channel: the set-up sequence and channel after every set-up, the
-  True-D boot timing, power-off and abort within one packet, Pin Control, the
-  WiFi interlock including the SDIO check (`bay_pins_busy()` against stand-in
-  sysfs files), stored channels (Switch list, type round trips, built-in vs bay
-  on the Goggle 2, nothing stored while uncontrolled), the source change, the
-  pin check;
-* `test_module_types`: the real Switch, rapidFIRE and True-D types on the real
-  worker with a recording pin model: the Switch power-up sequence against a model
-  of the True-D's 1-8 mode (channel 8 included), a rapidFIRE listener decoding
-  the frames (the table above comes from it), the True-D bursts, and the pins
-  inputs within 30 ms of a power-off in mid-command.
+* `test_settings_module` (17): `settings_load()` with the real minIni: `[module]
+  type` 0-4 load as they are; 5, -1, 99, 2^32 + 2, text, 0x10, empty load as None;
+  setting and channel.
+* `test_module_worker` (73, plus 3 as a batch 1 Goggle): `module.c` against
+  recording module types whose init sends no channel: Module None touches nothing
+  (power-on, power cycle, source change, WiFi on / off); every type waits 2.0 s
+  after every power-on (cold, a quick off / on, power-on during a transfer, Module
+  chosen or WiFi off within the 2 s); the rapidFIRE 5.0 s resend; release on
+  power-off and WiFi on within one frame; Module and Mode set together; the pin
+  check, also WiFi switched on while it reads; the SDIO interlock (`bay_pins_busy()`
+  against stand-in sysfs files); stored channels and the source change.
+* `test_module_types` (43): the real Switch, rapidFIRE, SteadyView and SteadyView
+  X types on the real worker with a recording pin model: None touches no pin;
+  every type and power path keeps the pins inputs for 2.0 s; the Switch sequence
+  against models of a True-D's 1-8 mode (channel 8 included); the rapidFIRE frames
+  (every CS / CLK edge ≥ 100 µs apart, DATA only while CLK is low, CS first at the
+  entry), also under a signal storm that cuts the worker's sleeps short (11,000+
+  signals, shortest gap 101 µs); a model of MOD 1.17's receiver takes every
+  commanded channel; the pins inputs within one frame of a power-off.
 
 ## Untested on hardware
 
@@ -337,13 +387,13 @@ Everything that touches a real goggle:
 
 * the PG bank voltage (PIO_POW_VAL) on each goggle, and the mod with series
   resistors (module-bay-mod-safety.md's checklist);
-* whether PG0-PG2 reach the bay at all on the Goggle 2, and which module pin
-  each reaches on both;
+* whether PG0-PG2 reach the bay at all on the Goggle 2, and which module pin each
+  reaches on both;
 * that the sysfs exports work on PG0-PG2 after `rc.sh` disabled them, and that
   WiFi still starts after module control or Check Pins released them;
-* the real bit timing of rapidFIRE, Steadyview and True-D frames on the V536
-  (sysfs write cost, timer slack, SCHED_FIFO);
-* Switch pin orders, rapidFIRE, Steadyview, Steadyview-X and True-D on either
-  goggle with this firmware; the Wildfire's FS SWITCH;
-* the WiFi interlock (enable WiFi with a module active, disable it again) and
-  the PG_CFG0 / PIO_POW_VAL reads through `/sys/class/sunxi_dump`.
+* the real timing of rapidFIRE, SteadyView and SteadyView X on the V536 (sysfs
+  write cost, timer slack), and the DM5680's bay power switching delay;
+* Switch pin orders, rapidFIRE, SteadyView, SteadyView X and a True-D with MOD
+  1.17 on either goggle with this firmware; the Wildfire's FS SWITCH;
+* the WiFi interlock (enable WiFi with a module active, disable it again) and the
+  PG_CFG0 / PIO_POW_VAL reads through `/sys/class/sunxi_dump`.
