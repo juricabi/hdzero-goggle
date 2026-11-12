@@ -9,6 +9,7 @@
 #include "core/app_state.h"
 #include "core/audio_mixer.h"
 #include "core/common.hh"
+#include "core/hdmi_audio.h"
 #include "lang/language.h"
 #include "ui/page_common.h"
 #include "ui/ui_style.h"
@@ -45,10 +46,9 @@ static const item_t items[] = {
     SLIDER(AUDIO_MIXER_MIC, "Mic"),
     SLIDER(AUDIO_MIXER_LINE_IN, "Line In"),
     SLIDER(AUDIO_MIXER_AV, "A/V In"),
-#if AUDIO_MIXER_HDMI_IN_ROW
-    // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()), once integrated
+    // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()); all targets have HDMI in.
+    // Greyed and skipped while [hdmi] audio_in is off.
     SLIDER(AUDIO_MIXER_HDMI, "HDMI In"),
-#endif
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
     // audio output of the built-in analog receiver, one of the sources of A/V In
     TOGGLE(AUDIO_MIXER_RX_AUDIO, "Analog RX Audio", "On", "Off", 1),
@@ -106,6 +106,14 @@ static void update_items(void) {
             update_slider(row);
         } else if (item->type == ITEM_TOGGLE) {
             btn_group_set_sel(&toggles[row], audio_mixer_get(item->field) == item->btn0_value ? 0 : 1);
+        }
+        if (item->field == AUDIO_MIXER_HDMI) {
+            const bool on = hdmi_audio_in_enabled();
+            slider_enable(&sliders[row], on);
+            if (on)
+                lv_obj_add_flag(pp_audio.p_arr.panel[row], FLAG_SELECTABLE);
+            else
+                lv_obj_clear_flag(pp_audio.p_arr.panel[row], FLAG_SELECTABLE);
         }
     }
 }

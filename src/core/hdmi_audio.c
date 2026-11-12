@@ -18,11 +18,11 @@
 #include <minIni.h>
 
 #include "core/app_state.h"
+#include "core/audio_mixer.h"
 #include "driver/it66021.h"
 #include "driver/it66121.h"
 #include "record/appmsg.h"
 #include "ui/page_common.h"
-#include "util/system.h"
 
 #define HDMI_AUDIO_SECTION     "hdmi"
 #define HDMI_AUDIO_REQ_SECTION "hdmi_audio" // HDMIA_REQ_FILE / HDMIA_STATE_FILE (src/record/pcmbridge.c)
@@ -71,38 +71,17 @@ static int hdmi_audio_send(long cmd) {
     return msgsnd(q, &msg, sizeof(msg) - sizeof(long), IPC_NOWAIT);
 }
 
-/* Line out and codec mixer for HDMI-in audio, the ONE place that switches them (the mixer
- * module of the audio branch replaces this: HDMI in becomes its DAC source with its own
- * level). On: the bridge plays I2S2 into the codec DAC; the DAC goes to both output mixers,
- * the output mixers to the line out (headphone jack) and into the ADC (so the DVR records
- * the HDMI audio together with its selected source); the analog line-in bypass is taken out
- * of the output mixers (it would be mixed in). Off: the state app_switch_to_hdmi_in() leaves
- * (line out off), DAC out of the mixers, ADC from its direct inputs only. */
+/* HDMI-in audio in the codec: the ONE place that switches it, and it only tells the audio mixer
+ * (src/core/audio_mixer.c), which alone writes the codec's controls. On: the bridge plays I2S2
+ * into the codec DAC, and the mixer takes the DAC in as a live source at the HDMI In level of the
+ * Audio page, next to the analog sources at theirs; the line out stays on although HDMI in is the
+ * source (Volume permitting); Record What I Hear records it with the rest of the headphone mix.
+ * Off: the stock state of HDMI in (line out off), the DAC out of the mix. Off waits until the codec
+ * has it, so the DAC leaves the mix before the bridge stops playing into it. */
 static void hdmi_audio_line_out(bool hdmi_in_audio) {
-    static const char *const on =
-        "amixer -q cset name='Left Output Mixer LINEINL Switch' 0;"
-        "amixer -q cset name='Right Output Mixer LINEINR Switch' 0;"
-        "amixer -q cset name='DACL Mixer AIF1DA0L Switch' 1;"
-        "amixer -q cset name='DACR Mixer AIF1DA0R Switch' 1;"
-        "amixer -q cset name='DAC volume' 152;"
-        "amixer -q cset name='Left Output Mixer DACL Switch' 1;"
-        "amixer -q cset name='Right Output Mixer DACR Switch' 1;"
-        "amixer -q cset name='LADC input Mixer l_output mixer Switch' 1;"
-        "amixer -q cset name='RADC input Mixer r_output mixer Switch' 1;"
-        "amixer -q cset name='LINEOUTL Mux' 1;"
-        "amixer -q cset name='LINEOUTR Mux' 1;"
-        "amixer -q cset name='lineout volume' 31;"
-        "amixer -q cset name='Lineout Switch' 1";
-    static const char *const off =
-        "amixer -q cset name='Lineout Switch' 0;"
-        "amixer -q cset name='LADC input Mixer l_output mixer Switch' 0;"
-        "amixer -q cset name='RADC input Mixer r_output mixer Switch' 0;"
-        "amixer -q cset name='Left Output Mixer DACL Switch' 0;"
-        "amixer -q cset name='Right Output Mixer DACR Switch' 0;"
-        "amixer -q cset name='DAC volume' 160;"
-        "amixer -q cset name='Left Output Mixer LINEINL Switch' 1;"
-        "amixer -q cset name='Right Output Mixer LINEINR Switch' 1";
-    system_exec(hdmi_in_audio ? on : off);
+    audio_mixer_set_live_dac(hdmi_in_audio);
+    if (!hdmi_in_audio)
+        audio_mixer_apply_wait(1000);
     line_out_hdmi = hdmi_in_audio;
 }
 
@@ -209,11 +188,11 @@ void hdmi_audio_poll(void) {
 
     if (alive && pid != daemon_pid) {
         if (daemon_pid != 0) {
+            // (its libmedia_mpp init resets part of the codec mixer: the audio mixer's watcher
+            // puts its state back within about 2 s, the DAC source included)
             LOGI("hdmi audio: record daemon restarted (pid %ld)", pid);
             tries = 0;
             next_try_ms = now_ms();
-            if (route == HDMI_AUDIO_ROUTE_HDMI_IN_MONITOR)
-                hdmi_audio_line_out(true); // its libmedia_mpp init reset the codec mixer
         }
         daemon_pid = pid;
     }
