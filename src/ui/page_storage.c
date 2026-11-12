@@ -8,6 +8,7 @@
 
 #include "../conf/ui.h"
 
+#include "core/audio_mixer.h"
 #include "core/common.hh"
 #include "lang/language.h"
 #include "record/record_definitions.h"
@@ -220,6 +221,9 @@ static format_codes_t page_storage_format_sd() {
     clear_videofile_cnt();
     sdcard_update_free_size();
 
+    // formatsd.sh restarts the record daemon, whose AW_MPI_SYS_Init resets the codec mixer
+    audio_mixer_record_daemon_restarted();
+
     // Restore logging if needed
     if (applogfile) {
         log_file_open(applogfile);
@@ -302,6 +306,9 @@ static repair_codes_t page_storage_repair_sd() {
     if (app_log_file) {
         log_file_open(app_log_file);
     }
+
+    // chkfixsd.sh restarts the record daemon, whose AW_MPI_SYS_Init resets the codec mixer
+    audio_mixer_record_daemon_restarted();
 
     page_storage.is_sd_repair_active = false;
 

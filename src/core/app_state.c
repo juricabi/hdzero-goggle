@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "core/audio_mixer.h"
 #include "core/dvr.h"
 #include "core/input_device.h"
 #include "core/msp_displayport.h"
@@ -69,6 +70,7 @@ void app_exit_menu() {
     if (SOURCE_HDZERO == g_source_info.source) {
         progress_bar.start = 1;
         app_switch_to_hdzero(true);
+        audio_mixer_apply(); // the analog and HDMI paths re-apply it themselves
     } else if (SOURCE_HDMI_IN == g_source_info.source) {
         app_switch_to_hdmi_in();
     } else {
@@ -92,7 +94,7 @@ void app_switch_to_analog(bool is_av_in) {
     } else if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_EXTERNAL) {
         rtc6715.init(0, 0);
     } else {
-        rtc6715.init(1, g_setting.record.audio_source == SETTING_RECORD_AUDIO_SOURCE_AV_IN);
+        rtc6715.init(1, audio_mixer_av_in_use());
         rtc6715.set_ch(g_setting.source.analog_channel - 1);
     }
 

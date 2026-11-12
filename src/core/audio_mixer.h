@@ -71,8 +71,11 @@ void audio_mixer_set(audio_mixer_field_t field, int value);
 
 // Write the whole routing to the codec (one amixer process).
 void audio_mixer_apply(void);
-// Apply again after `ms`, e.g. when the record daemon was restarted (its AW_MPI_SYS_Init resets the mixer).
+// Apply again after `ms` milliseconds (from a separate thread).
 void audio_mixer_apply_later(unsigned ms);
+// The record daemon was (re)started: its AW_MPI_SYS_Init resets part of the codec mixer
+// (libmedia_mpp alsaOpenMixer), so apply again once it is up.
+void audio_mixer_record_daemon_restarted(void);
 
 void audio_mixer_set_line_out(bool enable);
 void audio_mixer_set_playback(bool active);

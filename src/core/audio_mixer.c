@@ -137,6 +137,12 @@ void audio_mixer_apply_later(unsigned ms) {
         audio_mixer_apply();
 }
 
+void audio_mixer_record_daemon_restarted(void) {
+    // the scripts mount the card, sleep a second and start the daemon in the background
+    audio_mixer_apply_later(4000);
+    audio_mixer_apply_later(12000);
+}
+
 void audio_mixer_set_line_out(bool enable) {
     pthread_mutex_lock(&mixer_mutex);
     const bool changed = context.line_out != enable;

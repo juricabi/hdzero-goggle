@@ -9,6 +9,7 @@
 #include "../conf/ui.h"
 
 #include "core/app_state.h"
+#include "core/audio_mixer.h"
 #include "core/battery.h"
 #include "core/common.hh"
 #include "driver/dm5680.h"
@@ -91,7 +92,7 @@ static lv_obj_t *page_analog_rssi_create(lv_obj_t *parent, panel_arr_t *arr) {
 }
 
 static void on_enter() {
-    rtc6715.init(1, 0);
+    rtc6715.init(1, audio_mixer_av_in_use());
     rtc6715.set_ch(32); // R1
 }
 
