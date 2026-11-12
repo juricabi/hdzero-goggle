@@ -143,7 +143,9 @@ static void update_check(void) {
     if (!r.seq)
         return; // (the hint set at page creation stays)
     check_seq_shown = r.seq;
-    if (r.pg_bank_mv)
+    if (r.pg_bank_mv == 1800) // (orange: resistors alone cannot drive a 5 V module, docs/module-bay-mod-safety.md)
+        snprintf(bank, sizeof(bank), "#FFA000 %s 1.8 V#", _lang("PG bank"));
+    else if (r.pg_bank_mv)
         snprintf(bank, sizeof(bank), "%s %d.%d V", _lang("PG bank"), r.pg_bank_mv / 1000, r.pg_bank_mv % 1000 / 100);
     else
         snprintf(bank, sizeof(bank), "%s ?", _lang("PG bank"));

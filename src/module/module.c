@@ -227,12 +227,13 @@ static void run_pin_check(bool controlling, bool wifi_on) {
     uint32_t pow;
     if (read_reg(PIO_POW_VAL, &pow))
         r.pg_bank_mv = (pow & PIO_POW_VAL_PG) ? 1800 : 3300;
+    // (the reasons are shown on the Module Bay page, through the language files)
     if (controlling) {
-        r.why = "driven by module control";
+        r.why = "module control active";
     } else if (wifi_on) {
         r.why = "WiFi on";
     } else if (bay_pins_busy()) {
-        r.why = "in use by the WiFi SDIO bus";
+        r.why = "used by WiFi (SDIO)";
     } else if (!softspi_open()) {
         softspi_close();
         r.why = "no GPIO access";
