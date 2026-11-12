@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include <log/log.h>
 #include <minIni.h>
 
@@ -12,13 +14,12 @@
 #include "ui/ui_main_menu.h"
 #include "ui/ui_style.h"
 
-// Rows: 0 Type, 1 Mode (selectable only when the type has modes), 2 Pin Control,
-// 3 Check Pins, 4 Back.  A change applies (and is stored) when its list is closed
-// with a click or Pin Control is toggled.  Check Pins only reads (module.h).
+// Rows: 0 Module (None = the bay pins are never touched), 1 Mode (selectable only
+// when the module has modes), 2 Check Pins, 3 Back.  A change applies (and is
+// stored) when its list is closed with a click.  Check Pins only reads (module.h).
 enum {
     ROW_TYPE = 0,
     ROW_MODE,
-    ROW_PINS,
     ROW_CHECK,
     ROW_BACK,
     ROW_COUNT,
@@ -33,7 +34,6 @@ static lv_obj_t *btn_module_mode;
 static lv_obj_t *lbl_status;
 static lv_obj_t *lbl_check;
 static unsigned check_seq_shown = 0;
-static btn_group_t btn_pins;
 
 static lv_obj_t *page_item_focused = NULL;
 static uint16_t focused_orig_sel = 0; // selection when the focused list was opened
@@ -41,7 +41,15 @@ static uint16_t focused_orig_sel = 0; // selection when the focused list was ope
 static lv_coord_t col_dsc[] = {160, 200, 240, 240, 160, 40, LV_GRID_TEMPLATE_LAST};
 static lv_coord_t row_dsc[] = {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST};
 
-static const char *type_names = "Unknown\nSwitch\nrapidFIRE\nSteadyview\nSteadyview-X\nTrue-D";
+// The Module list, in module_type_t order ([module] type): only "None" is a word,
+// the others are the modules' own names.
+static const char *const type_names[MODULE_TYPES] = {
+    "None",
+    "Switch (Fat Shark)",
+    "rapidFIRE",
+    "SteadyView",
+    "SteadyView X",
+};
 
 // Mode list of a type, NULL when it has none here.
 static const char *mode_names(int type) {
@@ -63,7 +71,7 @@ static void show_module_settings(int mode) {
         lv_obj_clear_state(lbl_module_mode, STATE_DISABLED);
         lv_obj_add_flag(pp_modulebay.p_arr.panel[ROW_MODE], FLAG_SELECTABLE);
     } else {
-        lv_dropdown_set_options(btn_module_mode, "None");
+        lv_dropdown_set_options(btn_module_mode, "-");
         lv_dropdown_set_selected(btn_module_mode, 0);
         lv_obj_add_flag(btn_module_mode, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_state(lbl_module_mode, STATE_DISABLED);
@@ -78,10 +86,7 @@ static void update_status(void) {
         snprintf(buf, sizeof(buf), "%s", _lang("No module bay"));
         break;
     case MODULE_STATUS_NONE:
-        snprintf(buf, sizeof(buf), "%s", _lang("Type Unknown, bay pins not used"));
-        break;
-    case MODULE_STATUS_PINS_OFF:
-        snprintf(buf, sizeof(buf), "%s", _lang("Pin Control Off, bay pins not used"));
+        snprintf(buf, sizeof(buf), "%s", _lang("Bay pins not used"));
         break;
     case MODULE_STATUS_WIFI:
         snprintf(buf, sizeof(buf), "#FFA000 %s#", _lang("Paused while WiFi is on"));
@@ -111,7 +116,7 @@ static void update_status(void) {
 
 // Result of the last pin check: the PG bank supply and the three levels.
 static void update_check(void) {
-    char buf[160], bank[32];
+    char buf[192], bank[48];
     const module_pin_check_t r = module_pin_check_result();
     if (r.running) {
         lv_label_set_text(lbl_check, _lang("Reading..."));
@@ -121,9 +126,9 @@ static void update_check(void) {
         return; // (the hint set at page creation stays)
     check_seq_shown = r.seq;
     if (r.pg_bank_mv)
-        snprintf(bank, sizeof(bank), "PG %s %d.%d V", _lang("bank"), r.pg_bank_mv / 1000, r.pg_bank_mv % 1000 / 100);
+        snprintf(bank, sizeof(bank), "%s %d.%d V", _lang("PG bank"), r.pg_bank_mv / 1000, r.pg_bank_mv % 1000 / 100);
     else
-        snprintf(bank, sizeof(bank), "PG %s ?", _lang("bank"));
+        snprintf(bank, sizeof(bank), "%s ?", _lang("PG bank"));
     if (r.levels < 0) {
         snprintf(buf, sizeof(buf), "%s, %s: %s", bank, _lang("not read"), _lang(r.why ? r.why : "?"));
     } else {
@@ -147,7 +152,8 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_add_style(section, &style_submenu, LV_PART_MAIN);
     lv_obj_set_size(section, 1053, 894);
 
-    create_text(NULL, section, false, "Module Bay:", LV_MENU_ITEM_BUILDER_VARIANT_2);
+    snprintf(buf, sizeof(buf), "%s:", _lang("Module Bay"));
+    create_text(NULL, section, false, buf, LV_MENU_ITEM_BUILDER_VARIANT_2);
 
     cont = lv_obj_create(section);
     lv_obj_set_size(cont, 1040, 600);
@@ -161,17 +167,18 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     create_select_item(arr, cont);
 
-    create_label_item(cont, _lang("Type"), 1, ROW_TYPE, 1);
-    btn_module_type = create_dropdown_item(cont, type_names, 2, ROW_TYPE,
-                                           240, 40, 1, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
+    snprintf(buf, sizeof(buf), "%s", _lang(type_names[0]));
+    for (int i = 1; i < MODULE_TYPES; i++)
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "\n%s", type_names[i]);
+    create_label_item(cont, _lang("Module"), 1, ROW_TYPE, 1);
+    // (wide enough for "Switch (Fat Shark)")
+    btn_module_type = create_dropdown_item(cont, buf, 2, ROW_TYPE,
+                                           320, 40, 2, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
 
     lbl_module_mode = create_label_item(cont, _lang("Mode"), 1, ROW_MODE, 1);
     // (wide enough for the Switch pin orders, "PG0=1 PG1=2 PG2=4")
-    btn_module_mode = create_dropdown_item(cont, "None", 2, ROW_MODE,
+    btn_module_mode = create_dropdown_item(cont, "-", 2, ROW_MODE,
                                            320, 40, 2, 4, LV_GRID_ALIGN_START, &lv_font_montserrat_26);
-
-    create_btn_group_item(&btn_pins, cont, 2, _lang("Pin Control"), _lang("Off"), _lang("On"), "", "", ROW_PINS);
-    btn_group_set_sel(&btn_pins, g_setting.module.pins ? 1 : 0);
 
     create_label_item(cont, _lang("Check Pins"), 1, ROW_CHECK, 1);
     lbl_check = create_label_item(cont, _lang("Click: read PG0-PG2 as inputs, nothing driven"), 2, ROW_CHECK, 4);
@@ -181,12 +188,12 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     lbl_status = create_label_item(cont, "", 1, ROW_STATUS, 4);
 
+    // what a pilot needs before choosing a module
     lv_obj_t *note = lv_label_create(cont);
-    snprintf(buf, sizeof(buf), "%s\n%s\n%s\n%s",
-             _lang("Pin Control On drives the bay pins (SoC PG0-PG2). They reach a module only"),
-             _lang("with the 3-wire bay mod (series resistors, docs/module-bay-mod-safety.md)."),
-             _lang("They are also the WiFi SDIO bus: module control pauses while WiFi is on."),
-             _lang("True-D: MOD 1.16 or later, its BAY mode set first; older firmware drives 5 V."));
+    snprintf(buf, sizeof(buf), "%s\n%s\n%s",
+             _lang("Module control needs the 3-wire bay mod with 4.7k resistors."),
+             _lang("It pauses while WiFi is on: WiFi uses the same pins."),
+             _lang("Furious True-D with MOD 1.17: choose rapidFIRE."));
     lv_label_set_text(note, buf);
     lv_obj_set_style_text_font(note, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_LEFT, 0);
@@ -198,7 +205,7 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     int type = g_setting.module.type;
     if (type < 0 || type >= MODULE_TYPES)
-        type = MODULE_UNKNOWN;
+        type = MODULE_NONE;
     lv_dropdown_set_selected(btn_module_type, type);
     show_module_settings(g_setting.module.setting);
     update_status();
@@ -211,22 +218,18 @@ static lv_obj_t *page_create(lv_obj_t *parent, panel_arr_t *arr) {
 static void apply_settings(void) {
     const int type = lv_dropdown_get_selected(btn_module_type);
     const int mode = lv_obj_has_flag(btn_module_mode, LV_OBJ_FLAG_HIDDEN) ? 0 : (int)lv_dropdown_get_selected(btn_module_mode);
-    const bool pins = btn_group_get_sel(&btn_pins) == 1;
     const bool type_changed = type != g_setting.module.type;
     const bool mode_changed = mode != g_setting.module.setting;
-    const bool pins_changed = pins != g_setting.module.pins;
 
-    if (!type_changed && !mode_changed && !pins_changed)
+    if (!type_changed && !mode_changed)
         return;
 
-    LOGI("module bay: type %d, mode %d, pin control %d", type, mode, pins);
+    LOGI("module bay: module %d, mode %d", type, mode);
     g_setting.module.type = type;
     g_setting.module.setting = mode;
-    g_setting.module.pins = pins;
     ini_putl("module", "type", g_setting.module.type, SETTING_INI);
     ini_putl("module", "setting", g_setting.module.setting, SETTING_INI);
-    settings_put_bool("module", "pins", g_setting.module.pins);
-    // a new type is set up from scratch (its mode included); same type: new mode only
+    // a new module is set up from scratch (its mode included); same one: new mode only
     module_settings_changed(mode_changed && !type_changed);
     update_status();
 }
@@ -278,7 +281,7 @@ static void page_on_click(uint8_t key, int sel) {
             open_list(btn_module_type);
         } else {
             close_list(true);
-            // another type starts with its first mode, the stored type keeps its mode
+            // another module starts with its first mode, the stored one keeps its mode
             show_module_settings(g_setting.module.type == (int)lv_dropdown_get_selected(btn_module_type) ? g_setting.module.setting : 0);
             apply_settings();
         }
@@ -291,13 +294,6 @@ static void page_on_click(uint8_t key, int sel) {
             open_list(btn_module_mode);
         } else {
             close_list(true);
-            apply_settings();
-        }
-        break;
-
-    case ROW_PINS:
-        if (!page_item_focused) {
-            btn_group_toggle_sel(&btn_pins);
             apply_settings();
         }
         break;

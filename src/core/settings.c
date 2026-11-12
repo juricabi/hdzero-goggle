@@ -246,9 +246,8 @@ const setting_t g_setting_defaults = {
     },
     .has_all_features = true,
     .module = {
-        .type = 0,
+        .type = 0, // None: the goggle never touches the bay pins
         .setting = 0,
-        .pins = false,
         .channel = 33, // R1
     },
 };
@@ -511,9 +510,13 @@ void settings_load(void) {
     }
 
     // module bay
+    // (type: 0 None, 1 Switch, 2 rapidFIRE, 3 Steadyview, 4 Steadyview-X, module_type_t; any other value
+    // is None.  A [module] pins key of earlier test builds is ignored.)
     g_setting.module.type = ini_getl("module", "type", g_setting_defaults.module.type, SETTING_INI);
+    if (g_setting.module.type < 0 || g_setting.module.type > 4) {
+        g_setting.module.type = g_setting_defaults.module.type;
+    }
     g_setting.module.setting = ini_getl("module", "setting", g_setting_defaults.module.setting, SETTING_INI);
-    g_setting.module.pins = settings_get_bool("module", "pins", g_setting_defaults.module.pins);
     // Goggle 2: the bay module's own channel, starting from the analog channel the
     // goggle had (the built-in receiver's) when there is none yet
     g_setting.module.channel = ini_getl("module", "channel", g_setting.source.analog_channel, SETTING_INI);

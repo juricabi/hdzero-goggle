@@ -23,7 +23,6 @@
 #include "steadyview.h"
 #include "steadyview_x.h"
 #include "switch.h"
-#include "trued.h"
 
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
 #define MODULE_BAY 1
@@ -32,17 +31,15 @@
 #endif
 
 static module_def_t *modules[MODULE_TYPES] = {
-    NULL, // unknown/uncontrolled
+    NULL, // None: the pins are never touched
     &switch_module,
     &rapidfire_module,
     &steadyview_module,
     &steadyview_x_module,
-    &trued_module,
 };
+// settings_load() checks [module] type against 0..4
+_Static_assert(MODULE_TYPES == 5, "the range check of [module] type in settings.c");
 
-// Time a module gets to boot after the goggle switches the bay power on, before
-// it is set up (pins, mode, channel), unless its type says otherwise (boot_ms).
-#define MODULE_BOOT_MS 1000
 // While the bay pins are found in use by the SDIO host, check again this often.
 #ifndef SDIO_RECHECK_MS
 #define SDIO_RECHECK_MS 5000
@@ -79,7 +76,7 @@ static bool started = false;
 
 // requests
 static bool bay_powered = false;
-static uint64_t power_on_ms = 0;     // when the bay was switched on, 0: before the app started
+static uint64_t power_on_ms = 0;     // when the bay was switched on (batch 1: the app start), rounded up
 static bool reinit = false;          // power switched: release the pins, set the module up again
 static bool mode_pending = false;
 static bool channel_pending = false; // the bay module's stored channel changed
@@ -99,6 +96,15 @@ static uint64_t now_ms(void) {
     return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+// The time of an event in whole ms, rounded up: a wait until it + MODULE_BOOT_MS,
+// read back with now_ms() (rounded down), is never shorter than MODULE_BOOT_MS.
+static uint64_t event_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    const uint64_t ms = (uint64_t)ts.tv_sec * 1000 + (ts.tv_nsec + 999999) / 1000000;
+    return ms ? ms : 1; // (0 means "never")
+}
+
 static module_def_t *module_lookup(void) {
     int type = g_setting.module.type;
     if (!MODULE_BAY || type < 0 || type >= MODULE_TYPES)
@@ -107,7 +113,7 @@ static module_def_t *module_lookup(void) {
 }
 
 static bool pins_allowed(void) {
-    return MODULE_BAY && g_setting.module.pins && !g_setting.wifi.enable;
+    return MODULE_BAY && !g_setting.wifi.enable;
 }
 
 // The module the bay should be running now (lock held).
@@ -271,7 +277,7 @@ static void *module_worker(void *arg) {
         module_def_t *want = wanted();
         uint64_t wake_at = 0;
 
-        // pins released: bay off, type changed, Pin Control off, WiFi on, power cycled
+        // pins released: bay off, Module changed, WiFi on, power cycled
         if (release_requested()) {
             module_def_t *m = active;
             pthread_mutex_unlock(&lock);
@@ -296,19 +302,20 @@ static void *module_worker(void *arg) {
         }
 
         if (!active && want) {
-            const uint64_t boot = want->boot_ms > 0 ? (uint64_t)want->boot_ms : MODULE_BOOT_MS;
-            const uint64_t ready = power_on_ms ? power_on_ms + boot : 0;
-            if (now < ready) {
-                wake_at = ready;
-            } else {
+            // every type: the pins stay inputs until MODULE_BOOT_MS after the last
+            // power-on (power_on_ms is set whenever the bay is powered)
+            const uint64_t on = power_on_ms;
+            if (on && now < on + MODULE_BOOT_MS) {
+                wake_at = on + MODULE_BOOT_MS;
+            } else if (on) {
                 pthread_mutex_unlock(&lock);
                 const bool busy = bay_pins_busy();
                 pthread_mutex_lock(&lock);
                 if (busy != sdio_busy)
                     LOGW("module: bay pins %s", busy ? "in use by the WiFi SDIO bus (driver loaded or PG0-2 in SDC1 function), left alone" : "free again");
                 sdio_busy = busy;
-                if (want != wanted())
-                    continue; // changed meanwhile
+                if (want != wanted() || power_on_ms != on)
+                    continue; // changed meanwhile (a new power-on starts the wait again)
                 if (busy) {
                     wake_at = now + SDIO_RECHECK_MS;
                 } else {
@@ -320,7 +327,7 @@ static void *module_worker(void *arg) {
                     channel_pending = false;
                     setup_channel = true;
                     resend_at_ms = 0;
-                    if (want->boot_resend_ms > 0 && power_on_ms && power_on_ms + want->boot_resend_ms > now)
+                    if (want->boot_resend_ms > 0 && power_on_ms + want->boot_resend_ms > now)
                         resend_at_ms = power_on_ms + want->boot_resend_ms;
                     active = want;
                     pthread_mutex_unlock(&lock);
@@ -387,7 +394,7 @@ bool module_abort_requested(void) {
 
 bool module_sleep_ms(unsigned ms) {
     pthread_mutex_lock(&lock);
-    const uint64_t until = now_ms() + ms;
+    const uint64_t until = event_ms() + ms; // (never shorter than ms)
     bool abort;
     while (!(abort = release_requested()) && now_ms() < until)
         timed_wait(&wake, until);
@@ -409,7 +416,8 @@ unsigned module_ms_since_power_on(void) {
     pthread_mutex_unlock(&lock);
     if (!on)
         return UINT_MAX;
-    const uint64_t since = now_ms() - on;
+    const uint64_t now = now_ms();
+    const uint64_t since = now > on ? now - on : 0; // (on is rounded up)
     return since < UINT_MAX ? (unsigned)since : UINT_MAX;
 }
 
@@ -434,8 +442,8 @@ void module_init() {
         return;
 
     if (g_setting.module.type < 0 || g_setting.module.type >= MODULE_TYPES) {
-        LOGE("module: bad type %d in setting.ini, set to Unknown", g_setting.module.type);
-        g_setting.module.type = MODULE_UNKNOWN;
+        LOGE("module: bad type %d in setting.ini, set to None", g_setting.module.type);
+        g_setting.module.type = MODULE_NONE;
     }
     const int modes = count_modes(module_lookup());
     if (g_setting.module.setting < 0 || g_setting.module.setting >= (modes ? modes : 1))
@@ -449,9 +457,10 @@ void module_init() {
     pthread_condattr_destroy(&attr);
 
     // Without the bay power switch (batch 1) the bay is powered with the goggle and
-    // the module booted long ago; batch 2 waits for the power thread's report.
+    // the module booted long before the app; the app start counts as its power-on
+    // all the same (MODULE_BOOT_MS more).  Batch 2 waits for the power thread's report.
     bay_powered = getHwRevision() < HW_REV_2;
-    power_on_ms = 0;
+    power_on_ms = bay_powered ? event_ms() : 0;
 
     pthread_t tid;
     if (pthread_create(&tid, NULL, module_worker, NULL) == 0) {
@@ -460,9 +469,8 @@ void module_init() {
     } else {
         LOGE("module: worker thread not started");
     }
-    LOGI("module: type %d, mode %d, pin control %s, WiFi %s, bay %s, channel %d", g_setting.module.type,
-         g_setting.module.setting, g_setting.module.pins ? "on" : "off", g_setting.wifi.enable ? "on" : "off",
-         bay_powered ? "always powered" : "power switched", bay_channel());
+    LOGI("module: type %d, mode %d, WiFi %s, bay %s, channel %d", g_setting.module.type, g_setting.module.setting,
+         g_setting.wifi.enable ? "on" : "off", bay_powered ? "always powered" : "power switched", bay_channel());
 }
 
 void module_settings_changed(bool mode_changed) {
@@ -489,21 +497,21 @@ void module_source_changed() {
     pthread_mutex_unlock(&lock);
 }
 
-// Called by the bay power thread (batch 2 hardware) when it switches the bay power.
-// Off: the bay pins are released (inputs), so they do not feed the unpowered
-// module.  On: the module missed everything sent while it was off; it is set up
-// again MODULE_BOOT_MS later (and gets its channel again boot_resend_ms after
-// power-on if its type asks for that).
+// Called by the bay power thread (batch 2 hardware) when it switches the bay power
+// (source change, Power > AnalogRX Power, screen sleep and wake, going to standby
+// and back): the only way the bay is powered on, apart from SteadyView's own
+// mode-set pulse.  Off: the bay pins are released (inputs), so they do not feed
+// the unpowered module.  On: the module missed everything sent while it was off
+// and may be in its bootloader; the pins stay inputs and it is set up again
+// MODULE_BOOT_MS later (and gets its channel again boot_resend_ms after power-on
+// if its type asks for that).
 void module_power_changed(int on) {
     if (!started)
         return;
     pthread_mutex_lock(&lock);
     bay_powered = on;
-    if (on) {
-        power_on_ms = now_ms();
-        if (!power_on_ms)
-            power_on_ms = 1;
-    }
+    if (on)
+        power_on_ms = event_ms();
     reinit = true;
     poke();
     pthread_mutex_unlock(&lock);
@@ -551,8 +559,6 @@ module_status_t module_status() {
         return MODULE_STATUS_NO_BAY;
     if (!module_lookup())
         return MODULE_STATUS_NONE;
-    if (!g_setting.module.pins)
-        return MODULE_STATUS_PINS_OFF;
     if (g_setting.wifi.enable)
         return MODULE_STATUS_WIFI;
     pthread_mutex_lock(&lock);

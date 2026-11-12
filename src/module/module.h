@@ -8,34 +8,41 @@
 // The bay pins are SoC PG0-PG2, which are also the SDIO bus of the WiFi chip on
 // both goggles, and they reach an analog module only through a wiring mod of the
 // bay board (docs/module-bay.md).  The goggle drives them only while Module Bay >
-// Pin Control is On, WiFi is off, a module type is set and the bay is powered.  A
-// worker thread owns them, so none of the calls below waits for a transfer
-// (except module_wifi_changed() before WiFi starts).
+// Module is not None, WiFi is off and the bay is powered, and never before
+// MODULE_BOOT_MS after the bay was powered on (or the app started).  With Module =
+// None (the default) they are never touched, as on a stock goggle.  A worker
+// thread owns them, so none of the calls below waits for a transfer (except
+// module_wifi_changed() before WiFi starts).
 
+// [module] type in setting.ini: pkendall64's numbering; any other value loads as None.
 typedef enum {
-    MODULE_UNKNOWN,
-    MODULE_SWITCH,
-    MODULE_RAPIDFIRE,
-    MODULE_STEADYVIEW,
-    MODULE_STEADYVIEW_X,
-    MODULE_TRUED,
+    MODULE_NONE,         // 0: the bay pins are never touched
+    MODULE_SWITCH,       // 1: Fat Shark style 3-bit code
+    MODULE_RAPIDFIRE,    // 2: ImmersionRC rapidFIRE SPI (also a True-D with MOD 1.17)
+    MODULE_STEADYVIEW,   // 3
+    MODULE_STEADYVIEW_X, // 4
     MODULE_TYPES
 } module_type_t;
 
+// The bay pins stay inputs at least this long after every bay power-on reported by
+// the bay power owner (module_power_changed()), and after the app start without a
+// bay power switch (batch 1), for every type: a module's bootloader may drive its
+// pins meanwhile (the True-D's drives D13 until ~1.45 s after its power-on).
+#define MODULE_BOOT_MS 2000
+
 typedef enum {
     MODULE_STATUS_NO_BAY,    // BoxPro
-    MODULE_STATUS_NONE,      // type Unknown
-    MODULE_STATUS_PINS_OFF,  // Pin Control Off
+    MODULE_STATUS_NONE,      // Module None
     MODULE_STATUS_WIFI,      // WiFi enabled: the pins are left to the SDIO bus
     MODULE_STATUS_SDIO,      // pins found in use by the SDIO host / WiFi driver
     MODULE_STATUS_UNPOWERED, // bay power off
-    MODULE_STATUS_STARTING,  // waiting for the module to boot
+    MODULE_STATUS_STARTING,  // waiting for the module to boot (MODULE_BOOT_MS)
     MODULE_STATUS_ACTIVE,
 } module_status_t;
 
 // Start-up: checks the settings, starts the worker.
 void module_init();
-// Module Bay page: type, mode or Pin Control changed (already in g_setting.module).
+// Module Bay page: Module or Mode changed (already in g_setting.module).
 void module_settings_changed(bool mode_changed);
 // Goggle 2, Source > Analog Module changed (already in g_setting.source): when the
 // bay became the analog source its module gets its mode and channel again.
@@ -52,7 +59,7 @@ module_status_t module_status();
 // as inputs for 100 ms, only while it does not control the bay and never while
 // WiFi is on or the pins are in the SDIO function, and the PG bank supply as the
 // SoC reports it (PIO_POW_VAL).  Shows the wiring mod and a module that pulls or
-// drives the lines before Pin Control is turned on.
+// drives the lines before a Module is selected.
 typedef struct {
     unsigned seq;     // number of checks done (0: none yet)
     bool running;     // a check is pending or running
@@ -65,15 +72,15 @@ void module_check_pins();
 module_pin_check_t module_pin_check_result();
 
 // The configured module type (whatever the pins, power and source).
-int module_num_channels();               // 0: Unknown
+int module_num_channels();               // 0: None
 const char *module_mode_names(int type); // Mode list options, NULL: none
-// The bay module's stored channel in the type's list ("CH5", "R5"), "" for Unknown.
+// The bay module's stored channel in the type's list ("CH5", "R5"), "" for None.
 const char *module_channel_name();
 
 // The analog picture comes from the module bay: Goggle 1 always, Goggle 2 with
 // Source > Analog Module = Expansion.
 bool module_bay_is_source();
-// A module type is set and the goggle may drive the bay pins.
+// A Module is selected and the goggle may drive the bay pins (WiFi off).
 bool module_bay_controlled();
 
 // The channel of the analog receiver now selected (SOURCE_AV_MODULE): the built-in
