@@ -504,6 +504,47 @@ dt_props() { # every property of a DT node directory, recurse $2 levels
     done
 }
 
+# PH_CFG0 read two ways, read only: through the sunxi_dump latch (three reads, app paused) and
+# through /dev/mem (no latch: the candidate for a latch-free access). The goggle's busybox has no
+# devmem; the BusyBox 1.27.2 of the services package in the app partition (also in the official
+# images) has. "devmem ADDRESS 32" with no value maps /dev/mem read only and reads one word.
+BB_SERVICES="$R/mnt/app/services/busybox/busybox"
+devmem_check() {
+    if [ -e "$R/dev/mem" ]; then log "/dev/mem: $(ls -l "$R/dev/mem" 2>&1)"; else log "/dev/mem: absent"; fi
+    dm_lat="(not read)"
+    dm_raw=""
+    if lat_begin; then
+        if lat_read 0x0300B0FC; then dm_lat=$(hex "$RV"); else dm_lat="(three reads differ or not hex)"; fi
+        echo 0x0300b0fc > "$DUMP/dump" 2> /dev/null && dm_raw=$(hexdump -v -e '/1 "%02x "' "$DUMP/dump" 2> /dev/null)
+        lat_end
+    fi
+    log "PH_CFG0 through sunxi_dump: $dm_lat; one answer of the dump node as bytes: $dm_raw (expected 0x%08x and a newline: 30 78 + 8 digits + 0a)"
+    case "$dm_lat" in
+        0x35517751) log "PH_CFG0 state: stock (as rc.sh writes it)" ;;
+        0x35513331) log "PH_CFG0 state: PH1-PH3 = I2S0 (HDMI Out Audio switched them this boot)" ;;
+        0x*) log "PH_CFG0 state: NEITHER the stock value nor the I2S0 value: HDMI Out Audio would refuse (report this)" ;;
+    esac
+    if [ ! -x "$BB_SERVICES" ] || ! "$BB_SERVICES" --list 2> /dev/null | grep -q -x devmem; then
+        log "/dev/mem not read: no devmem ($BB_SERVICES missing or without the applet)"
+        return
+    fi
+    dm_out="$TMPD/.probe_devmem"
+    dm_save=$OUT
+    OUT=$dm_out
+    : > "$OUT" 2> /dev/null
+    tl 5 "$BB_SERVICES" devmem 0x0300B0FC 32 # read only: no value argument
+    dm_rc=$?
+    OUT=$dm_save
+    dm_v=$(cat "$dm_out" 2> /dev/null)
+    rm -f "$dm_out"
+    log "PH_CFG0 through /dev/mem ($BB_SERVICES devmem 0x0300B0FC 32, exit $dm_rc): $dm_v"
+    if is_hex "$dm_v" && is_hex "$dm_lat"; then
+        if [ $((dm_v)) -eq $((dm_lat)) ]; then log "/dev/mem and sunxi_dump agree"; else log "/dev/mem and sunxi_dump DIFFER"; fi
+    else
+        log "/dev/mem read not usable (see above)"
+    fi
+}
+
 pin_summary() {
     for d in "$DBG"/pinctrl/*/; do
         [ -r "${d}pinmux-pins" ] && grep -E '\((P(G([0-9]|1[0-3])|H[0-8]|E(1[6-9]|2[01])))\)' "${d}pinmux-pins" >> "$OUT" 2>&1
@@ -609,6 +650,10 @@ part1() {
     log "CCU: PLL_AUDIO area 0x03001070.. and audio/I2S clock + gating area 0x03001A00..0x03001A7C"
     regs 0x03001070 4
     regs 0x03001A00 32
+
+    sec "PH_CFG0 through sunxi_dump and through /dev/mem (read only); HDMI audio boot record"
+    devmem_check
+    catf "$TMPD/hdmi_audio.boot"
 
     sec "I2C"
     run i2cdetect -l
