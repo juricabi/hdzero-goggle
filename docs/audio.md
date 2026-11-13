@@ -38,7 +38,7 @@ the window is. Below the list one line of help for the selected row.
 | | Mic | Off, -4.5..+6.0 dB | `mic` 0..8 | Off |
 | | Line In | Off, -4.5..+6.0 dB | `line_in` 0..8 | Off |
 | | A/V In | Off, -4.5..+6.0 dB | `av` 0..8 | +6.0 dB |
-| | HDMI In (greyed, skipped while HDMI In Audio is Off) | Off, -4.5..+6.0 dB | `hdmi` 0..8 | 0.0 dB |
+| | HDMI In (greyed while HDMI In Audio is not in effect; not on the BoxPro) | Off, -4.5..+6.0 dB | `hdmi` 0..8 | 0.0 dB |
 | | Playback Volume | Off, 1..31 | `playback` | 27 |
 | Recording (DVR, WiFi Stream, HDMI Out) | Record What I Hear | Yes / No | `rec_mix` | No |
 | | Record Mic | Yes / No, "Mix" | `rec_mic` | the old Audio Source |
@@ -48,7 +48,7 @@ the window is. Below the list one line of help for the selected row.
 | Inputs | Mic Boost | 0..7 | `mic_boost` | 4 |
 | | Line In Boost | 0..7 | `line_in_boost` | 4 |
 | | Analog RX Audio (Goggle 2, BoxPro) | On / Off | `rx_audio` | On only if the old Audio Source was A/V In |
-| HDMI Audio (experimental) | HDMI Out Audio | On / Off | `[hdmi] audio_out` | Off |
+| HDMI Audio (experimental; Goggle 1, Goggle 2; from the next start) | HDMI Out Audio | On / Off | `[hdmi] audio_out` | Off |
 | | HDMI In Audio | On / Off | `[hdmi] audio_in` | Off |
 | | < Back | | | |
 
@@ -68,8 +68,10 @@ What a pilot reads from it:
   HDMI out alike, never the headphones.
 * Hints: Record source rows say "Recorded at full level, heard or not" (Yes), "Not
   recorded. Yes: at full level, heard or not" (No) or "In What I Hear: recorded at its
-  headphone level" (in the mix). The HDMI In Audio hint says to restart once after
-  switching it on (the EDID, see hdmi-audio.md).
+  headphone level" (in the mix). The two HDMI switches only store the setting and apply
+  at the next start ("Restart to apply"); until then the row shows an orange "Restart",
+  and "Error" with the reason in the hint if HDMI Out Audio was on at this start but
+  stayed off (hdmi-audio.md, section 6).
 
 ## Signal paths
 
@@ -310,8 +312,10 @@ software mix in the record daemon.
   calls are no-ops, no Analog RX Audio row.
 * BoxPro: same codec and the same three inputs, internal receiver like Goggle 2. Same
   page, smaller rows.
-* All three have HDMI in: the HDMI In row and the HDMI Audio section are on every target
-  (the HDMI audio paths are unproven on every target, hdmi-audio.md).
+* All three have HDMI in, but HDMI audio is supported on Goggle 1 and Goggle 2 only (the
+  BoxPro's device tree and board were not examined): the BoxPro's page has neither the
+  HDMI In row nor the HDMI Audio section (the paths are unproven on the goggles too,
+  hdmi-audio.md).
 
 ## Differences from the old firmware
 

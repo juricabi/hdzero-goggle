@@ -26,6 +26,15 @@
 
 #define SAVE_DELAY_MS 1000
 
+// HDMI audio exists on the goggles only (core/hdmi_audio.h hdmi_audio_supported(): the BoxPro's
+// device tree and board were not examined): the BoxPro shows neither the HDMI In level nor the
+// HDMI Audio section, whose switches could never take effect there.
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
+#define PAGE_AUDIO_HDMI 1
+#else
+#define PAGE_AUDIO_HDMI 0
+#endif
+
 typedef enum {
     ROW_HEADING, // section heading, not selectable
     ROW_SLIDER,  // a mixer level
@@ -60,9 +69,11 @@ static const row_t rows[] = {
 #else
     SLIDER(AUDIO_MIXER_AV, "A/V In", "AV jack or analog module, heard in headphones"),
 #endif
+#if PAGE_AUDIO_HDMI
     // HDMI-in audio played into the DAC (audio_mixer_set_live_dac()); greyed while HDMI In Audio
-    // is not in effect (selectable: its hint says why). All targets have HDMI in.
+    // is not in effect (selectable: its hint says why)
     SLIDER(AUDIO_MIXER_HDMI, "HDMI In", "HDMI in audio, heard in headphones"),
+#endif
     SLIDER(AUDIO_MIXER_PLAYBACK, "Playback Volume", "Headphone volume while a DVR file plays"),
 
     // the ADC: the DVR, the WiFi stream audio and HDMI out audio all take it
@@ -81,10 +92,12 @@ static const row_t rows[] = {
     ON_OFF(ROW_SWITCH, AUDIO_MIXER_RX_AUDIO, "Built-in RX Audio", "Audio of the built-in analog receiver on A/V In"),
 #endif
 
+#if PAGE_AUDIO_HDMI
     // both take effect at the next start only (core/hdmi_audio.h)
     HEADING("HDMI Audio (experimental)"),
     ON_OFF(ROW_HDMI_OUT, AUDIO_MIXER_FIELD_COUNT, "HDMI Out Audio", "Send the recorded audio to HDMI out. Restart to apply"),
     ON_OFF(ROW_HDMI_IN, AUDIO_MIXER_FIELD_COUNT, "HDMI In Audio", "Hear HDMI in audio. Restart to apply"),
+#endif
 
     {.type = ROW_BACK, .field = AUDIO_MIXER_FIELD_COUNT, .name = "Back"},
 };
@@ -128,7 +141,7 @@ static lv_obj_t *hint;
 static int focused = -1; // selectable index of the grabbed slider
 static lv_timer_t *save_timer;
 
-_Static_assert(ARRAY_SIZE(rows) - 4 <= MAX_PANELS, "one select panel per selectable row (4 headings)");
+_Static_assert(ARRAY_SIZE(rows) - (3 + PAGE_AUDIO_HDMI) <= MAX_PANELS, "one select panel per selectable row (3 or 4 headings)");
 
 static void save_timer_cb(lv_timer_t *timer) {
     lv_timer_pause(timer);
