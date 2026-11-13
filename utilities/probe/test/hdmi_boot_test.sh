@@ -14,9 +14,12 @@
 #  - later faults (HDMI chip, audio path) keep HDMI out audio off across app restarts;
 #  - system_exec_sunxi_dump(): runs under the lock; a held lock delays it at most ~1 s, then
 #    it runs anyway; within 10 s it does not wait again.
-# SRC_TOP=<tree>: test another copy of the sources (test/mutants.sh uses it).
+# SRC_TOP=<tree>: test another copy of the sources (test/c_mutants.sh uses it).
+# Every test program runs under a time limit (TEST_TIMEOUT, default 300 s): a hang (e.g. a lock
+# left held) is a failure, not a test that never ends.
 # Usage: sh utilities/probe/test/hdmi_boot_test.sh
 set -eu
+TL=${TEST_TIMEOUT:-300}
 TOP=$(cd "$(dirname "$0")/../../.." && pwd)
 SRC=${SRC_TOP:-$TOP}
 T=$(mktemp -d)
@@ -105,6 +108,7 @@ ssize_t t_read(int fd, void *b, size_t n) {
     case 5: return snprintf((char *)b, n, "0x%08x", v);
     case 6: return snprintf((char *)b, n, "0x1%08x\n", v);
     case 7: return snprintf((char *)b, n, " 0x%08x \n", v);
+    case 8: return snprintf((char *)b, n, "0x%08xx", v); // eight digits and a stray character, no newline
     default: return snprintf((char *)b, n, "0x%08x\n", v);
     }
 }
@@ -255,9 +259,9 @@ int main(int argc, char **argv) {
     }
     reset(ON, NULL); new_boot(1); M->disagree = 1; do_boot(); app(true);
     CHECK(M->ph_writes == 0 && !A_out && A_fault == HB_FAULT_PINS, "reads that never agree: untouched, fault");
-    for (int g = 1; g <= 7; g++) {
+    for (int g = 1; g <= 8; g++) {
         reset(ON, NULL); new_boot(1); M->garbage = g; do_boot(); app(true);
-        CHECK(M->ph_writes == 0 && !A_out && A_fault == HB_FAULT_PINS, "dump answer format %d (garbage / cut / awr / empty / no newline / 9 digits / spaces): untouched, fault", g);
+        CHECK(M->ph_writes == 0 && !A_out && A_fault == HB_FAULT_PINS, "dump answer format %d (garbage / cut / awr / empty / no newline / 9 digits / spaces / 8 digits + a stray character): untouched, fault", g);
     }
     { // lock held by another process for the whole boot step
         reset(ON, NULL); new_boot(1);
@@ -376,7 +380,10 @@ mk() { # $1 output, $2 target macro
     gcc -Wall -I"$T/inc" $D "-D$2" -o "$1" "$T/harness.c" "$T/hb.o" "$T/sr.o" "$T/sys.o" "$T/minIni.o"
 }
 mk "$T/t" HDZGOGGLE
-if ! "$T/t" "$T/run" 2> "$T/log.txt"; then
+rc=0
+timeout -k 5 "$TL" "$T/t" "$T/run" 2> "$T/log.txt" || rc=$?
+if [ "$rc" != 0 ]; then
+    [ "$rc" = 124 ] && echo "FAIL the test program did not end within $TL s (a hang: a lock left held?)"
     echo "--- log:"
     tail -30 "$T/log.txt"
     exit 1
@@ -403,5 +410,5 @@ D="-DHDMIA_REQ_FILE=\"$T/run/req\" -DHDMIA_STATE_FILE=\"$T/run/state\" -DHDMIA_L
 # the real sysfs nodes do not exist on a PC: any access would fail the boxpro run (it must make none)
 # shellcheck disable=SC2086,SC2090
 gcc -Wall -Werror -I"$T/inc" $D -DHDZBOXPRO -o "$T/bp" "$T/boxpro.c" "$T/inc/record/hdmi_boot.c" "$T/inc/record/soc_reg.c" "$T/minIni.o"
-"$T/bp" "$T/run/setting.ini" 2>> "$T/log.txt" || exit 1
+timeout -k 5 "$TL" "$T/bp" "$T/run/setting.ini" 2>> "$T/log.txt" || exit 1
 echo "ALL HDMI BOOT TESTS PASSED"

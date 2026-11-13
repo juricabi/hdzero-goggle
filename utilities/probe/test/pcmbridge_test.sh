@@ -11,9 +11,11 @@
 #    not read back: the start fails, the old value stays (or is written back and verified);
 #  - a sink that does not open: state "failed", AI device disabled only if nobody else uses it;
 #  - an HDMI-in source at 44.1 kHz is muted, at 48 kHz played; the request number is echoed.
-# SRC_TOP=<tree>: test another copy of the sources (test/mutants.sh uses it).
+# SRC_TOP=<tree>: test another copy of the sources (test/c_mutants.sh uses it).
+# The test program runs under a time limit (TEST_TIMEOUT, default 300 s): a hang is a failure.
 # Usage: sh utilities/probe/test/pcmbridge_test.sh
 set -eu
+TL=${TEST_TIMEOUT:-300}
 TOP=$(cd "$(dirname "$0")/../../.." && pwd)
 SRC=${SRC_TOP:-$TOP}
 T=$(mktemp -d)
@@ -334,8 +336,8 @@ gcc -Wall -Wextra -Werror -c -I"$T/inc" $D $W -o "$T/hb.o" "$T/inc/hdmi_boot.c"
 gcc -w -c -I"$T/inc" -o "$T/minIni.o" "$T/inc/minIni.c"
 # shellcheck disable=SC2086,SC2090
 gcc -Wall -I"$T/inc" $D -o "$T/t" "$T/harness.c" "$T/pb.o" "$T/sr.o" "$T/hb.o" "$T/minIni.o" -lpthread
-"$T/t" "$T/req" "$T/state" "$T/boot" "$T/boot_id" 2> "$T/log.txt" || {
-    echo "--- bridge log:"
+timeout -k 5 "$TL" "$T/t" "$T/req" "$T/state" "$T/boot" "$T/boot_id" 2> "$T/log.txt" || {
+    echo "--- (exit status $?: 124 = not ended within $TL s) bridge log:"
     tail -30 "$T/log.txt"
     exit 1
 }

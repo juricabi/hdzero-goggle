@@ -7,10 +7,16 @@
 #    garbage (every value of Reg04, two reads that differ, 3000 random runs) or a Reg04 write
 #    does not read back. Then: the stock video-on value 0x14 written back, audio off for the
 #    rest of the boot, no audio source enabled, and the next IT66121_init() is upstream's again.
-# SRC_TOP=<tree>: test another copy of the sources (test/mutants.sh uses it).
-# Usage: sh utilities/probe/test/it66121_seq_test.sh [base-commit]   (default 8364a43)
+#    A Reg04 that does not read as the stock init leaves it (any of bits 5, 4, 3, 2, 0 other),
+#    or two reads of a check that differ: no Reg04 write but the stock 0x14.
+# SRC_TOP=<tree>: test another copy of the sources (test/c_mutants.sh uses it).
+# The upstream files come from git (this tree must be a git worktree that has the base commit)
+# or from BASE_SRC=<a tree of the base commit>; without either the test is skipped (exit 77).
+# Every test program runs under a time limit (TEST_TIMEOUT, default 300 s).
+# Usage: sh utilities/probe/test/it66121_seq_test.sh [base-commit]   (default a85841d, upstream)
 set -eu
-BASE=${1:-8364a43}
+BASE=${1:-a85841d}
+TL=${TEST_TIMEOUT:-300}
 TOP=$(cd "$(dirname "$0")/../../.." && pwd)
 SRC=${SRC_TOP:-$TOP}
 T=$(mktemp -d)
@@ -53,6 +59,7 @@ static int quiet;
 static int n_checked, fail_at = -1, garbage04 = -1, disagree04, rnd, stuck04, injected;
 static int phase_audio;            // the stock init's last write (C6=03) was seen
 static int r04_writes, bad_r04, e0_on, last_r04 = -1;
+static int r04_other;              // Reg04 writes of the audio path other than the stock 0x14
 static int bank(void) { return regs[0][0x0f] & 1; }
 uint8_t stub_read(int port, uint8_t s, uint8_t a) {
     uint8_t v = (port == 1 && s == ADDR_IT66121) ? ((a < 0x30) ? regs[0][a] : regs[bank()][a]) : 0;
@@ -64,7 +71,8 @@ int stub_read_checked(int port, uint8_t s, uint8_t a, uint8_t *v) {
     if (n_checked == fail_at) { injected = 1; if (!quiet) printf("R %d %02x %02x -> FAIL\n", port, s, a); return -1; }
     uint8_t x = stub_read(port, s, a);
     if (a == 0x04 && garbage04 >= 0) { x = (uint8_t)garbage04; injected = 1; }
-    if (a == 0x04 && disagree04 && (n_checked & 1)) { x ^= 0x08; injected = 1; }
+    // two reads that differ: 1 = the first of each pair another value, 2 = the second
+    if (a == 0x04 && disagree04 && (n_checked & 1) == (disagree04 == 1)) { x ^= 0x08; injected = 1; }
     if (rnd) { injected = 1; x = (uint8_t)(rand() & 0xff); if (rand() % 8 == 0) return -1; }
     *v = x;
     return 0;
@@ -75,6 +83,7 @@ void stub_write(int port, uint8_t s, uint8_t a, uint8_t d) {
         if (phase_audio && a == 0x04) {
             r04_writes++; last_r04 = d;
             if (d & ~0x14) bad_r04++; // anything but the two audio-reset bits: a video / HDCP / RCLK reset or a reserved bit
+            if (d != 0x14) r04_other++;
         }
         if (phase_audio && a == 0xe0 && (d & 0x0f)) e0_on = 1;
         if (phase_audio && a == 0x04 && stuck04) return;
@@ -100,12 +109,16 @@ static int run_injected(const char *what, int f_at, int g04, int dis, int seed, 
     pid_t p = fork();
     if (p == 0) {
         quiet = 1; fail_at = f_at; garbage04 = g04; disagree04 = dis; stuck04 = stuck;
-        n_checked = 0; injected = 0; phase_audio = 0; r04_writes = 0; bad_r04 = 0; e0_on = 0; last_r04 = -1;
+        n_checked = 0; injected = 0; phase_audio = 0; r04_writes = 0; bad_r04 = 0; e0_on = 0; last_r04 = -1; r04_other = 0;
         if (seed) { srand((unsigned)seed); rnd = 1; }
         chip_reset();
         IT66121_audio_config(true);
         IT66121_init();
         int ok = bad_r04 == 0;
+        // Reg04 never in the state the stock init leaves (its defined bits 0x3d other than 0x14), or
+        // the two reads of a check differ: the precondition fails, so nothing but the stock 0x14
+        if ((g04 >= 0 && (g04 & 0x3d) != 0x14) || dis)
+            ok = ok && r04_other == 0;
         if (IT66121_audio_failed())
             ok = ok && !e0_on && last_r04 == 0x14 && !IT66121_audio_is_on() && (stuck || rnd || regs[0][0x04] == 0x14) && regs[0][0xe0] == 0xc0;
         else
@@ -136,7 +149,8 @@ int main(int argc, char **argv) {
         if (!IT66121_audio_is_on() || bad_r04 || !e0_on) { printf("FAIL healthy chip: audio not on\n"); return 1; }
         for (int i = 1; i <= reads + 4; i++) { snprintf(w, sizeof(w), "read %d failing", i); run_injected(w, i, -1, 0, 0, 0); n++; }
         for (int g = 0; g < 256; g++) { snprintf(w, sizeof(w), "Reg04 reads 0x%02x", g); run_injected(w, -1, g, 0, 0, 0); n++; }
-        run_injected("two Reg04 reads that differ", -1, -1, 1, 0, 0); n++;
+        run_injected("two Reg04 reads that differ (the first another value)", -1, -1, 1, 0, 0); n++;
+        run_injected("two Reg04 reads that differ (the second another value)", -1, -1, 2, 0, 0); n++;
         run_injected("Reg04 write not taken", -1, -1, 0, 0, 1); n++;
         for (int s = 1; s <= 3000; s++) { snprintf(w, sizeof(w), "random reads, seed %d", s); run_injected(w, -1, -1, 0, s, 0); n++; }
         (void)healthy;
@@ -160,31 +174,44 @@ int main(int argc, char **argv) {
     return 0;
 }
 C
-git -C "$TOP" show "$BASE:src/driver/it66121.c" > "$T/orig/driver/it66121.c"
-git -C "$TOP" show "$BASE:src/driver/it66121.h" > "$T/orig/driver/it66121.h"
+base_file() { # $1 path in the tree, $2 where: from BASE_SRC, or from git
+    if [ -n "${BASE_SRC:-}" ]; then
+        cp "$BASE_SRC/$1" "$2" 2> /dev/null
+    else
+        git -C "$TOP" show "$BASE:$1" > "$2" 2> /dev/null
+    fi
+}
+if ! base_file src/driver/it66121.c "$T/orig/driver/it66121.c" || ! base_file src/driver/it66121.h "$T/orig/driver/it66121.h"; then
+    echo "SKIP it66121_seq_test.sh: the upstream $BASE files are not available (${BASE_SRC:-$TOP is not a git worktree with $BASE}); set BASE_SRC=<a tree of $BASE>"
+    exit 77
+fi
+[ -n "${BASE_SRC:-}" ] && BASE="$BASE (BASE_SRC)"
 cp "$SRC/src/driver/it66121.c" "$SRC/src/driver/it66121.h" "$T/new/driver/"
 rc=0
 for v in HDZGOGGLE HDZGOGGLE2 HDZBOXPRO; do
     gcc -w -pthread -D$v -I"$T/inc" -I"$T/orig/driver" -o "$T/o" "$T/harness.c" "$T/orig/driver/it66121.c"
     gcc -Wall -Wno-unused-function -pthread -D$v -DNEWAPI -I"$T/inc" -I"$T/new/driver" -o "$T/n" "$T/harness.c" "$T/new/driver/it66121.c"
-    "$T/o" > "$T/o.txt"
-    "$T/n" > "$T/n.txt" 2> /dev/null
+    timeout -k 5 "$TL" "$T/o" > "$T/o.txt"
+    timeout -k 5 "$TL" "$T/n" > "$T/n.txt" 2> /dev/null
     if cmp -s "$T/o.txt" "$T/n.txt"; then
         echo "PASS $v: audio off: register sequence identical to $BASE ($(grep -c '^W' "$T/o.txt") writes)"
     else
         echo "FAIL $v: sequence differs"; diff "$T/o.txt" "$T/n.txt" | head; rc=1
     fi
-    "$T/n" twice > "$T/t.txt" 2> /dev/null || { echo "FAIL $v: the injected first init did not fail"; rc=1; }
+    timeout -k 5 "$TL" "$T/n" twice > "$T/t.txt" 2> /dev/null || { echo "FAIL $v: the injected first init did not fail"; rc=1; }
     if cmp -s "$T/o.txt" "$T/t.txt"; then
         echo "PASS $v: after a failed audio check the next IT66121_init() is identical to $BASE again"
     else
         echo "FAIL $v: the init after a failed audio check differs"; diff "$T/o.txt" "$T/t.txt" | head; rc=1
     fi
-    "$T/n" inject > "$T/i.txt" 2> /dev/null || rc=1
+    irc=0
+    timeout -k 5 "$TL" "$T/n" inject > "$T/i.txt" 2> /dev/null || irc=$?
+    [ "$irc" = 0 ] || rc=1
+    [ "$irc" = 124 ] && echo "FAIL $v: the injected runs did not end within $TL s"
     grep '^FAIL' "$T/i.txt" | head -5
     tail -1 "$T/i.txt" | sed "s/^\(PASS\|FAIL\) /\1 $v: /"
 done
-"$T/n" on > "$T/a.txt" 2> /dev/null
+timeout -k 5 "$TL" "$T/n" on > "$T/a.txt" 2> /dev/null
 echo "audio on adds $(($(grep -c '^W' "$T/a.txt") - $(grep -c '^W' "$T/n.txt"))) writes after IT66121_init():"
 diff "$T/n.txt" "$T/a.txt" | sed -n 's/^> W 1 4c /  /p' | tr '\n' ' '
 echo

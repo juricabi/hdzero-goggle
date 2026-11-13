@@ -9,12 +9,16 @@
 # inactive.) Checks: both block checksums, the CEA-861 extension structure (tag, revision,
 # data block collection ending exactly at the DTD offset, DTDs), and the audio claims;
 # with audio_in off the I2C sequence and the served EDID equal the base commit's.
-# Usage: sh utilities/probe/test/it66021_edid_test.sh [base-commit]   (default 8364a43)
-#   IT66021_SRC=<file>: check another it66021.c instead of the working tree's.
+# Usage: sh utilities/probe/test/it66021_edid_test.sh [base-commit]   (default a85841d, upstream)
+#   IT66021_SRC=<file>: check another it66021.c instead of the working tree's (SRC_TOP=<tree>:
+#   that tree's). The upstream file comes from git (this tree must be a git worktree that has
+#   the base commit) or from BASE_SRC=<a tree of the base commit>; without either: skipped
+#   (exit 77). The test programs run under a time limit (TEST_TIMEOUT, default 300 s).
 set -eu
-BASE=${1:-8364a43}
+BASE=${1:-a85841d}
+TL=${TEST_TIMEOUT:-300}
 TOP=$(cd "$(dirname "$0")/../../.." && pwd)
-SRC=${IT66021_SRC:-$TOP/src/driver/it66021.c}
+SRC=${IT66021_SRC:-${SRC_TOP:-$TOP}/src/driver/it66021.c}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/inc/log"
@@ -125,16 +129,24 @@ extract() {
         /^void IT66021_edid\(\)/ { seen = 1 }
         on && seen && /^}/ { exit }' "$1"
 }
-git -C "$TOP" show "$BASE:src/driver/it66021.c" > "$T/orig.c"
+if [ -n "${BASE_SRC:-}" ]; then
+    cp "$BASE_SRC/src/driver/it66021.c" "$T/orig.c" 2> /dev/null && BASE="$BASE (BASE_SRC)"
+else
+    git -C "$TOP" show "$BASE:src/driver/it66021.c" > "$T/orig.c" 2> /dev/null || rm -f "$T/orig.c"
+fi
+if [ ! -s "$T/orig.c" ]; then
+    echo "SKIP it66021_edid_test.sh: the upstream $BASE file is not available (${BASE_SRC:-$TOP is not a git worktree with $BASE}); set BASE_SRC=<a tree of $BASE>"
+    exit 77
+fi
 extract "$T/orig.c" > "$T/orig/driver/edid.c"
 extract "$SRC" > "$T/new/driver/edid.c"
 grep -q "^void IT66021_edid()" "$T/new/driver/edid.c" || { echo "FAIL no IT66021_edid() in $SRC"; exit 1; }
 gcc -Wall -I"$T/inc" -I"$T/orig/driver" -o "$T/o" "$T/harness.c" "$T/orig/driver/edid.c"
 gcc -Wall -DNEWAPI -I"$T/inc" -I"$T/new/driver" -o "$T/n" "$T/harness.c" "$T/new/driver/edid.c"
 gcc -w -o "$T/chk" "$T/check.c"
-"$T/o" "$T/o.seq" "$T/o.edid"
-"$T/n" "$T/n.seq" "$T/n.edid"
-"$T/n" "$T/a.seq" "$T/a.edid" on
+timeout -k 5 "$TL" "$T/o" "$T/o.seq" "$T/o.edid"
+timeout -k 5 "$TL" "$T/n" "$T/n.seq" "$T/n.edid"
+timeout -k 5 "$TL" "$T/n" "$T/a.seq" "$T/a.edid" on
 rc=0
 pass() { echo "PASS $*"; }
 fail() {
