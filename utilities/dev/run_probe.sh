@@ -7,20 +7,20 @@
 #   utilities/dev/run_probe.sh run|mutants   (env: SHELLS, ONLY, QUICK, ROOTFS are passed on)
 set -u
 what=${1:?usage: $0 run|mutants}
+case $what in run|mutants) ;; *) echo "usage: $0 run|mutants"; exit 2 ;; esac
 WT=$(cd "$(dirname "$0")/../.." && pwd)
 U=64999
 O=${TEST_OUT:-/root/hdz/test-out}/probe
 mkdir -p "$O"
-P=/tmp/probe-test-$what
-rm -rf "$P"
-mkdir -p "$P"
+# a directory of its own: two runs at once (another worktree's kit) shared /tmp/probe-test-mutants and wrecked
+# each other's mutants (the review of 2026-11-13)
+P=$(mktemp -d "/tmp/probe-test-$what.XXXXXX") || exit 1
 cp -r "$WT/utilities/probe" "$P/"
 chown -R $U:$U "$P"
 chmod 755 "$P"
 case $what in
   run) S=$P/probe/test/run_tests.sh ;;
   mutants) S=$P/probe/test/mutants.sh ;;
-  *) echo "usage: $0 run|mutants"; exit 2 ;;
 esac
 start=$(date +%s)
 unshare -p -f --mount-proc setpriv --reuid=$U --regid=$U --clear-groups \
