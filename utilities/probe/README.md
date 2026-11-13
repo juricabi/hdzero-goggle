@@ -96,11 +96,17 @@ released. Send `bay_gpio_N.txt` and the contact/voltage notes.
   `ROOTFS=<extracted rootfs>` checks the commands against a real image and, with
   `qemu-arm`, runs everything under the goggle's own busybox 1.27 ash as well (it has no
   `command` builtin, and a failed `exec` redirection ends it). `QUICK=1` for fewer kill
-  points.
+  points. busybox ash prefers its own applets to `PATH`: in the busybox passes the stubs
+  that share an applet's name are shell functions, and before a shell is used every stub
+  must resolve to ours in it (else FAIL, and no script runs under that shell).
+  **Not as root**: it refuses (a stub that were bypassed would reach the host's real
+  `i2cset`, `mount` and `kill`); from a root shell use `utilities/dev/run_probe.sh run`,
+  which runs it as an unused uid in its own pid namespace.
 * `sh utilities/probe/test/mutants.sh`: 16 mutants with one safety property broken each
   (e.g. the app never resumed, no trap, a single latch read, PH_CFG0 written from any
   value, Reg04 unchecked, devmem given a value); the tests must fail on every one.
-  `MUT_OLD=<dir>` also runs an older kit (the review's mutant).
+  `MUT_OLD=<dir>` also runs an older kit (the review's mutant). Not as root either
+  (`utilities/dev/run_probe.sh mutants`).
 * `sh utilities/probe/test/it66121_seq_test.sh`: IT66121 register sequence unchanged with
   HDMI audio off; with it on, Reg04 never written with a video/HDCP/RCLK reset bit, also
   with failing or garbled I2C reads. `sh utilities/probe/test/it66021_edid_test.sh`: the

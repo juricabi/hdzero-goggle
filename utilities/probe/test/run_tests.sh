@@ -16,7 +16,25 @@
 #   ROOTFS=<extracted goggle rootfs>: also check every command against that rootfs, take the
 #   applet list from it, and (with qemu-arm) run everything under the goggle's own ash too.
 #   KIT_DIR=<dir>: test another copy of the scripts (test/mutants.sh uses it).
+# Not as root: see below. As root use utilities/dev/run_probe.sh run (an unused uid in its
+# own pid namespace).
+#
+# busybox ash runs its own applets ahead of PATH (Ubuntu's busybox is built that way), so in
+# the busybox passes a stub with an applet's name (pidof, cat, i2cset, mount, ...) would be
+# bypassed and the host's real command would run on the host's processes and devices. There
+# every stub and forbidden command that is also an applet of that busybox becomes a shell
+# function calling it by its path (functions come before applets), and the script is sourced
+# by that shell with the same $0 and arguments as when it is run. Before any script runs
+# under a shell, every stub and forbidden command must resolve to ours in it (`type`), else
+# that shell is not used at all (FAIL).
 set -u
+if [ "$(id -u)" = 0 ]; then
+    echo "run_tests.sh: refusing to run as root: if a stub were bypassed (busybox ash prefers its own" >&2
+    echo "applets), the host's real i2cset, mount and kill -STOP would run with root rights." >&2
+    echo "Run it as an unprivileged user, or as root through utilities/dev/run_probe.sh run" >&2
+    echo "(an unused uid in its own pid namespace)." >&2
+    exit 2
+fi
 HERE=$(cd "$(dirname "$0")" && pwd)
 KIT=${KIT_DIR:-$(cd "$HERE/.." && pwd)}
 STUB="$HERE/stub"
@@ -159,21 +177,53 @@ EOF
     : > "$M/i2c_reads"
     : > "$M/i2c_writes"
 }
+# PRE: the shell functions of the shell in use (busybox passes, see the top), "" for dash
+PRE=""
+shims() { # $1 = applet list of the shell's busybox: a function for each stub / forbidden command among them
+    for c in $(cd "$STUB" && ls); do
+        case "$c" in model.sh | services_busybox | HDZGOGGLE) continue ;; esac
+        case " $(echo $1) " in *" $c "*) echo "$c() { \"$STUB/$c\" \"\$@\"; }" ;; esac
+    done
+    for c in $DENY; do
+        case " $(echo $1) " in *" $c "*) echo "$c() { \"$DENYBIN/$c\" \"\$@\"; }" ;; esac
+    done
+}
+stubs_reached() { # $1 = shell command: every stub and forbidden command resolves to ours in it
+    sr=0
+    for c in $(cd "$STUB" && ls) $DENY; do
+        case "$c" in model.sh | services_busybox | HDZGOGGLE) continue ;; esac
+        # shellcheck disable=SC2086 # $1 holds a command with options
+        w=$(PATH=$TPATH $1 -c "$PRE"'
+type "$0"' "$c" 2>&1 < /dev/null)
+        case "$w" in
+            *function* | *"$STUB/$c"* | *"$DENYBIN/$c"*) ;;
+            *builtin*) case " $DENY " in *" $c "*) ;; *) echo "  $c: $w" && sr=1 ;; esac ;; # (printf)
+            *) echo "  $c: $w" && sr=1 ;;
+        esac
+    done
+    return $sr
+}
 env_run() { # $1 shell, $2 mode, $3 script, rest args: run in the foreground
     sh_=$1
     md=$2
     sc=$3
     shift 3
+    if [ -n "$PRE" ]; then set -- -c "$PRE"'
+. "$0"' "$KIT/$sc" "$@"; else set -- "$KIT/$sc" "$@"; fi
+    # shellcheck disable=SC2086 # sh_ holds a command with options
     PATH=$TPATH MODEL=$M PROBE_ROOT=$R PROBE_MODE=$md PROBE_FAST=1 PROBE_WAIT=0 TMPDIR=$R/tmp \
-        $sh_ "$KIT/$sc" "$@" < /dev/null > /dev/null 2>&1
+        $sh_ "$@" < /dev/null > /dev/null 2>&1
 }
 env_bg() { # same, in the background with SIGINT not ignored; BGPID
     sh_=$1
     md=$2
     sc=$3
     shift 3
+    if [ -n "$PRE" ]; then set -- -c "$PRE"'
+. "$0"' "$KIT/$sc" "$@"; else set -- "$KIT/$sc" "$@"; fi
+    # shellcheck disable=SC2086
     PATH=$TPATH MODEL=$M PROBE_ROOT=$R PROBE_MODE=$md PROBE_FAST=1 PROBE_WAIT=0 TMPDIR=$R/tmp \
-        "$HOSTENV" --default-signal=INT $sh_ "$KIT/$sc" "$@" < /dev/null > /dev/null 2>&1 &
+        "$HOSTENV" --default-signal=INT $sh_ "$@" < /dev/null > /dev/null 2>&1 &
     BGPID=$!
 }
 start_fake_app() {
@@ -290,6 +340,18 @@ for shn in $SHELLS; do
         continue
     }
     T="$T0/$shn"
+    # busybox ash prefers its own applets: our stubs as functions there (see the top)
+    case "$shn" in
+        busybox_sh) PRE=$(shims "$(busybox --list 2> /dev/null)") ;;
+        goggle_ash) PRE=$(shims "$APPLETS") ;;
+        *) PRE="" ;;
+    esac
+    if stubs_reached "$sh"; then
+        ok "$lbl: every stub and forbidden command is reached (none bypassed by a builtin or an applet)"
+    else
+        bad "$lbl: a stub or forbidden command would be bypassed (above): no script run under this shell"
+        continue
+    fi
 
     case " $GROUPS_ " in *" test "*)
         # 1. SSH mode, app running, both parts

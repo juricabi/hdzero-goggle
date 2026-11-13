@@ -2,8 +2,15 @@
 # Mutation check of test/run_tests.sh (host only): each mutant is a copy of the probe kit with
 # one safety property broken; run_tests.sh must FAIL on every one. Also runs the review's
 # mutant of the previous kit (MUT_OLD=<dir with its probe/ copy>), which must fail too.
-# Usage: sh utilities/probe/test/mutants.sh   (~25 minutes; dash only, few kill points)
+# Usage: sh utilities/probe/test/mutants.sh   (~30 minutes; dash only, few kill points)
+# Not as root (run_tests.sh refuses root, and every mutant would then look killed): as root use
+# utilities/dev/run_probe.sh mutants.
 set -u
+if [ "$(id -u)" = 0 ]; then
+    echo "mutants.sh: refusing to run as root (run_tests.sh refuses root, so every mutant would look killed)." >&2
+    echo "Run it as an unprivileged user, or as root through utilities/dev/run_probe.sh mutants." >&2
+    exit 2
+fi
 HERE=$(cd "$(dirname "$0")" && pwd)
 KIT=$(cd "$HERE/.." && pwd)
 T=$(mktemp -d)

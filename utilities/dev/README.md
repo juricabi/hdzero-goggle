@@ -11,7 +11,7 @@ to `/root/hdz/...` and can be changed by the environment variables named in each
 | `emu_run.sh <build dir> <setting.ini\|-> <key script> <shot prefix>` | runs the emulator **sandboxed**: its own Xvfb, a private mount namespace with tmpfs `/mnt` and `/tmp`, uid 65534 without capabilities, every system command (`passwd`, `insmod`, `mount`, `i2cset`, `reboot`, …) replaced by a logging stub; keys from a script, screenshots and logs into `$EMU_OUT/shots` and `$EMU_OUT/logs`.  **Never run the emulator without it**: the app runs the goggle's shell commands on the host, among them the WiFi page's root password change. Needs `Xvfb`, `xdotool`, ImageMagick `import`. |
 | `keys/*.txt` | key scripts for `emu_run.sh`: `k <key> [n]` tap, `l <key>` hold 0.9 s, `w <s>` wait, `s <name>` screenshot, `c <name>` copy setting.ini.  Written for 2989f32's main menu; Audio and Module Bay moved to the end of the menu in 2d62c16, so adjust the step counts before reuse. |
 | `run_live.sh all\|<t_script>` | the live-stream audio suite (`utilities/live_audio_test/run_all.sh`) in private namespaces |
-| `run_probe.sh run\|mutants` | the probe kit's tests as an unprivileged uid (`utilities/probe/test/run_tests.sh` is not safe as root) |
+| `run_probe.sh run\|mutants` | the probe kit's tests as an unprivileged uid in its own pid namespace (`utilities/probe/test/run_tests.sh` and `mutants.sh` refuse to run as root); `SHELLS`, `ONLY`, `QUICK`, `ROOTFS` are passed on |
 
 The other suites run directly: `make -C utilities/module_bay_test test` (and `utilities/module_bay_test/mutants.sh`),
 `python3 utilities/audio_mixer/test_mixer.py`, `python3 utilities/audio_mixer/mutants.py`,

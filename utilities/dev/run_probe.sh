@@ -1,8 +1,10 @@
 #!/bin/bash
 # The probe kit's tests (utilities/probe/test) as an otherwise unused uid in its own pid namespace, on a copy of
-# utilities/probe: run_tests.sh's busybox_sh pass calls busybox's own applets ahead of PATH, so run as root it
-# could reach the host's real i2cset, mount and kill (docs/review-final.md, "Test-harness hazard").  Run as root.
-#   utilities/dev/run_probe.sh run|mutants
+# utilities/probe.  busybox ash calls its own applets ahead of PATH: run_tests.sh puts its stubs in front of them
+# as shell functions and checks that none is bypassed, and refuses to run as root (so does mutants.sh); this
+# script is the way to run them from a root shell, and a stub that were bypassed anyway could reach neither the
+# host's devices nor any other process (docs/review-final.md, "Test-harness hazard").  Run as root.
+#   utilities/dev/run_probe.sh run|mutants   (env: SHELLS, ONLY, QUICK, ROOTFS are passed on)
 set -u
 what=${1:?usage: $0 run|mutants}
 WT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -22,7 +24,9 @@ case $what in
 esac
 start=$(date +%s)
 unshare -p -f --mount-proc setpriv --reuid=$U --regid=$U --clear-groups \
-    env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$P" TMPDIR="$P" LANG=C sh "$S" > "$O/$what.log" 2>&1
+    env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$P" TMPDIR="$P" LANG=C \
+    ${SHELLS:+SHELLS="$SHELLS"} ${ONLY:+ONLY="$ONLY"} ${QUICK:+QUICK="$QUICK"} ${ROOTFS:+ROOTFS="$ROOTFS"} \
+    sh "$S" > "$O/$what.log" 2>&1
 rc=$?
 echo "exit $rc after $(( $(date +%s) - start )) s" >> "$O/$what.log"
 rm -rf "$P"
