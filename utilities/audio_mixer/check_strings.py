@@ -70,7 +70,8 @@ MODULE_BAY = [("mb_label", t) for t in ("Module", "Mode", "Check Pins")] + [("mb
     [("mb_text", ("{} {} {} {}, 1.8 V", ("Pins", "toggling", "toggling", "toggling"))),
      ("mb_text", ("{} 1 0 1, 3.3 V", ("Pins",)))] + \
     [("mb_status", ("{}: {}", ("Status", t))) for t in ("Off, bay pins untouched", "Paused while WiFi is on",
-                                                        "Paused, pins in use by WiFi", "Waiting for bay power",
+                                                        "Paused, pins in use by WiFi", "Paused, pin state unknown",
+                                                        "Waiting for bay power",
                                                         "Waiting for the module to boot")] + \
     [("mb_status", ("{}: {} SteadyView X L8 {}", ("Status", "Sending", "(not video source)")))] + \
     [("mb_note", t) for t in ("Module control needs the 3-wire bay mod (resistors or level shifter).",

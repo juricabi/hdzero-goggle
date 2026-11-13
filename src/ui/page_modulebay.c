@@ -124,6 +124,9 @@ static void update_status(void) {
     case MODULE_STATUS_SDIO:
         snprintf(buf, sizeof(buf), "#" COLOR_ORANGE " %s#", _lang("Paused, pins in use by WiFi"));
         break;
+    case MODULE_STATUS_PINS_UNKNOWN: // PG_CFG0 not readable (sunxi_dump missing, busy or answers disagree)
+        snprintf(buf, sizeof(buf), "#" COLOR_ORANGE " %s#", _lang("Paused, pin state unknown"));
+        break;
     case MODULE_STATUS_UNPOWERED:
         snprintf(buf, sizeof(buf), "%s", _lang("Waiting for bay power"));
         break;

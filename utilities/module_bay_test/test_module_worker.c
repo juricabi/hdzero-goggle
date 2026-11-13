@@ -37,7 +37,26 @@
 #ifndef MODULE_C
 #define MODULE_C "../../src/module/module.c"
 #endif
+// module.c reads the sunxi_dump answer with read(): through test_read(), which can make one
+// read of a series answer another value (a latch moved by a process that takes no lock)
+#include <unistd.h>
+static ssize_t test_read(int fd, void *buf, size_t n);
+#define read(fd, buf, n) test_read(fd, buf, n)
 #include MODULE_C
+#undef read
+
+static int dump_reads, dump_other_at; // the dump_other_at-th read (from 1) after dump_reads = 0 answers another value
+static ssize_t test_read(int fd, void *buf, size_t n) {
+    const ssize_t r = read(fd, buf, n);
+    if (r > 1 && dump_other_at && ++dump_reads == dump_other_at) {
+        char *b = buf;
+        ssize_t i = r - 1;
+        while (i > 0 && (b[i] == '\n' || b[i] == ' '))
+            i--;
+        b[i] = b[i] == '2' ? '7' : '2'; // the last digit of the value: another pin function for PG0
+    }
+    return r;
+}
 
 #ifndef SLACK_MS
 #define SLACK_MS 300
@@ -622,11 +641,13 @@ int main(void) {
     if (!mkdtemp(dir)) {
         check(0, "temporary directory");
     } else {
-        char drv[64], dump[64];
+        char drv[64], dump[64], lockf[64];
         snprintf(drv, sizeof(drv), "%s/xradio_wlan", dir);
         snprintf(dump, sizeof(dump), "%s/dump", dir);
+        snprintf(lockf, sizeof(lockf), "%s/sunxi_dump.lock", dir);
         wlan_driver_path = drv;
         reg_dump_path = dump;
+        sunxi_dump_lock_path = lockf; // never the host's /tmp/.sunxi_dump.lock
         static const struct {
             const char *driver, *dump;
             bool busy;
@@ -650,6 +671,32 @@ int main(void) {
             put_file(drv, cases[i].driver);
             put_file(dump, cases[i].dump);
             check(bay_pins_busy_why(&why) == cases[i].busy, cases[i].what);
+        }
+        {
+            // the three reads must all agree: one of them moved by another latch user is unreadable
+            const char *why = NULL;
+            put_file(drv, "");
+            put_file(dump, "0x0300b0d8: 0x22777777\n");
+            for (int at = 1; at <= 3; at++) {
+                dump_reads = 0;
+                dump_other_at = at;
+                const bool busy = bay_pins_busy_why(&why);
+                dump_other_at = 0;
+                char what[96];
+                snprintf(what, sizeof(what), "read %d of 3 answers another value: busy (pin function unknown)", at);
+                check(busy && why && strncmp(why, "PG_CFG0", 7) == 0, what);
+            }
+            // the shared sunxi_dump lock held by another process for more than 1 s: no read, busy
+            int lk = open(lockf, O_RDWR | O_CREAT, 0644);
+            const bool held = lk >= 0 && flock(lk, LOCK_EX) == 0;
+            const uint64_t t0 = t_now();
+            const bool busy = bay_pins_busy_why(&why);
+            const uint64_t dt = t_now() - t0;
+            if (lk >= 0)
+                close(lk);
+            check(held && busy && why && strncmp(why, "PG_CFG0", 7) == 0 && dt >= 900 && dt < 1000 + SLACK_MS,
+                  "sunxi_dump lock held elsewhere: no read after about 1 s, busy (pin function unknown)");
+            check(!bay_pins_busy_why(&why), "lock free again: read, free");
         }
         // Check Pins with the pin function unknown: not read, and says so
         put_file(drv, "");
@@ -678,6 +725,11 @@ int main(void) {
         sleep_until(t + 2000 + SLACK_MS);
         check(count('i', t, 1000000) == 0 && module_status() == MODULE_STATUS_SDIO,
               "pins in SDC1 at set-up: no init, status \"pins in use by WiFi\"");
+        // their function not readable: left alone as well, but the status says why (not WiFi)
+        put_file(dump, "");
+        sleep_until(t_now() + SDIO_RECHECK_MS + SLACK_MS);
+        check(count('i', t, 1000000) == 0 && module_status() == MODULE_STATUS_PINS_UNKNOWN,
+              "pin function not readable: no init, status \"pin state unknown\" (not \"in use by WiFi\")");
         put_file(dump, "0x0300b0d8: 0x22777777\n");
         uint64_t freed = t_now();
         sleep_until(freed + SDIO_RECHECK_MS + SLACK_MS);

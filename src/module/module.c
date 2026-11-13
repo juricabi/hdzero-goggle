@@ -95,6 +95,7 @@ static module_def_t *active = NULL; // initialised module, holds the pins
 static bool setup_channel = false;  // after init / set_mode: the channel goes out next, boot hold or not
 static uint64_t resend_at_ms = 0;   // boot resend (module_def_t.boot_resend_ms) due
 static bool sdio_busy = false;
+static bool pins_unknown = false; // sdio_busy because PG_CFG0 could not be read (not because WiFi has the pins)
 
 static uint64_t now_ms(void) {
     struct timespec ts;
@@ -174,6 +175,7 @@ static int fold(int count, int ch) {
 // (record daemon), the probe kit and the app's own awr / aww calls take this lock around their
 // accesses (src/record/appmsg.h HDMIA_LOCK_FILE), and so does read_reg().
 #define SUNXI_DUMP_LOCK "/tmp/.sunxi_dump.lock"
+static const char *sunxi_dump_lock_path = SUNXI_DUMP_LOCK; // (a variable: the host test uses a file of its own)
 
 static bool read_reg_once(uint32_t addr, uint32_t *val);
 
@@ -184,7 +186,7 @@ static bool read_reg_once(uint32_t addr, uint32_t *val);
 static bool read_reg(uint32_t addr, uint32_t *val) {
     if (!reg_dump_path)
         return false;
-    int lk = open(SUNXI_DUMP_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    int lk = open(sunxi_dump_lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
     if (lk < 0)
         return false;
     bool locked = false;
@@ -375,6 +377,7 @@ static void *module_worker(void *arg) {
                 if (busy != sdio_busy)
                     LOGW("module: bay pins %s%s", busy ? "left alone, checked again in 5 s: " : "free again", busy ? why : "");
                 sdio_busy = busy;
+                pins_unknown = busy && strncmp(why, "PG_CFG0", 7) == 0;
                 if (want != wanted() || power_on_ms != on)
                     continue; // changed meanwhile (a new power-on starts the wait again)
                 if (busy) {
@@ -653,7 +656,7 @@ module_status_t module_status() {
     else if (active)
         status = MODULE_STATUS_ACTIVE;
     else if (sdio_busy)
-        status = MODULE_STATUS_SDIO;
+        status = pins_unknown ? MODULE_STATUS_PINS_UNKNOWN : MODULE_STATUS_SDIO;
     else
         status = MODULE_STATUS_STARTING;
     pthread_mutex_unlock(&lock);

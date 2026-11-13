@@ -35,6 +35,7 @@ typedef enum {
     MODULE_STATUS_NONE,      // Module None
     MODULE_STATUS_WIFI,      // WiFi enabled: the pins are left to the SDIO bus
     MODULE_STATUS_SDIO,      // pins found in use by the SDIO host / WiFi driver
+    MODULE_STATUS_PINS_UNKNOWN, // their pin function (PG_CFG0) could not be read: left alone too
     MODULE_STATUS_UNPOWERED, // bay power off
     MODULE_STATUS_STARTING,  // waiting for the module to boot (MODULE_BOOT_MS)
     MODULE_STATUS_ACTIVE,
