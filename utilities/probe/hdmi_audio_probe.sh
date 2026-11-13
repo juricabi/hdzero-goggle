@@ -9,6 +9,8 @@
 #     the app stopped, switched for the dump, put back before the app continues;
 #   - the sunxi_dump address latch (/sys/class/sunxi_dump/dump), inside those windows;
 #     FIFO / data registers are never read (a read would take a sample from a stream);
+#   - /dev/mem: one word (PH_CFG0) read, read only, with the devmem of the services
+#     package's busybox if it is there (no value is ever passed to it);
 #   - GPIO 131 (beeper) export and direction, as rc.sh does;
 #   - debugfs is mounted (RAM only) if it is not, and unmounted again;
 #   - SD-card mode: it starts the goggle app (see below).
@@ -25,7 +27,7 @@
 # PROBE_ROOT, PROBE_MODE, PROBE_OUTDIR, PROBE_WAIT, PROBE_TL, PROBE_GUARD: PC tests only.
 
 # shellcheck disable=SC2317,SC2034 # trap/guardian functions; common-block variables
-VERSION=2
+VERSION=3
 R="${PROBE_ROOT:-}"
 # ===== probe common block v2: identical in every probe script (test/run_tests.sh checks) =====
 # Modes. SD-card mode (MODE=sd): the file runs as /mnt/extsd/develop.sh, which rc.sh runs
@@ -483,6 +485,7 @@ undo() {
         umount "$DBG" 2> /dev/null && log "(debugfs unmounted)"
         MOUNTED_DBG=0
     fi
+    rm -f "$DEVMEM_OUT" # (a signal during devmem_check)
     return 0
 }
 
@@ -502,6 +505,48 @@ dt_props() { # every property of a DT node directory, recurse $2 levels
         x=$(hexdump -v -n 64 -e '/1 "%02x"' "$f" 2> /dev/null)
         log "  $nm [$sz] = \"$s\"  hex:$x"
     done
+}
+
+# PH_CFG0 read two ways, read only: through the sunxi_dump latch (three reads, app paused) and
+# through /dev/mem (no latch: the candidate for a latch-free access). The goggle's busybox has no
+# devmem; the BusyBox 1.27.2 of the services package in the app partition (also in the official
+# images) has. "devmem ADDRESS 32" with no value opens /dev/mem read only, maps the page read only
+# and reads one word (busybox miscutils/devmem.c); nothing here passes a value.
+BB_SERVICES="$R/mnt/app/services/busybox/busybox"
+DEVMEM_OUT="$TMPD/.probe_devmem"
+devmem_check() {
+    if [ -e "$R/dev/mem" ]; then log "/dev/mem: $(ls -l "$R/dev/mem" 2>&1)"; else log "/dev/mem: absent"; fi
+    dm_lat="(not read)"
+    dm_raw=""
+    if lat_begin; then
+        if lat_read 0x0300B0FC; then dm_lat=$(hex "$RV"); else dm_lat="(three reads differ or not hex)"; fi
+        # one more answer of the latch as bytes: the exact format src/record/soc_reg.c accepts
+        dm_raw=$(lat_get 0x0300b0fc | hexdump -v -e '/1 "%02x "' 2> /dev/null)
+        lat_end
+    fi
+    log "PH_CFG0 through sunxi_dump: $dm_lat; one answer of the dump node as bytes: $dm_raw (expected 0x%08x and a newline: 30 78 + 8 digits + 0a)"
+    case "$dm_lat" in
+        0x35517751) log "PH_CFG0 state: stock (as rc.sh writes it)" ;;
+        0x35513331) log "PH_CFG0 state: PH1-PH3 = I2S0 (HDMI Out Audio switched them this boot)" ;;
+        0x*) log "PH_CFG0 state: NEITHER the stock value nor the I2S0 value: HDMI Out Audio would refuse (report this)" ;;
+    esac
+    if [ ! -x "$BB_SERVICES" ] || ! "$BB_SERVICES" --list 2> /dev/null | grep -q -x devmem; then
+        log "/dev/mem not read: no devmem ($BB_SERVICES missing or without the applet)"
+        return
+    fi
+    rm -f "$DEVMEM_OUT"
+    # read only (no value argument); the answer into a file of its own, error messages into the report
+    # shellcheck disable=SC2016 # $0 and $1 are expanded by that sh
+    tl 5 sh -c 'exec "$0" devmem 0x0300B0FC 32 > "$1"' "$BB_SERVICES" "$DEVMEM_OUT"
+    dm_rc=$?
+    dm_v=$(cat "$DEVMEM_OUT" 2> /dev/null)
+    rm -f "$DEVMEM_OUT"
+    log "PH_CFG0 through /dev/mem ($BB_SERVICES devmem 0x0300B0FC 32, exit $dm_rc): $dm_v"
+    if is_hex "$dm_v" && is_hex "$dm_lat"; then
+        if [ $((dm_v)) -eq $((dm_lat)) ]; then log "/dev/mem and sunxi_dump agree"; else log "/dev/mem and sunxi_dump DIFFER"; fi
+    else
+        log "/dev/mem read not usable (see above)"
+    fi
 }
 
 pin_summary() {
@@ -609,6 +654,10 @@ part1() {
     log "CCU: PLL_AUDIO area 0x03001070.. and audio/I2S clock + gating area 0x03001A00..0x03001A7C"
     regs 0x03001070 4
     regs 0x03001A00 32
+
+    sec "PH_CFG0 through sunxi_dump and through /dev/mem (read only); HDMI audio boot record"
+    devmem_check
+    catf "$TMPD/hdmi_audio.boot"
 
     sec "I2C"
     run i2cdetect -l

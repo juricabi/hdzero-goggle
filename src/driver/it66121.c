@@ -13,15 +13,17 @@
 uint8_t it66121_vi_phase = 0;
 
 /* ===== HDMI out audio state (experimental, default off) ===== */
-static bool it66121_audio_cfg_on = false; // set by IT66121_audio_config(), applied by IT66121_init()
-static it66121_audio_input_t it66121_audio_cfg_in = IT66121_AUDIO_I2S;
-static bool it66121_active = false;   // between IT66121_init() and IT66121_close()
-static bool it66121_audio_on = false; // audio block currently programmed and enabled
+static bool it66121_audio_cfg_on = false; // HDMI out audio in effect for this boot (IT66121_audio_config())
+static bool it66121_audio_fail = false;   // the Reg04 check tripped: audio stays off for the rest of this boot
+static bool it66121_active = false;       // between IT66121_init() and IT66121_close()
+static bool it66121_audio_on = false;     // audio block programmed and enabled by the last IT66121_init()
 // HDMI audio: the audio code switches to register bank 1 and back. Every multi-register access
-// to the chip (init, close, set_phase from the HDMI-in detect / ELRS / UI threads, audio) holds
-// this lock, so set_phase never writes Reg59/70/72 while bank 1 is selected (0x159/0x170/0x172).
+// to the chip (init, close, set_phase from the HDMI-in detect / ELRS / UI threads) holds this
+// lock, so set_phase never writes Reg59/70/72 while bank 1 is selected (0x159/0x170/0x172).
 static pthread_mutex_t it66121_lock = PTHREAD_MUTEX_INITIALIZER;
-static int it66121_audio_locked(bool on);
+static int it66121_audio_enable(void);
+static void it66121_audio_abort(void);
+static void it66121_status_locked(char *buf, size_t len);
 /* ===== end HDMI out audio state ===== */
 
 void IT66121_close() {
@@ -149,11 +151,22 @@ void IT66121_init() {
     I2C_R_Write(ADDR_IT66121, 0xc1, 0x00);
     I2C_R_Write(ADDR_IT66121, 0xc6, 0x03);
 
-    /* HDMI audio (experimental): no extra register access unless [hdmi] audio_out=1 */
+    /* HDMI audio (experimental): no extra register access unless HDMI out audio is in effect
+       for this boot ([hdmi] audio_out=1 at boot and PH1-PH3 switched, src/record/hdmi_boot.h) */
     it66121_active = true;
     it66121_audio_on = false;
-    if (it66121_audio_cfg_on)
-        it66121_audio_locked(true);
+    if (it66121_audio_cfg_on && !it66121_audio_fail) {
+        if (it66121_audio_enable() == 0) {
+            char buf[160];
+            it66121_audio_on = true;
+            usleep(20000);
+            it66121_status_locked(buf, sizeof(buf));
+            LOGI("IT66121 audio on (I2S): %s", buf);
+        } else {
+            it66121_audio_fail = true; // off for the rest of this boot: the next inits are stock again
+            it66121_audio_abort();
+        }
+    }
     pthread_mutex_unlock(&it66121_lock);
 }
 
@@ -175,7 +188,9 @@ void IT66121_set_phase(uint8_t phase, uint8_t inv) {
 /* ===========================================================================
  * HDMI out audio (EXPERIMENTAL, default off, see docs/hdmi-audio.md)
  *
- * Programs the IT66121 audio input for 2-channel LPCM, 48 kHz, 16 bit.
+ * Programs the IT66121 audio input for 2-channel LPCM, 48 kHz, 16 bit, I2S, at the end of
+ * IT66121_init() and only when HDMI out audio is in effect for this boot. Never at runtime:
+ * the Audio page only stores the setting.
  * References (docs/ folder):
  *   PG = IT66121_Programming_Guide.v1.05.pdf, chap. 7 "Program Audio Mode"
  *        p.31 (sequence), p.31-33 (N/CTS), p.33-35 (regE0-E5), p.36-37
@@ -191,10 +206,26 @@ void IT66121_set_phase(uint8_t phase, uint8_t inv) {
 #define IT66121_REG_BANK0() I2C_R_Write(ADDR_IT66121, 0x0f, 0x08)
 #define IT66121_REG_BANK1() I2C_R_Write(ADDR_IT66121, 0x0f, 0x09)
 
-/* Reg04 (RL p.3): bit4 RegSoftARst (audio clock base reset), bit2 REGAudReset (audio FIFO reset).
-   IT66121_init() ends with Reg04 = 0x14: both audio resets asserted. */
-#define IT66121_RST_AREF 0x10
-#define IT66121_RST_AUD  0x04
+/* Reg04 (RL p.3): bit7/6 reserved (test), bit5 RegSoftRefRst (RCLK reset), bit4 RegSoftARst
+   (audio clock base reset), bit3 REGSoftVRst (video clock base reset), bit2 REGAudReset (audio
+   FIFO reset), bit1 reserved, bit0 REGHDCP_rst (HDCP reset).
+   The stock video init above (IT66121_init(), unchanged from upstream) writes 04=3c and 04=3d
+   (everything in reset) and, as its last Reg04 write, 04=14: RCLK, video and HDCP resets
+   released, both audio resets asserted. That is the stock video-on value.
+   The audio path writes only the constants below: every bit except the two audio resets is
+   exactly as the stock init leaves it, so no write of the audio path can assert a video, HDCP
+   or RCLK reset, whatever a read returned. A read is only a precondition (two reads that
+   agree, the expected state); every write is read back. */
+#define IT66121_RST_AREF       0x10                                         // RegSoftARst
+#define IT66121_RST_AUD        0x04                                         // REGAudReset
+#define IT66121_R04_STOCK      0x14                                         // stock video-on value (see above)
+#define IT66121_R04_KEEP       (IT66121_R04_STOCK & ~(IT66121_RST_AREF | IT66121_RST_AUD)) // 0x00
+#define IT66121_R04_AREF_ON    (IT66121_R04_KEEP | IT66121_RST_AUD)         // 0x04: audio clock on, FIFO in reset
+#define IT66121_R04_AUDIO_ON   (IT66121_R04_KEEP)                           // 0x00: both audio resets released
+#define IT66121_R04_DEFINED    0x3d                                         // bits compared (5, 4, 3, 2, 0)
+#define IT66121_R04_VIDEO_RSTS 0x29                                         // RCLK, video, HDCP resets
+_Static_assert(((IT66121_R04_STOCK | IT66121_R04_AREF_ON | IT66121_R04_AUDIO_ON) & IT66121_R04_VIDEO_RSTS) == 0,
+               "an IT66121 Reg04 value of the audio path asserts a video reset");
 
 /* Audio InfoFrame payload (PG p.46, RL p.26): PB1 = CC (001: 2 channels, CT = 0 refer to stream),
    PB2 = SF/SS 0 (refer to stream header, required for L-PCM), PB4 = CA 0 (FL/FR), PB5 = 0. */
@@ -203,13 +234,12 @@ void IT66121_set_phase(uint8_t phase, uint8_t inv) {
 #define IT66121_AIF_PB4 0x00
 #define IT66121_AIF_PB5 0x00
 
-void IT66121_audio_config(bool enable, it66121_audio_input_t input) {
+void IT66121_audio_config(bool enable) {
     it66121_audio_cfg_on = enable;
-    it66121_audio_cfg_in = input;
 }
 
-bool IT66121_audio_configured(void) {
-    return it66121_audio_cfg_on;
+bool IT66121_audio_failed(void) {
+    return it66121_audio_fail;
 }
 
 bool IT66121_is_active(void) {
@@ -220,19 +250,71 @@ bool IT66121_audio_is_on(void) {
     return it66121_audio_on;
 }
 
-static void it66121_audio_enable(it66121_audio_input_t input) {
-    const uint8_t sel = (input == IT66121_AUDIO_SPDIF) ? 0x10 : 0x00; // RegE0[4] REGAudSel: 0 I2S, 1 SPDIF
-    uint8_t v;
-    int i;
+// Reg04 now: two reads that agree, else -1 (a failed transfer, or reads that differ)
+static int it66121_r04_get(uint8_t *v) {
+    uint8_t a = 0, b = 0;
+    if (I2C_R_Read_checked(ADDR_IT66121, 0x04, &a) < 0 || I2C_R_Read_checked(ADDR_IT66121, 0x04, &b) < 0 || a != b)
+        return -1;
+    *v = a;
+    return 0;
+}
 
+// Reg04 is in state want (its defined bits); *seen = the value read, for the log
+static bool it66121_r04_is(uint8_t want, int *seen) {
+    uint8_t v = 0;
+    *seen = -1;
+    if (it66121_r04_get(&v) < 0)
+        return false;
+    *seen = v;
+    return (v & IT66121_R04_DEFINED) == (want & IT66121_R04_DEFINED);
+}
+
+// one step of the audio resets: Reg04 must be `from` now, gets the constant `to`, must read back
+static int it66121_r04_step(uint8_t from, uint8_t to) {
+    int seen;
+    if (!it66121_r04_is(from, &seen)) {
+        LOGE("IT66121 audio: Reg04 is %s0x%02x, expected 0x%02x: not written", seen < 0 ? "unreadable / unstable, " : "",
+             seen < 0 ? 0 : seen, from);
+        return -1;
+    }
+    I2C_R_Write(ADDR_IT66121, 0x04, to);
+    if (!it66121_r04_is(to, &seen)) {
+        LOGE("IT66121 audio: Reg04 0x%02x written, reads back %s0x%02x", to, seen < 0 ? "unreadable / unstable, " : "",
+             seen < 0 ? 0 : seen);
+        return -1;
+    }
+    return 0;
+}
+
+// any check failed: the stock video-on state (as IT66121_init() leaves it), audio off for this boot
+static void it66121_audio_abort(void) {
+    int seen;
+    IT66121_REG_BANK0();
+    I2C_R_Write(ADDR_IT66121, 0xe0, 0xc0); // audio sources off (reset default)
+    I2C_R_Write(ADDR_IT66121, 0xce, 0x00); // no Audio InfoFrame
+    I2C_R_Write(ADDR_IT66121, 0xe1, 0x41); // the value the stock init writes
+    for (int i = 0; i < 2; i++) {
+        I2C_R_Write(ADDR_IT66121, 0x04, IT66121_R04_STOCK);
+        if (it66121_r04_is(IT66121_R04_STOCK, &seen)) {
+            LOGE("IT66121 audio: check failed, Reg04 = 0x%02x (stock video on), verified; HDMI out audio off for this boot",
+                 IT66121_R04_STOCK);
+            return;
+        }
+    }
+    LOGE("IT66121 audio: check failed, Reg04 0x%02x written, reads %s0x%02x; HDMI out audio off for this boot",
+         IT66121_R04_STOCK, seen < 0 ? "unreadable / unstable, " : "", seen < 0 ? 0 : seen);
+}
+
+// 0 = audio programmed and enabled; -1 = a Reg04 check failed (the caller aborts)
+static int it66121_audio_enable(void) {
     IT66121_REG_BANK0();
 
-    // PG p.31 step 1: disable all audio sources. RegE0[7:6]=00: 16-bit word length.
-    I2C_R_Write(ADDR_IT66121, 0xe0, sel);
+    // PG p.31 step 1: disable all audio sources. RegE0[7:6]=00: 16-bit word length, RegE0[4]=0: I2S.
+    I2C_R_Write(ADDR_IT66121, 0xe0, 0x00);
 
     // PG p.31 step 2 (first half): release the audio clock base reset, keep the FIFO in reset while programming.
-    v = I2C_R_Read(ADDR_IT66121, 0x04);
-    I2C_R_Write(ADDR_IT66121, 0x04, v & ~IT66121_RST_AREF);
+    if (it66121_r04_step(IT66121_R04_STOCK, IT66121_R04_AREF_ON) < 0)
+        return -1;
 
     // RL p.9 Reg58: no external MCLK (REGMCLKSamp=0), auto over-sampling clock, auto IPCLK (= reset default 0x11).
     I2C_R_Write(ADDR_IT66121, 0x58, 0x11);
@@ -243,16 +325,11 @@ static void it66121_audio_enable(it66121_audio_input_t input) {
     I2C_R_Write(ADDR_IT66121, 0x34, 0x18); // Reg134 N[15:8]
     I2C_R_Write(ADDR_IT66121, 0x35, 0x00); // Reg135 N[19:16]
     IT66121_REG_BANK0();
-
-    // RegC5[1] = 0: CTS counted by hardware (PG p.31). RegC5 is password protected (PG p.33: F8=C3, F8=A5 ... F8=FF).
-    I2C_R_Write(ADDR_IT66121, 0xf8, 0xc3);
-    I2C_R_Write(ADDR_IT66121, 0xf8, 0xa5);
-    v = I2C_R_Read(ADDR_IT66121, 0xc5);
-    I2C_R_Write(ADDR_IT66121, 0xc5, v & ~0x02);
-    I2C_R_Write(ADDR_IT66121, 0xf8, 0xff);
+    // RegC5[1] = 0 (CTS counted by hardware, PG p.31) is the reset default (RL p.20) and the stock
+    // init never changes RegC5: not written (no read-modify-write of a password-protected register).
 
     // PG p.33-35 step 4: audio format, channel enable bits still 0.
-    I2C_R_Write(ADDR_IT66121, 0xe0, sel);  // 16 bit, I2S/SPDIF select, sources off
+    I2C_R_Write(ADDR_IT66121, 0xe0, 0x00); // 16 bit, I2S, sources off
     I2C_R_Write(ADDR_IT66121, 0xe1, 0x01); // one source: not full-packet; 32-bit-slot I2S, 1T delay, WS=0 left, MSB first
     I2C_R_Write(ADDR_IT66121, 0xe2, 0xe4); // FIFO n <- source n
     I2C_R_Write(ADDR_IT66121, 0xe3, 0x00); // no L/R swap, channel status from registers (RegE3[4]=0), no zero CTS
@@ -279,35 +356,12 @@ static void it66121_audio_enable(it66121_audio_input_t input) {
     I2C_R_Write(ADDR_IT66121, 0xce, 0x03); // RL p.21 RegCE: send Audio InfoFrame, repeat every field
 
     // PG p.31 step 2 (second half): release the audio FIFO reset.
-    v = I2C_R_Read(ADDR_IT66121, 0x04);
-    I2C_R_Write(ADDR_IT66121, 0x04, v & ~(IT66121_RST_AREF | IT66121_RST_AUD));
+    if (it66121_r04_step(IT66121_R04_AREF_ON, IT66121_R04_AUDIO_ON) < 0)
+        return -1;
 
-    if (input == IT66121_AUDIO_I2S) {
-        // PG p.31 step 7: I2S, enable source 0 (pin I2S0, clocked by SCK/WS).
-        I2C_R_Write(ADDR_IT66121, 0xe0, sel | 0x01);
-    } else {
-        // PG p.31 step 8 / p.35: S/PDIF, enable source 0 only once Reg5F[5] (OSFreqLock) reports the input locked.
-        for (i = 0; i < 20; i++) {
-            if (I2C_R_Read(ADDR_IT66121, 0x5f) & 0x20)
-                break;
-            usleep(10000);
-        }
-        if (i < 20)
-            I2C_R_Write(ADDR_IT66121, 0xe0, sel | 0x01);
-        else
-            LOGE("IT66121 audio: S/PDIF input not locked (Reg5F=0x%02x), audio source left disabled",
-                 I2C_R_Read(ADDR_IT66121, 0x5f));
-    }
-}
-
-static void it66121_audio_disable(void) {
-    uint8_t v;
-
-    IT66121_REG_BANK0();
-    I2C_R_Write(ADDR_IT66121, 0xe0, 0xc0); // sources off, register reset default otherwise (24 bit, I2S)
-    I2C_R_Write(ADDR_IT66121, 0xce, 0x00); // stop the Audio InfoFrame
-    v = I2C_R_Read(ADDR_IT66121, 0x04);
-    I2C_R_Write(ADDR_IT66121, 0x04, v | IT66121_RST_AREF | IT66121_RST_AUD); // back to the IT66121_init() state
+    // PG p.31 step 7: I2S, enable source 0 (pin I2S0, clocked by SCK/WS).
+    I2C_R_Write(ADDR_IT66121, 0xe0, 0x01);
+    return 0;
 }
 
 static uint32_t it66121_cts_locked(void) {
@@ -326,6 +380,7 @@ static uint32_t it66121_cts_locked(void) {
     return ((uint32_t)r137 << 12) | ((uint32_t)r136 << 4) | (r135 >> 4);
 }
 
+// one-line register summary for the log (reads only, apart from the bank register)
 static void it66121_status_locked(char *buf, size_t len) {
     uint8_t r04, r5f, re0, rc0, rc1, rce, a0, a1, a2;
     uint32_t cts;
@@ -349,56 +404,5 @@ static void it66121_status_locked(char *buf, size_t len) {
     IT66121_REG_BANK0();
     snprintf(buf, len, "04=%02x 5F=%02x E0=%02x C0=%02x C1=%02x CE=%02x CTS=%u (1A0-1A2=%02x %02x %02x)",
              r04, r5f, re0, rc0, rc1, rce, (unsigned)cts, a0, a1, a2);
-}
-
-static int it66121_audio_locked(bool on) {
-    if (!it66121_active) {
-        LOGI("IT66121 audio: HDMI out not initialised, nothing done");
-        return -1;
-    }
-
-    if (on) {
-        it66121_audio_enable(it66121_audio_cfg_in);
-        it66121_audio_on = true;
-        char buf[160];
-        usleep(20000);
-        it66121_status_locked(buf, sizeof(buf));
-        LOGI("IT66121 audio on (%s): %s", it66121_audio_cfg_in == IT66121_AUDIO_SPDIF ? "S/PDIF" : "I2S", buf);
-    } else {
-        it66121_audio_disable();
-        it66121_audio_on = false;
-        LOGI("IT66121 audio off");
-    }
-    return 0;
-}
-
-int IT66121_audio(bool on) {
-    pthread_mutex_lock(&it66121_lock);
-    int r = it66121_audio_locked(on);
-    pthread_mutex_unlock(&it66121_lock);
-    return r;
-}
-
-void IT66121_audio_mute(bool mute) {
-    pthread_mutex_lock(&it66121_lock);
-    if (it66121_audio_on) {
-        // RL p.23 RegE4[7:4] REGAudSPxFlat: flat (silent) samples for source 0; the link and InfoFrame stay up.
-        IT66121_REG_BANK0();
-        I2C_R_Write(ADDR_IT66121, 0xe4, mute ? 0x10 : 0x00);
-    }
-    pthread_mutex_unlock(&it66121_lock);
-}
-
-uint32_t IT66121_audio_cts(void) {
-    pthread_mutex_lock(&it66121_lock);
-    uint32_t cts = it66121_cts_locked();
-    pthread_mutex_unlock(&it66121_lock);
-    return cts;
-}
-
-void IT66121_audio_status(char *buf, size_t len) {
-    pthread_mutex_lock(&it66121_lock);
-    it66121_status_locked(buf, len);
-    pthread_mutex_unlock(&it66121_lock);
 }
 /* ===== end HDMI out audio ===== */

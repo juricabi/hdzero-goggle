@@ -17,11 +17,11 @@ void gpadc_init() {
 
     // open gpadc clock
     sprintf(buf, "aww 0x030019ec 0x00010001");
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 
     // open adc channel 0
     sprintf(buf, "aww 0x05070008 0x00000001");
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 void gpadc_on(uint8_t is_on) {
@@ -33,7 +33,7 @@ void gpadc_on(uint8_t is_on) {
         sprintf(buf, "aww 0x05070004 0xffbc0000");
     }
 
-    system_exec(buf);
+    system_exec_sunxi_dump(buf);
 }
 
 int gpdac0_get() {
@@ -44,7 +44,7 @@ int gpdac0_get() {
 #endif
 
     sprintf(buf, "awr 0x05070080 > %s", ADC0_FILE);
-    system(buf);
+    system_exec_sunxi_dump(buf);
     usleep(10 * 1000); // 10ms
 
     FILE *file;

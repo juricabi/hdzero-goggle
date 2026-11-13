@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
     settings_init();
     settings_load();
     audio_mixer_init();
-    hdmi_audio_load(); // HDMI audio (experimental): [hdmi] audio_out / audio_in, default off
+    hdmi_audio_load(); // HDMI audio (experimental, default off): what is in effect this boot (/tmp/hdmi_audio.boot)
     language_init();
 #ifdef HDZGOGGLE2
     vclk_phase_init();

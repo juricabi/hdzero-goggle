@@ -6,8 +6,11 @@
 # Checked: the app is never left stopped and never started twice; every register the
 # scripts change is back at the end, also when they are killed at many points (TERM, INT,
 # HUP; SIGKILL: the guardian resumes / starts the app); no latch or ITE access while the
-# app runs; reads that do not repeat or are implausible lead to no write; FIFO registers
-# and IT66121 reg 0x17 are never read; only commands of the goggle's busybox are used.
+# app runs; reads that do not repeat or are implausible lead to no write; PH_CFG0 is
+# written only from the stock value and only as one of two constants; IT66121 Reg04 only
+# when it holds no video reset; FIFO registers and IT66121 reg 0x17 are never read;
+# /dev/mem is only read (devmem without a value); only commands of the goggle's busybox
+# are used.
 # Usage: sh utilities/probe/test/run_tests.sh   (QUICK=1: fewer kill points; ONLY="test probe bay";
 #   SHELLS="dash busybox_sh goggle_ash")
 #   ROOTFS=<extracted goggle rootfs>: also check every command against that rootfs, take the
@@ -126,6 +129,11 @@ setup() { # $1 = test dir: fresh root (R) + model (M)
     echo "snd-soc-dummy" > "$R/sys/kernel/debug/asoc/codecs"
     echo "goggle 2 stub" > "$R/mnt/app/version"
     cp "$STUB/HDZGOGGLE" "$R/mnt/app/app/HDZGOGGLE"
+    # the services package's busybox (it has devmem): a wrapper of test/stub/services_busybox
+    mkdir -p "$R/mnt/app/services/busybox"
+    printf '#!/bin/sh\nexec "%s/services_busybox" "$@"\n' "$STUB" > "$R/mnt/app/services/busybox/busybox"
+    chmod +x "$R/mnt/app/services/busybox/busybox"
+    : > "$M/services_busybox"
     # SoC registers after rc.sh (sunxi_dump model)
     cat > "$M/soc" << 'EOF'
 0x0300b098 0x00775577
@@ -353,6 +361,49 @@ for shn in $SHELLS; do
         need one-app-running apps_ok 1
         verdict "$lbl: hdmi_audio_test: aww running, nothing touched, app resumed" "$o"
         stop_apps
+        # 5a. PH1-PH3 are I2S0 already (HDMI Out Audio in effect this boot): used, never written or undone
+        setup "$T"
+        sed -i 's/^0x0300b0fc .*/0x0300b0fc 0x35513331/' "$M/soc" && cp "$M/soc" "$M/soc.orig"
+        start_fake_app
+        env_run "$sh" ssh hdmi_audio_test.sh out
+        o="$R/mnt/extsd/hdmi_audio_test_1.txt"
+        need found grep -q "PH1-PH3 are I2S0 already" "$o"
+        need no-ph-write sh -c "! grep -q 0x0300b0fc '$M/soc_writes'"
+        need ctl-restored grep -q "I2S0 CTL restored: 0x00060000" "$o"
+        need it-restored grep -q "IT66121 audio registers restored" "$o"
+        need 2-soc-writes nwrites 2
+        need all-back all_back
+        need no-violation no_viol
+        need one-app-running apps_ok 1
+        verdict "$lbl: hdmi_audio_test: PH1-PH3 already I2S0 (in effect this boot): not written, left as found" "$o"
+        stop_apps
+        # 5b. PH_CFG0 neither the stock value nor the I2S0 value: refused, never written
+        setup "$T"
+        sed -i 's/^0x0300b0fc .*/0x0300b0fc 0x35513351/' "$M/soc" && cp "$M/soc" "$M/soc.orig"
+        start_fake_app
+        env_run "$sh" ssh hdmi_audio_test.sh out
+        o="$R/mnt/extsd/hdmi_audio_test_1.txt"
+        need refused grep -q "0x35513351 is neither" "$o"
+        need no-ph-write sh -c "! grep -q 0x0300b0fc '$M/soc_writes'"
+        need all-back all_back
+        need no-violation no_viol
+        need one-app-running apps_ok 1
+        verdict "$lbl: hdmi_audio_test: PH_CFG0 neither stock nor I2S0: refused, not written" "$o"
+        stop_apps
+        # 5c. IT66121 Reg04 with the video reset bit set: part A skipped, no IT66121 register written
+        setup "$T"
+        sed -i 's/^g_0x04 .*/g_0x04 0x1c/' "$M/i2c_1_0x4c" && cp "$M/i2c_1_0x4c" "$M/i2c_1_0x4c.orig"
+        start_fake_app
+        env_run "$sh" ssh hdmi_audio_test.sh out
+        o="$R/mnt/extsd/hdmi_audio_test_1.txt"
+        need skipped grep -q "Reg04 = 0x1c: a video/HDCP/RCLK reset or reserved bit is set" "$o"
+        need only-bank-writes sh -c "! { grep 'W 1 0x4c' '$M/i2c_writes' | grep -q -v ' g_0x0f '; }"
+        need no-soc-write nwrites 0
+        need all-back all_back
+        need no-violation no_viol
+        need one-app-running apps_ok 1
+        verdict "$lbl: hdmi_audio_test: IT66121 Reg04 not as the stock init leaves it: nothing written" "$o"
+        stop_apps
         # 6. SD-card mode: the app is started first, exactly once
         setup "$T"
         env_run "$sh" sd hdmi_audio_test.sh
@@ -448,9 +499,30 @@ for shn in $SHELLS; do
             need one-app-running apps_ok 1
             need no-mount-in-test sh -c "! grep -q mount '$M/mounts' 2> /dev/null"
             need helpers-gone gone hdmi_audio_probe.sh
-            verdict "$lbl: probe $md: app runs once, read-only (no SoC write, no FIFO, no 0x17), banks back" "$o"
+            # PH_CFG0 two ways: the latch (and its raw answer) and /dev/mem through devmem, read only
+            need ph-state grep -q "PH_CFG0 state: stock" "$o"
+            need latch-bytes grep -q "bytes: 30 78 33 35 35 31 37 37 35 31 0a " "$o"
+            need devmem-read grep -q -x "devmem 0x0300B0FC 32" "$M/services_busybox"
+            need devmem-read-only sh -c "! grep -v -x -e '--list' -e 'devmem 0x0300B0FC 32' '$M/services_busybox'"
+            need devmem-agree grep -q "/dev/mem and sunxi_dump agree" "$o"
+            need devmem-file-gone test ! -e "$R/tmp/.probe_devmem"
+            verdict "$lbl: probe $md: app runs once, read-only (no SoC write, no FIFO, no 0x17, devmem read only), banks back" "$o"
             stop_apps
         done
+        # no services busybox: /dev/mem is not read, the rest runs as before
+        setup "$T"
+        rm -f "$R/mnt/app/services/busybox/busybox"
+        start_fake_app
+        env_run "$sh" ssh hdmi_audio_probe.sh
+        o="$R/mnt/extsd/hdmi_audio_probe_1.txt"
+        need no-devmem grep -q "/dev/mem not read: no devmem" "$o"
+        need ph-state grep -q "PH_CFG0 state: stock" "$o"
+        need part2 grep -q "part 2" "$o"
+        need no-soc-write nwrites 0
+        need no-violation no_viol
+        need one-app-running apps_ok 1
+        verdict "$lbl: probe without the services busybox: /dev/mem not read, the rest runs" "$o"
+        stop_apps
         # an amixer that hangs and ignores TERM: stopped by the time limit, app started
         setup "$T"
         STUB_HANG_CARD=0 PROBE_TL=1 env_run "$sh" sd hdmi_audio_probe.sh

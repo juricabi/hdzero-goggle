@@ -28,7 +28,7 @@ void self_test() {
 
 #ifdef HDZGOGGLE2
     system_exec("dispw -s vdpo 1080p50");
-    system_exec("aww 0x0300b340 0x00000008");
+    system_exec_sunxi_dump("aww 0x0300b340 0x00000008");
 #endif
 
     if (!g_setting.storage.selftest)

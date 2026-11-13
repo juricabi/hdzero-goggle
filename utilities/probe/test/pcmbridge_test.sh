@@ -3,13 +3,19 @@
 # ALSA / MPP AI and a model of /sys/class/sunxi_dump (one address latch). Checks:
 #  - capture XRUN (snd_pcm_wait() returns -EPIPE at once), a capture that cannot recover,
 #    AI GetFrame failing at once: recovered with backoff, no busy loop;
-#  - PH1-PH3 / I2S0 CTL: verified read-modify-write on start, exactly those fields put back
-#    on stop; an interleaved or implausible latch read leads to no write;
+#  - the bridge never writes PH_CFG0 (the pins are switched once per boot by hdmi_audio_boot);
+#    a route to I2S0 is refused unless /tmp/hdmi_audio.boot says HDMI out audio is in effect
+#    for this boot (missing, stale, faulted record);
+#  - I2S0 CTL: verified read-modify-write of its mode / clock fields on start, exactly those put
+#    back on stop; an interleaved, implausible or unsafe read, a held lock or a write that does
+#    not read back: the start fails, the old value stays (or is written back and verified);
 #  - a sink that does not open: state "failed", AI device disabled only if nobody else uses it;
 #  - an HDMI-in source at 44.1 kHz is muted, at 48 kHz played; the request number is echoed.
+# SRC_TOP=<tree>: test another copy of the sources (test/mutants.sh uses it).
 # Usage: sh utilities/probe/test/pcmbridge_test.sh
 set -eu
 TOP=$(cd "$(dirname "$0")/../../.." && pwd)
+SRC=${SRC_TOP:-$TOP}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/inc/log"
@@ -68,7 +74,7 @@ void pcmbridge_deinitSys(PcmBridge_t *, int);
 static uint32_t regs_a[8], regs_v[8];
 static int nregs;
 static uint32_t latch;
-static int race_addr_reads, race_at = -1, echo_addr, nwrites;
+static int race_addr_reads, race_at = -1, echo_addr, nwrites, ph_writes, ctl_stuck;
 static uint32_t race_addr;
 static uint32_t reg(uint32_t a) { for (int i = 0; i < nregs; i++) if (regs_a[i] == a) return regs_v[i]; return 0; }
 static void reg_set(uint32_t a, uint32_t v) {
@@ -84,7 +90,13 @@ int t_open(const char *p, int fl, ...) {
 ssize_t t_write(int fd, const void *b, size_t n) {
     char s[64]; snprintf(s, sizeof(s), "%.*s", (int)n, (const char *)b);
     if (fd == 900) { latch = (uint32_t)strtoul(s, NULL, 16); return (ssize_t)n; }
-    if (fd == 901) { char *e; uint32_t a = (uint32_t)strtoul(s, &e, 16); reg_set(a, (uint32_t)strtoul(e, NULL, 16)); nwrites++; return (ssize_t)n; }
+    if (fd == 901) {
+        char *e; uint32_t a = (uint32_t)strtoul(s, &e, 16), v = (uint32_t)strtoul(e, NULL, 16);
+        nwrites++;
+        if (a == 0x0300b0fc) ph_writes++;
+        if (!(ctl_stuck && a == 0x05090000 && v != 0x00060000)) reg_set(a, v); // ctl_stuck: only the reset value is taken
+        return (ssize_t)n;
+    }
     return write(fd, b, n);
 }
 ssize_t t_read(int fd, void *b, size_t n) {
@@ -176,17 +188,30 @@ static int state_is(const char *st, long seq) {
     return strstr(buf, want) != NULL;
 }
 static void regs_init(void) {
-    nregs = 0; nwrites = 0; race_at = -1; race_addr = 0; race_addr_reads = 0; echo_addr = 0;
-    reg_set(0x0300b0fc, 0x35517751); reg_set(0x05090000, 0x00060000);
+    nregs = 0; nwrites = 0; ph_writes = 0; ctl_stuck = 0; race_at = -1; race_addr = 0; race_addr_reads = 0; echo_addr = 0;
+    reg_set(0x0300b0fc, 0x35513331); reg_set(0x05090000, 0x00060000);
+}
+static const char *BOOTF, *BOOTID;
+static void boot_record(const char *pins, const char *fault, const char *ph) { // as hdmi_audio_boot leaves it
+    char id[64] = ""; FILE *f = fopen(BOOTID, "r"); if (f) { if (fgets(id, sizeof(id), f)) id[strcspn(id, "\n")] = 0; fclose(f); }
+    f = fopen(BOOTF, "w");
+    fprintf(f, "version=1\nboot_id=%s\nphase=done\nsupported=1\naudio_out=1\naudio_in=0\npins=%s\nfault=%s\nph_cfg0=%s\ndetail=test\n", id, pins, fault, ph);
+    fclose(f);
 }
 static void reset(void) { waits = recovers = opens = readis = nonzero_out = out_frames = getframes = 0; delivered = 0; clock_gettime(CLOCK_MONOTONIC, &t0); }
+static int state_err(const char *e) {
+    char buf[512] = ""; FILE *f = fopen(STATE, "r"); if (!f) return 0;
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f); buf[n] = 0; fclose(f);
+    return strstr(buf, e) != NULL;
+}
 int main(int argc, char **argv) {
-    REQ = argv[1]; STATE = argv[2]; (void)argc;
+    REQ = argv[1]; STATE = argv[2]; BOOTF = argv[3]; BOOTID = argv[4]; (void)argc;
     AiParams_t ai = {0, 0, 48000, 2, 16, 0};
     PcmBridge_t *pb = pcmbridge_initSys();
     CHECK(state_is("stopped", 0), "daemon start reports 'stopped'");
 
-    /* H3: XRUN storm on the I2S2 capture */
+    /* H3: XRUN storm on the I2S2 capture (HDMI in: needs no boot record, writes no register) */
+    unlink(BOOTF);
     regs_init(); reset(); cap_mode = 1;
     req(3, "hw:snddaudio2", "plughw:audiocodec", 0);
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
@@ -212,38 +237,65 @@ int main(int argc, char **argv) {
     usleep(2500000);
     pcmbridge_stop(pb, 1);
     CHECK(nonzero_out > 0, "48 kHz source: played after the rate check (%ld non-silent blocks)", nonzero_out);
-    CHECK(reg(0x0300b0fc) == 0x35517751 && nwrites == 0, "I2S2 route: no SoC register written");
+    CHECK(nwrites == 0, "I2S2 route: no SoC register written");
     ai.sampleRate = 44100;
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
     CHECK(state_is("failed", 3), "I2S2 -> codec refused while the DVR captures at 44.1 kHz (one codec rate)");
     ai.sampleRate = 48000;
 
-    /* O2 / O4: AI -> I2S0 with the PH1-PH3 / I2S0 CTL fix, undone on stop */
-    regs_init(); reset(); ai_fail_now = 0;
+    /* AI -> I2S0 only while HDMI out audio is in effect for this boot */
+    regs_init(); reset(); ai_fail_now = 0; ai_chans = 0;
     req(4, "ai", "hw:snddaudio0", 1);
+    unlink(BOOTF);
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
-    CHECK(reg(0x0300b0fc) == 0x35513331 && reg(0x05090000) == 0x00060010, "AI route: PH1-PH3 = I2S0, CTL I2S mode (PH_CFG0 %08x CTL %08x)", reg(0x0300b0fc), reg(0x05090000));
+    CHECK(state_is("failed", 4) && state_err("err=refused") && nwrites == 0 && ai_chans == 0, "no boot record: AI -> I2S0 refused, nothing opened or written");
+    boot_record("audio", "HDMI chip check failed", "0x35513331");
+    pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(state_is("failed", 4) && state_err("err=refused") && nwrites == 0, "boot record with a fault: refused");
+    boot_record("stock", "pin check failed", "0x35517751");
+    pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(state_is("failed", 4) && nwrites == 0, "boot record: pins stock (refused at boot): refused");
+    req(4, "ai", "hw:snddaudio0", 0);
+    pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(state_is("failed", 4) && nwrites == 0, "a request to hw:snddaudio0 without the I2S0 fix: refused too");
+
+    /* O2 / O4: AI -> I2S0 with the I2S0 CTL fix, undone on stop; PH_CFG0 never written */
+    req(4, "ai", "hw:snddaudio0", 1);
+    boot_record("audio", "", "0x35513331");
+    regs_init(); reset();
+    pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(state_is("running", 4) && reg(0x05090000) == 0x00060010 && ph_writes == 0, "AI route: CTL I2S mode (CTL %08x), PH_CFG0 not written", reg(0x05090000));
     usleep(300000);
     pcmbridge_stop(pb, 1);
-    CHECK(reg(0x0300b0fc) == 0x35517751 && reg(0x05090000) == 0x00060000 && nwrites == 4, "stop: PH_CFG0 and CTL put back (%08x %08x, %d writes)", reg(0x0300b0fc), reg(0x05090000), nwrites);
+    CHECK(reg(0x05090000) == 0x00060000 && nwrites == 2 && ph_writes == 0 && reg(0x0300b0fc) == 0x35513331, "stop: CTL put back (%08x, %d writes), PH1-PH3 left as the boot step set them", reg(0x05090000), nwrites);
     CHECK(out_frames >= 1024 && ai_disables > 0 && !ai_enabled && ai_chans == 0, "AI frames forwarded (%ld frames: mLen = total bytes), channel destroyed, device disabled", out_frames);
-    /* the app changed PH_CFG0 meanwhile: left alone */
+    for (int i = 0; i < 20; i++) { pcmbridge_start(pb, "/nonexistent", &ai, 1); pcmbridge_stop(pb, 1); }
+    CHECK(ph_writes == 0 && reg(0x05090000) == 0x00060000, "20 more starts and stops (HDMI out on/off, source switches): PH_CFG0 never written");
+    /* an interleaved latch access during the CTL read: the start fails, nothing written */
+    regs_init(); race_addr = 0x05090000; race_at = 1;
+    pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(state_is("failed", 4) && nwrites == 0 && ai_chans == 0, "interleaved CTL read: start failed, nothing written, channel destroyed");
     regs_init();
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
-    reg_set(0x0300b0fc, 0x35513351);
+    CHECK(state_is("running", 4) && reg(0x05090000) == 0x00060010, "the retry runs");
     pcmbridge_stop(pb, 1);
-    CHECK(reg(0x0300b0fc) == 0x35513351, "PH_CFG0 changed by someone else: not overwritten");
-    /* an interleaved latch access during the PH_CFG0 read: not written; CTL still done */
-    regs_init(); race_addr = 0x0300b0fc; race_at = 1;
-    pcmbridge_start(pb, "/nonexistent", &ai, 1);
-    CHECK(reg(0x0300b0fc) == 0x35517751 && reg(0x05090000) == 0x00060010, "interleaved latch read: PH_CFG0 not written");
-    pcmbridge_stop(pb, 1);
-    CHECK(reg(0x05090000) == 0x00060000, "CTL put back");
     /* a latch that answers with the address (wrong register): nothing written */
     regs_init(); echo_addr = 1;
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(nwrites == 0 && state_is("failed", 4) && state_err("err=refused"), "implausible CTL (reserved bits set): refused, no SoC write (%d)", nwrites);
     pcmbridge_stop(pb, 1);
-    CHECK(nwrites == 0, "implausible reads: no SoC write (%d)", nwrites);
+    /* the CTL write does not read back: the old value written back, refused */
+    regs_init(); ctl_stuck = 1;
+    pcmbridge_start(pb, "/nonexistent", &ai, 1);
+    CHECK(state_is("failed", 4) && state_err("err=refused") && reg(0x05090000) == 0x00060000 && ph_writes == 0, "CTL write not taken: old value written back, refused");
+    /* the lock held by another process: failed after about 1 s, nothing written */
+    regs_init();
+    { int lk = open("LOCKPATH", O_RDWR | O_CREAT, 0644); flock(lk, LOCK_EX);
+      struct timespec a0, a1; clock_gettime(CLOCK_MONOTONIC, &a0);
+      pcmbridge_start(pb, "/nonexistent", &ai, 1);
+      clock_gettime(CLOCK_MONOTONIC, &a1); close(lk);
+      double dt = (a1.tv_sec - a0.tv_sec) + (a1.tv_nsec - a0.tv_nsec) / 1e9;
+      CHECK(state_is("failed", 4) && nwrites == 0 && ai_chans == 0 && dt < 1.6, "sunxi_dump lock held: failed after %.2f s, nothing written", dt); }
     /* AI GetFrame failing at once: backoff */
     regs_init(); reset(); ai_fail_now = 1;
     pcmbridge_start(pb, "/nonexistent", &ai, 1);
@@ -253,7 +305,7 @@ int main(int argc, char **argv) {
     ai_fail_now = 0;
 
     /* sink missing / busy: failed, AI device disabled only when nobody else uses it */
-    regs_init(); sink_fail = 1; ai_enabled = 0; ai_disables = 0;
+    regs_init(); boot_record("audio", "", "0x35513331"); sink_fail = 1; ai_enabled = 0; ai_disables = 0;
     req(5, "ai", "hw:snddaudio0", 1);
     pcmbridge_start(pb, "/nonexistent", &ai, 0);
     CHECK(state_is("failed", 5) && ai_enabled && ai_chans == 0 && nwrites == 0, "sink busy, DVR uses AI: failed, channel destroyed, device kept");
@@ -262,18 +314,27 @@ int main(int argc, char **argv) {
     sink_fail = 0;
     pcmbridge_deinitSys(pb, 1);
     CHECK(state_is("stopped", 5), "daemon exit reports 'stopped'");
+    CHECK(ph_writes == 0, "PH_CFG0 never written by the bridge in any of these runs");
     return fails ? 1 : 0;
 }
 C
-cp "$TOP/src/record/pcmbridge.c" "$TOP/src/record/pcmbridge.h" "$TOP/src/record/pcmbridge_alsa.h" "$TOP/src/record/appmsg.h" "$T/inc/"
+cp "$SRC/src/record/pcmbridge.c" "$SRC/src/record/pcmbridge.h" "$SRC/src/record/pcmbridge_alsa.h" "$SRC/src/record/appmsg.h" \
+    "$SRC/src/record/soc_reg.c" "$SRC/src/record/soc_reg.h" "$SRC/src/record/hdmi_boot.c" "$SRC/src/record/hdmi_boot.h" "$T/inc/"
+sed -i "s|\"LOCKPATH\"|\"$T/lock\"|" "$T/harness.c"
+echo "1b6d6f8a-3c2e-4f10-9a7b-0123456789ab" > "$T/boot_id"
 # shellcheck disable=SC2089,SC2090 # the quotes are part of the macro values
-D="-DHDMIA_REQ_FILE=\"$T/req\" -DHDMIA_STATE_FILE=\"$T/state\" -DHDMIA_LOCK_FILE=\"$T/lock\""
-# shellcheck disable=SC2086,SC2090 # D holds several options
-gcc -Wall -Wno-unused-parameter -c -I"$T/inc" $D -Dopen=t_open -Dread=t_read -Dwrite=t_write -Dclose=t_close -Dflock=t_flock -o "$T/pb.o" "$T/inc/pcmbridge.c"
+D="-DHDMIA_REQ_FILE=\"$T/req\" -DHDMIA_STATE_FILE=\"$T/state\" -DHDMIA_LOCK_FILE=\"$T/lock\" -DHDMIA_BOOT_FILE=\"$T/boot\" -DHDMIA_BOOT_ID_FILE=\"$T/boot_id\" -DHDZGOGGLE"
+W="-Dopen=t_open -Dread=t_read -Dwrite=t_write -Dclose=t_close -Dflock=t_flock"
+# shellcheck disable=SC2086,SC2090 # D and W hold several options
+gcc -Wall -Wno-unused-parameter -c -I"$T/inc" $D $W -o "$T/pb.o" "$T/inc/pcmbridge.c"
+# shellcheck disable=SC2086,SC2090
+gcc -Wall -Wextra -Werror -c -I"$T/inc" $D $W -o "$T/sr.o" "$T/inc/soc_reg.c"
+# shellcheck disable=SC2086,SC2090
+gcc -Wall -Wextra -Werror -c -I"$T/inc" $D $W -o "$T/hb.o" "$T/inc/hdmi_boot.c"
 gcc -w -c -I"$T/inc" -o "$T/minIni.o" "$T/inc/minIni.c"
 # shellcheck disable=SC2086,SC2090
-gcc -Wall -I"$T/inc" -I"$TOP/src/record" $D -o "$T/t" "$T/harness.c" "$T/pb.o" "$T/minIni.o" -lpthread
-"$T/t" "$T/req" "$T/state" 2> "$T/log.txt" || {
+gcc -Wall -I"$T/inc" $D -o "$T/t" "$T/harness.c" "$T/pb.o" "$T/sr.o" "$T/hb.o" "$T/minIni.o" -lpthread
+"$T/t" "$T/req" "$T/state" "$T/boot" "$T/boot_id" 2> "$T/log.txt" || {
     echo "--- bridge log:"
     tail -30 "$T/log.txt"
     exit 1

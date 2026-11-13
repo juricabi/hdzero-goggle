@@ -98,6 +98,12 @@ elseif(HDZ_GOGGLE2)
 	file(GLOB SRC_FILES_IMAGE  "src/image/goggle2/*.c" "src/image/goggle2/*.h")
 endif()
 
+# HDMI audio (experimental): shared with the record daemon and hdmi_audio_boot
+set(SRC_FILES_HDMI_BOOT
+	src/record/hdmi_boot.c
+	src/record/soc_reg.c
+)
+
 set(SRC_FILES
 	${SRC_FILES_CORE}
 	${SRC_FILES_DRIVER}
@@ -108,6 +114,7 @@ set(SRC_FILES
 	${SRC_FILES_MODULE}
 	${SRC_FILES_UTIL}
 	${SRC_FILES_LANG}
+	${SRC_FILES_HDMI_BOOT}
 )
 
 if(EMULATOR_BUILD)
@@ -195,6 +202,20 @@ if(NOT EMULATOR_BUILD)
 		minIni
 	)
 
+	# HDMI audio (experimental) boot step, run by rc.sh once per boot (src/boot/hdmi_audio_boot.c)
+	add_executable(hdmi_audio_boot
+		src/boot/hdmi_audio_boot.c
+		${SRC_FILES_HDMI_BOOT}
+	)
+	target_include_directories(hdmi_audio_boot PRIVATE
+		src/
+	)
+	target_link_libraries(hdmi_audio_boot PRIVATE
+		c
+		log
+		minIni
+	)
+
 	# image build
 	add_custom_target(MKAPP ALL
 		COMMAND rsync -r ${PROJECT_SOURCE_DIR}/mkapp ${CMAKE_CURRENT_BINARY_DIR}/
@@ -207,10 +228,11 @@ if(NOT EMULATOR_BUILD)
 		COMMAND cp record ${CMAKE_CURRENT_BINARY_DIR}/out/
 		COMMAND cp rtspLive ${CMAKE_CURRENT_BINARY_DIR}/out/
 		COMMAND cp ${PROJECT_NAME} ${OS_APP_PATH}
+		COMMAND cp hdmi_audio_boot ${OS_APP_PATH}
 		COMMAND cp record ${RECORD_APP_PATH}
 		COMMAND cp rtspLive ${RECORD_APP_PATH}
 		COMMAND cd ${CMAKE_CURRENT_BINARY_DIR} && ./mkapp/mkapp_ota.sh
-		DEPENDS MKAPP ${PROJECT_NAME} record rtspLive
+		DEPENDS MKAPP ${PROJECT_NAME} record rtspLive hdmi_audio_boot
 	)
 	add_custom_target(${PROJECT_NAME}-OTA ALL
 		DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/out/${PROJECT_NAME}

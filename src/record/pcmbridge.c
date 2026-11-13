@@ -1,7 +1,8 @@
 /* ===========================================================================
  * PCM bridge for HDMI audio (EXPERIMENTAL, default off). See pcmbridge.h and
  * docs/hdmi-audio.md. Nothing in here runs unless the app sends HDMIA_cmdSTART,
- * which it only does when setting.ini [hdmi] audio_out / audio_in is 1.
+ * which it only does when HDMI out / in audio is in effect for this boot
+ * (setting.ini [hdmi] audio_out / audio_in = 1 at boot, src/record/hdmi_boot.h).
  * ======================================================================== */
 #define LOG_TAG "pcmbridge"
 #include <log/log.h>
@@ -20,8 +21,10 @@
 #include <minIni.h>
 
 #include "appmsg.h"
+#include "hdmi_boot.h"
 #include "pcmbridge.h"
 #include "pcmbridge_alsa.h"
+#include "soc_reg.h"
 
 #define PB_SECTION      "hdmi_audio"
 #define PB_NAME_LEN     64
@@ -34,17 +37,15 @@
 // I2S0 control register I2S/PCM_CTL (V536 datasheet 11.1.5): bit18 BCLK_OUT, bit17 LRCK_OUT,
 // bits[5:4] MODE_SEL (0 PCM, 1 left/I2S); bits 31:19, 16:12, 7 reserved; DOUT1-3 (11:9) only on I2S1.
 // Vendor note mkapp/app/app/record/audio/i2s/i2s-daudio-setup.txt: "must do: aww 0x05090000 0x00060010".
+// A register of the I2S0 block alone (no other function shares it); the sunxi-daudio driver sets
+// it up again at every open, so the fields are set after each hw_params and put back at the stop.
+// The pin functions of PH1-PH3 are NOT touched here: hdmi_audio_boot switches them once per boot
+// (src/record/hdmi_boot.h), and this bridge plays into I2S0 only if that is in effect.
 #define PB_I2S0_CTL       0x05090000u
 #define PB_I2S0_MODE_I2S  0x00000010u
 #define PB_I2S0_MASTER    0x00060000u
 #define PB_I2S0_FIELDS    0x00060030u // the fields this bridge changes (and puts back)
 #define PB_I2S0_RESERVED  0xfff9fe80u
-#define PB_SUNXI_DUMP     "/sys/class/sunxi_dump/"
-// PH_CFG0 (PIO 0x0300B000 + 7 * 0x24): rc.sh writes 0x35517751 at boot (PH1 = uart4 RX, PH2/PH3
-// IO disable), which takes PH1-PH3 away from I2S0 (function 3 = I2S0 BCLK / LRCK / DOUT).
-#define PB_PH_CFG0    0x0300B0FCu
-#define PB_PH1_3_MASK 0x0000fff0u
-#define PB_PH1_3_I2S0 0x00003330u
 
 struct PcmBridge {
     pthread_t tid;
@@ -69,9 +70,9 @@ struct PcmBridge {
     snd_pcm_t *cap;
     snd_pcm_t *out[PB_MAX_SINKS];
 
-    // what this bridge changed on the SoC; pb_i2s0_undo() puts back exactly these fields
-    bool phSet, ctlSet;
-    uint32_t phOrig, phNew, ctlOrig, ctlNew;
+    // what this bridge changed on the SoC (I2S0 CTL only); pb_i2s0_undo() puts back exactly these fields
+    bool ctlSet;
+    uint32_t ctlOrig, ctlNew;
 
     // ALSA capture source (I2S2, clocked by the HDMI source): reopen backoff, rate check, drift
     unsigned reopenMs;
@@ -107,157 +108,73 @@ static void pb_report(PcmBridge_t *pb, const char *state, const char *err) {
     rename(tmp, HDMIA_STATE_FILE);
 }
 
-/* ---- SoC registers through /sys/class/sunxi_dump (one address latch shared by every process:
- * awr/aww, the app's system_exec("aww ..."), utilities/probe). Serialised with HDMIA_LOCK_FILE
- * against the probe scripts; the app's own aww cannot be locked out, so every read is done three
- * times and must agree, values are checked for plausibility, and a write is read back. ---- */
-static int pb_lock(void) {
-    int fd = open(HDMIA_LOCK_FILE, O_RDWR | O_CREAT, 0644);
-    if (fd < 0)
-        return -1;
-    for (int i = 0; i < 20; i++) { // at most 1 s
-        if (flock(fd, LOCK_EX | LOCK_NB) == 0)
-            return fd;
-        usleep(50000);
-    }
-    close(fd);
-    return -1;
-}
-
-static void pb_unlock(int fd) {
-    if (fd >= 0)
-        close(fd); // releases the flock
-}
-
-static int pb_sysfs_write(const char *file, const char *text) {
-    int fd = open(file, O_WRONLY);
-    if (fd < 0)
-        return -1;
-    int r = write(fd, text, strlen(text));
-    close(fd);
-    return r < 0 ? -1 : 0;
-}
-
-static int pb_reg_read1(uint32_t addr, uint32_t *val) {
-    char text[32];
-    char *end = NULL;
-    snprintf(text, sizeof(text), "0x%08x", addr);
-    if (pb_sysfs_write(PB_SUNXI_DUMP "dump", text) < 0)
-        return -1;
-    int fd = open(PB_SUNXI_DUMP "dump", O_RDONLY);
-    if (fd < 0)
-        return -1;
-    int n = read(fd, text, sizeof(text) - 1);
-    close(fd);
-    if (n <= 2)
-        return -1;
-    text[n] = 0;
-    if (strncmp(text, "0x", 2) != 0)
-        return -1;
-    unsigned long v = strtoul(text, &end, 16);
-    if (end == text + 2 || (*end != 0 && *end != '\n'))
-        return -1;
-    *val = (uint32_t)v;
-    return 0;
-}
-
-static int pb_reg_read(uint32_t addr, uint32_t *val) { // verified: three reads agree
-    uint32_t a, b, c;
-    if (pb_reg_read1(addr, &a) < 0 || pb_reg_read1(addr, &b) < 0 || pb_reg_read1(addr, &c) < 0)
-        return -1;
-    if (a != b || b != c)
-        return -1;
-    *val = a;
-    return 0;
-}
-
-static int pb_reg_write(uint32_t addr, uint32_t val) { // 0 = reads back
-    char text[40];
-    uint32_t r = 0;
-    snprintf(text, sizeof(text), "0x%08x 0x%08x", addr, val);
-    if (pb_sysfs_write(PB_SUNXI_DUMP "write", text) < 0)
-        return -1;
-    return (pb_reg_read(addr, &r) == 0 && r == val) ? 0 : -1;
-}
-
-static bool pb_ph_sane(uint32_t v) { // PH0 / PH4 (HDZero RX/TX reset GPIOs) are outputs, as rc.sh leaves them
-    return (v & 0xfu) == 1u && ((v >> 16) & 0xfu) == 1u;
-}
-
+/* ---- I2S0 CTL through /sys/class/sunxi_dump (src/record/soc_reg.h: the shared lock, three
+ * agreeing reads, verified writes). pb_i2s0_apply() returns NULL when the fields are set, else why
+ * not; a reason starting with "refused" is not worth a retry in this boot. ---- */
 static bool pb_ctl_sane(uint32_t v) {
     return (v & PB_I2S0_RESERVED) == 0 && ((v >> 4) & 3u) != 3u;
 }
 
-static void pb_i2s0_apply(PcmBridge_t *pb) {
+static const char *pb_i2s0_apply(PcmBridge_t *pb) {
+    char diag[160], d2[160];
     uint32_t v = 0;
-    int lk = pb_lock();
+    const char *why = NULL;
+    const int lk = soc_reg_lock();
     if (lk < 0) {
-        LOGE("i2s0 fix: %s busy, nothing written", HDMIA_LOCK_FILE);
-        return;
+        LOGE("i2s0 fix: %s busy for 1 s, nothing written", HDMIA_LOCK_FILE);
+        return "I2S0 CTL: sunxi_dump lock busy";
     }
-    if (pb_reg_read(PB_PH_CFG0, &v) < 0 || !pb_ph_sane(v)) {
-        LOGE("i2s0 fix: PH_CFG0 read not trusted (0x%08x), pin mux left alone", v);
-    } else if ((v & PB_PH1_3_MASK) != PB_PH1_3_I2S0) {
-        pb->phOrig = v;
-        pb->phNew = (v & ~PB_PH1_3_MASK) | PB_PH1_3_I2S0; // PH0 / PH4 untouched
-        pb->phSet = true;
-        if (pb_reg_write(PB_PH_CFG0, pb->phNew) < 0)
-            LOGE("i2s0 fix: PH_CFG0 0x%08x did not read back", pb->phNew);
-        LOGD("i2s0 fix: PH_CFG0 0x%08x -> 0x%08x (PH1-PH3 = I2S0)", pb->phOrig, pb->phNew);
-    }
-    if (pb_reg_read(PB_I2S0_CTL, &v) < 0 || !pb_ctl_sane(v)) {
-        LOGE("i2s0 fix: I2S0 CTL read not trusted (0x%08x), left alone", v);
+    if (soc_reg_read(PB_I2S0_CTL, &v, diag, sizeof(diag)) < 0) {
+        LOGE("i2s0 fix: I2S0 CTL read not trusted (%s), nothing written", diag);
+        why = "I2S0 CTL read not trusted";
+    } else if (!pb_ctl_sane(v)) {
+        LOGE("i2s0 fix: I2S0 CTL 0x%08x: reserved bits set or an invalid mode, nothing written", v);
+        why = "refused: I2S0 CTL not as the driver leaves it";
     } else {
-        uint32_t w = (v & ~0x30u) | PB_I2S0_MODE_I2S | PB_I2S0_MASTER;
-        if (w != v) {
+        const uint32_t w = (v & ~PB_I2S0_FIELDS) | PB_I2S0_MODE_I2S | PB_I2S0_MASTER;
+        if (w == v) {
+            LOGD("i2s0 fix: CTL 0x%08x is I2S mode and clock master already", v);
+        } else if (soc_reg_write(PB_I2S0_CTL, w, diag, sizeof(diag)) == 0) {
             pb->ctlOrig = v;
             pb->ctlNew = w;
             pb->ctlSet = true;
-            if (pb_reg_write(PB_I2S0_CTL, w) < 0)
-                LOGE("i2s0 fix: I2S0 CTL 0x%08x did not read back", w);
+            LOGD("i2s0 fix: CTL 0x%08x -> 0x%08x", v, w);
+        } else { // it did not read back: the value it had, verified
+            LOGE("i2s0 fix: CTL 0x%08x did not read back (%s)", w, diag);
+            if (soc_reg_write(PB_I2S0_CTL, v, d2, sizeof(d2)) == 0)
+                LOGE("i2s0 fix: CTL 0x%08x written back, verified", v);
+            else
+                LOGE("i2s0 fix: CTL 0x%08x written back, not verified (%s)", v, d2);
+            why = "refused: I2S0 CTL did not read back";
         }
-        LOGD("i2s0 fix: CTL 0x%08x -> 0x%08x", v, w);
     }
-    pb_unlock(lk);
+    soc_reg_unlock(lk);
+    return why;
 }
 
 // put back exactly the fields pb_i2s0_apply() changed, if they still hold what it wrote
 static void pb_i2s0_undo(PcmBridge_t *pb) {
+    char diag[160];
     uint32_t v = 0;
-    if (!pb->phSet && !pb->ctlSet)
+    if (!pb->ctlSet)
         return;
-    int lk = pb_lock();
+    pb->ctlSet = false;
+    const int lk = soc_reg_lock();
     if (lk < 0) {
-        LOGE("i2s0 undo: %s busy: PH1-PH3 / I2S0 CTL not restored (a reboot does)", HDMIA_LOCK_FILE);
-        pb->phSet = pb->ctlSet = false;
+        LOGE("i2s0 undo: %s busy: I2S0 CTL not restored (I2S0 is idle; the next start sets it again)", HDMIA_LOCK_FILE);
         return;
     }
-    if (pb->ctlSet) {
-        if (pb_reg_read(PB_I2S0_CTL, &v) == 0 && pb_ctl_sane(v) && (v & PB_I2S0_FIELDS) == (pb->ctlNew & PB_I2S0_FIELDS)) {
-            uint32_t w = (v & ~PB_I2S0_FIELDS) | (pb->ctlOrig & PB_I2S0_FIELDS);
-            if (pb_reg_write(PB_I2S0_CTL, w) == 0)
-                LOGD("i2s0 undo: CTL 0x%08x -> 0x%08x", v, w);
-            else
-                LOGE("i2s0 undo: CTL 0x%08x did not read back", w);
-        } else {
-            LOGE("i2s0 undo: I2S0 CTL 0x%08x not as set (or read not trusted): left alone", v);
-        }
-        pb->ctlSet = false;
+    if (soc_reg_read(PB_I2S0_CTL, &v, diag, sizeof(diag)) == 0 && pb_ctl_sane(v) &&
+        (v & PB_I2S0_FIELDS) == (pb->ctlNew & PB_I2S0_FIELDS)) {
+        const uint32_t w = (v & ~PB_I2S0_FIELDS) | (pb->ctlOrig & PB_I2S0_FIELDS);
+        if (soc_reg_write(PB_I2S0_CTL, w, diag, sizeof(diag)) == 0)
+            LOGD("i2s0 undo: CTL 0x%08x -> 0x%08x", v, w);
+        else
+            LOGE("i2s0 undo: CTL 0x%08x did not read back (%s)", w, diag);
+    } else {
+        LOGE("i2s0 undo: I2S0 CTL not as set (%s): left alone", diag);
     }
-    if (pb->phSet) {
-        if (pb_reg_read(PB_PH_CFG0, &v) == 0 && pb_ph_sane(v) &&
-            (v & ~PB_PH1_3_MASK) == (pb->phOrig & ~PB_PH1_3_MASK) && (v & PB_PH1_3_MASK) == PB_PH1_3_I2S0) {
-            uint32_t w = (v & ~PB_PH1_3_MASK) | (pb->phOrig & PB_PH1_3_MASK);
-            if (pb_reg_write(PB_PH_CFG0, w) == 0)
-                LOGD("i2s0 undo: PH_CFG0 0x%08x -> 0x%08x (PH1-PH3 as before)", v, w);
-            else
-                LOGE("i2s0 undo: PH_CFG0 0x%08x did not read back", w);
-        } else {
-            LOGE("i2s0 undo: PH_CFG0 0x%08x changed meanwhile (or read not trusted): left alone", v);
-        }
-        pb->phSet = false;
-    }
-    pb_unlock(lk);
+    soc_reg_unlock(lk);
 }
 
 /* ---- ALSA helpers ---- */
@@ -582,7 +499,7 @@ static void pb_close_all(PcmBridge_t *pb, bool disableAiDev) {
     if (pb->usesAi)
         pb_ai_close(pb, disableAiDev);
     pb->usesAi = false;
-    pb_i2s0_undo(pb); // PH1-PH3 and I2S0 CTL as they were before the start
+    pb_i2s0_undo(pb); // I2S0 CTL fields as they were before the start (pin functions: never touched)
 }
 
 static void pb_stop(PcmBridge_t *pb, bool disableAiDev) {
@@ -655,6 +572,16 @@ int pcmbridge_start(PcmBridge_t *pb, const char *confFile, AiParams_t *aiParams,
 
     LOGD("start #%ld: src=%s sink=%s sink2=%s i2s0_fix=%d", pb->seq, pb->src, pb->sink[0], pb->sink[1], pb->i2s0Fix);
 
+    // I2S0 (HDMI out) only while HDMI out audio is in effect for this boot: PH1-PH3 switched by
+    // hdmi_audio_boot and no fault since (src/record/hdmi_boot.h)
+    if ((pb->i2s0Fix || strstr(pb->sink[0], "snddaudio0") != NULL || strstr(pb->sink[1], "snddaudio0") != NULL) &&
+        !hdmi_boot_out_ready()) {
+        pb->usesAi = false;
+        LOGE("start #%ld refused: HDMI out audio is not in effect this boot (%s)", pb->seq, HDMIA_BOOT_FILE);
+        pb_report(pb, "failed", "refused: HDMI out audio is not in effect this boot");
+        return -1;
+    }
+
     if (pb->usesAi) {
         pb->srcChannels = (aiParams->channels == 1) ? 1 : 2;
         if (aiParams->bitsPerSample != 16) {
@@ -686,8 +613,11 @@ int pcmbridge_start(PcmBridge_t *pb, const char *confFile, AiParams_t *aiParams,
         if (pb->out[i] == NULL)
             continue;
         nSinks++;
-        if (pb->i2s0Fix && strstr(pb->sink[i], "snddaudio0") != NULL)
-            pb_i2s0_apply(pb); // after hw_params, before the first write starts the stream
+        if (pb->i2s0Fix && strstr(pb->sink[i], "snddaudio0") != NULL) {
+            const char *why = pb_i2s0_apply(pb); // after hw_params, before the first write starts the stream
+            if (why != NULL)
+                return pb_fail(pb, aiDevFree, why);
+        }
     }
 
     if (nSinks == 0)

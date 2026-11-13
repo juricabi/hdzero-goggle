@@ -356,8 +356,7 @@ S0=""
 S1=""
 IR_WIN=0   # same for the IT66021 bank register
 IR_BANK=0
-PH_ORIG="" # PH_CFG0 before, and the value this script wrote
-PH_SET=""
+PH_SET="" # PH_AUDIO while this script has PH1-PH3 switched (ph_restore puts PH_STOCK back)
 CTL_ORIG="" # I2S0 CTL before, and the value this script wrote
 CTL_SET=""
 TONE_FILE=""
@@ -408,7 +407,7 @@ it_end() {
     app_resume
 }
 
-SAVE0="0x04 0x58 0xc5 0xce 0xe0 0xe1 0xe2 0xe3 0xe4 0xe5"
+SAVE0="0x04 0x58 0xce 0xe0 0xe1 0xe2 0xe3 0xe4 0xe5"
 SAVE1="0x33 0x34 0x35 0x91 0x92 0x93 0x94 0x98 0x99 0x68 0x69 0x6a 0x6b 0x6c 0x6d"
 it_save() { # inside a window; every value read twice
     S0=""
@@ -428,31 +427,27 @@ it_save() { # inside a window; every value read twice
     log "IT66121 saved bank1:$S1"
 }
 saved() { for kv in $S0 $S1; do [ "${kv%=*}" = "$1" ] && echo "${kv#*=}" && return 0; done; }
-it_restore() {
+it_restore() { # the saved values (Reg04 among them: only saved if its reset bits were safe)
     it_b1
     for kv in $S1; do it_w "${kv%=*}" "${kv#*=}"; done
     it_b0
-    it_w 0xf8 0xc3
-    it_w 0xf8 0xa5
     for kv in $S0; do it_w "${kv%=*}" "${kv#*=}"; done
-    it_w 0xf8 0xff
 }
-it_audio_on() { # IT66121_audio(true) of src/driver/it66121.c, read-modify-writes from saved values
-    v04=$(saved 0x04)
-    vc5=$(saved 0xc5)
+# Reg04 holds the RCLK (bit 5), video (bit 3) and HDCP (bit 0) resets besides the two audio resets
+# (bits 4, 2); bits 7, 6, 1 are reserved. The stock init leaves 0x14 (only the audio resets set),
+# HDMI Out Audio in effect leaves 0x00. Only those states are accepted, and only the constants
+# 0x04 and 0x00 are written (as src/driver/it66121.c): no write here can assert a video reset.
+it04_ok() { [ $(($1 & 0xeb)) -eq 0 ]; }
+it_audio_on() { # the audio part of IT66121_init() in src/driver/it66121.c (no RegC5 write: default)
     it_b0
     it_w 0xe0 0x00
-    it_w 0x04 "$(hex2 $((v04 & ~0x10)))"
+    it_w 0x04 0x04
     it_w 0x58 0x11
     it_b1
     it_w 0x33 0x00
     it_w 0x34 0x18
     it_w 0x35 0x00
     it_b0
-    it_w 0xf8 0xc3
-    it_w 0xf8 0xa5
-    it_w 0xc5 "$(hex2 $((vc5 & ~0x02)))"
-    it_w 0xf8 0xff
     it_w 0xe0 0x00
     it_w 0xe1 0x01
     it_w 0xe2 0xe4
@@ -474,7 +469,7 @@ it_audio_on() { # IT66121_audio(true) of src/driver/it66121.c, read-modify-write
     it_w 0x6d 0x70
     it_b0
     it_w 0xce 0x03
-    it_w 0x04 "$(hex2 $((v04 & ~0x14)))"
+    it_w 0x04 0x00
     it_w 0xe0 0x01
 }
 it_status() { # inside a window
@@ -531,28 +526,36 @@ ir_end() {
     app_resume
 }
 
-# ---- PH1-PH3 pin function (PH_CFG0) and I2S0 CTL: verified read-modify-write ----
+# ---- PH1-PH3 pin function (PH_CFG0): the strict rule of src/record/hdmi_boot.h ----
+# The whole register must be one of exactly two values: PH_STOCK (as rc.sh leaves it: PH0 out,
+# PH1 uart4, PH2/3 off, PH4 out, PH5/6 uart3 = ELRS backpack, PH7 uart0) or PH_AUDIO (only
+# PH1-PH3 = function 3, I2S0 BCLK / LRCK / DOUT). Only these two constants are ever written,
+# never a value built from a read; a write that does not read back is undone (stock value
+# written and verified). PH_AUDIO found already = HDMI Out Audio is in effect for this boot
+# (hdmi_audio_boot switched it): used as it is, and not undone at the end.
 PH=0x0300B0FC
-PH_MASK=0xfff0  # PH1..PH3 fields
-PH_I2S0=0x3330  # function 3 = I2S0 BCLK / LRCK / DOUT (V536 datasheet, PH_CFG0)
+PH_STOCK=0x35517751
+PH_AUDIO=0x35513331
 CTL=0x05090000
 CTL_MASK=0x60030 # BCLK_OUT, LRCK_OUT, MODE_SEL
-ph_sane() { [ $(($1 & 0xf)) -eq 1 ] && [ $((($1 >> 16) & 0xf)) -eq 1 ]; } # PH0/PH4: outputs
 ctl_sane() { [ $(($1 & 0xfff9fe80)) -eq 0 ] && [ $((($1 >> 4) & 3)) -ne 3 ]; } # reserved bits 0
 ph_set() {
     lat_begin || return 1
     if ! lat_read $PH; then
         log "PH_CFG0 read unstable: pin mux left alone"
-    elif ! ph_sane "$RV"; then
-        log "PH_CFG0=$(hex "$RV"): PH0/PH4 not outputs, read not trusted: pin mux left alone"
+    elif [ "$RV" -eq $((PH_AUDIO)) ]; then
+        log "PH_CFG0 $(hex "$RV"): PH1-PH3 are I2S0 already (HDMI Out Audio in effect this boot): not written, not undone"
+    elif [ "$RV" -ne $((PH_STOCK)) ]; then
+        log "PH_CFG0 $(hex "$RV") is neither $PH_STOCK (rc.sh) nor $PH_AUDIO: refused, pin mux left alone"
     else
-        PH_ORIG=$RV
-        want=$(((RV & ~PH_MASK) | PH_I2S0))
-        if [ "$want" -ne "$RV" ]; then
-            PH_SET=$want
-            lat_write $PH "$want" || log "PH_CFG0 write did not read back as $(hex "$want")"
+        PH_SET=$PH_AUDIO # set first: a signal from here on puts the stock value back
+        if lat_write $PH $PH_AUDIO; then
+            log "PH_CFG0 $PH_STOCK -> $PH_AUDIO"
+        else
+            log "PH_CFG0 write did not read back as $PH_AUDIO: writing $PH_STOCK back"
+            if lat_write $PH $PH_STOCK; then log "PH_CFG0 restored: $PH_STOCK"; else log "PH_CFG0 restore did not read back: power-cycle the goggle"; fi
+            PH_SET=""
         fi
-        log "PH_CFG0 $(hex "$PH_ORIG") -> $(hex "$want")"
     fi
     lat_end
 }
@@ -562,15 +565,14 @@ ph_restore() {
         log "PH_CFG0 NOT restored (no window): power-cycle the goggle"
         return 1
     fi
-    if ! lat_read $PH || ! ph_sane "$RV"; then
+    if ! lat_read $PH; then
         log "PH_CFG0 read not trusted: NOT restored, power-cycle the goggle"
-    elif [ $((RV & ~PH_MASK)) -eq $((PH_ORIG & ~PH_MASK)) ] && [ $((RV & PH_MASK)) -eq $((PH_SET & PH_MASK)) ]; then
-        back=$(((RV & ~PH_MASK) | (PH_ORIG & PH_MASK)))
-        if lat_write $PH "$back"; then log "PH_CFG0 restored: $(hex "$back")"; else log "PH_CFG0 restore did not read back: power-cycle"; fi
-    elif [ $((RV & PH_MASK)) -eq $((PH_ORIG & PH_MASK)) ]; then
-        log "PH_CFG0 PH1-PH3 already back: $(hex "$RV")"
+    elif [ "$RV" -eq $((PH_AUDIO)) ]; then
+        if lat_write $PH $PH_STOCK; then log "PH_CFG0 restored: $PH_STOCK"; else log "PH_CFG0 restore did not read back: power-cycle the goggle"; fi
+    elif [ "$RV" -eq $((PH_STOCK)) ]; then
+        log "PH_CFG0 already back: $PH_STOCK"
     else
-        log "PH_CFG0 is $(hex "$RV"), changed by someone else: left alone"
+        log "PH_CFG0 is $(hex "$RV"), neither value: changed by someone else, left alone (power-cycle the goggle)"
     fi
     PH_SET=""
     lat_end
@@ -676,12 +678,14 @@ part_out() {
     esac
 
     it_begin || return
-    if it_save; then
+    if ! it_save; then
+        log "IT66121 registers did not read back the same twice: part A skipped, nothing written"
+    elif ! it04_ok "$(saved 0x04)"; then
+        log "IT66121 Reg04 = $(saved 0x04): a video/HDCP/RCLK reset or reserved bit is set (expected 0x14 or 0x00): part A skipped, nothing written"
+    else
         IT_ON=1
         it_audio_on
         it_status
-    else
-        log "IT66121 registers did not read back the same twice: part A skipped, nothing written"
     fi
     it_end
     [ "$IT_ON" = 1 ] || return

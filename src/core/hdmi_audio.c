@@ -1,7 +1,7 @@
 /* ===========================================================================
  * HDMI audio routing (EXPERIMENTAL, default off). See hdmi_audio.h and
  * docs/hdmi-audio.md. Kept in its own file so the default code paths stay
- * untouched: every entry point returns early while both settings are 0.
+ * untouched: every entry point returns early while neither is in effect.
  * ======================================================================== */
 #include "hdmi_audio.h"
 
@@ -22,6 +22,7 @@
 #include "driver/it66021.h"
 #include "driver/it66121.h"
 #include "record/appmsg.h"
+#include "record/hdmi_boot.h"
 #include "ui/page_common.h"
 
 #define HDMI_AUDIO_SECTION     "hdmi"
@@ -48,9 +49,11 @@ typedef struct {
 } hdmi_audio_msg_t; // same layout as CommandMsg_t in src/record/gogglemsg.h
 
 static pthread_mutex_t ha_lock = PTHREAD_MUTEX_INITIALIZER; // UI, HDMI-in detect, ELRS and peripheral threads
-static bool cfg_out = false;
-static bool cfg_in = false;
-static bool boot_out, boot_in; // [hdmi] at start-up (hdmi_audio_load())
+static bool en_out = false;                // setting.ini [hdmi] audio_out is 1 now (the switch)
+static bool en_in = false;
+static bool act_out = false;               // in effect for this boot (src/record/hdmi_boot.h)
+static bool act_in = false;
+static hb_fault_t out_fault = HB_FAULT_NONE; // why HDMI out audio is off although asked for
 static hdmi_audio_route_t route = HDMI_AUDIO_ROUTE_NONE; // the route the app wants
 static bool line_out_hdmi = false;                       // hdmi_audio_line_out(true) is in effect
 static long req_seq = 0;                                 // number of the request in HDMIA_REQ_FILE
@@ -112,42 +115,60 @@ static void hdmi_audio_request(void) { // new request: write it, send it, check 
 }
 
 void hdmi_audio_load(void) {
-    cfg_out = ini_getl(HDMI_AUDIO_SECTION, "audio_out", 0, SETTING_INI) != 0;
-    cfg_in = ini_getl(HDMI_AUDIO_SECTION, "audio_in", 0, SETTING_INI) != 0;
-    boot_out = cfg_out;
-    boot_in = cfg_in;
-    IT66121_audio_config(cfg_out, IT66121_AUDIO_I2S);
-    IT66021_audio_config(cfg_in);
-    if (cfg_out || cfg_in)
-        LOGI("hdmi audio (experimental): audio_out=%d audio_in=%d", cfg_out, cfg_in);
+    en_out = hdmi_boot_setting_is_1(SETTING_INI, "audio_out");
+    en_in = hdmi_boot_setting_is_1(SETTING_INI, "audio_in");
+    hdmi_boot_app_start(en_out, &act_out, &act_in, &out_fault); // reads a register only if switched at boot
+    IT66121_audio_config(act_out);
+    IT66021_audio_config(act_in);
+    if (en_out || en_in || act_out || act_in || out_fault != HB_FAULT_NONE)
+        LOGI("hdmi audio (experimental): switches out=%d in=%d, in effect this boot out=%d in=%d%s%s", en_out, en_in,
+             act_out, act_in, out_fault ? ", fault: " : "", out_fault ? hdmi_boot_fault_text(out_fault) : "");
+}
+
+bool hdmi_audio_supported(void) {
+    return hdmi_boot_supported();
 }
 
 bool hdmi_audio_out_enabled(void) {
-    return cfg_out;
-}
-
-bool hdmi_audio_in_enabled(void) {
-    return cfg_in;
+    return en_out;
 }
 
 bool hdmi_audio_out_active(void) {
-    return boot_out;
+    return act_out;
+}
+
+bool hdmi_audio_in_enabled(void) {
+    return en_in;
 }
 
 bool hdmi_audio_in_active(void) {
-    return boot_in;
+    return act_in;
 }
 
 const char *hdmi_audio_out_fault(void) {
-    return NULL;
+    return hdmi_boot_fault_text(out_fault);
+}
+
+// HDMI out audio off for the rest of this boot (also across app restarts); the pins stay as
+// they are until the next boot, the IT66121 keeps its audio setup until its next init
+static void hdmi_audio_out_failed_locked(hb_fault_t f, const char *why) {
+    if (!act_out)
+        return;
+    act_out = false;
+    out_fault = f;
+    IT66121_audio_config(false); // the next IT66121_init() is the stock sequence again
+    hdmi_boot_set_fault(f);
+    LOGE("hdmi audio: HDMI out audio off for this boot: %s (%s)", hdmi_boot_fault_text(f), why);
 }
 
 static void hdmi_audio_apply_locked(bool hdmi_in_shown) {
     hdmi_audio_route_t want = HDMI_AUDIO_ROUTE_NONE;
 
-    if (cfg_in && hdmi_in_shown)
+    if (act_out && IT66121_audio_failed())
+        hdmi_audio_out_failed_locked(HB_FAULT_CHIP, "IT66121 Reg04 check");
+    if (act_in && hdmi_in_shown)
         want = HDMI_AUDIO_ROUTE_HDMI_IN_MONITOR; // HDMI out is closed while HDMI in is shown (app_switch_to_hdmi_in)
-    else if (cfg_out && IT66121_is_active())
+    else if (act_out && IT66121_is_active() && IT66121_audio_is_on())
         want = HDMI_AUDIO_ROUTE_DVR_TO_HDMI_OUT;
 
     if (want == route)
@@ -161,23 +182,18 @@ static void hdmi_audio_apply_locked(bool hdmi_in_shown) {
         hdmi_audio_line_out(true);
 }
 
+// stores only: nothing in effect changes before the next boot
 void hdmi_audio_set(bool out, bool in) {
-    ini_putl(HDMI_AUDIO_SECTION, "audio_out", out, SETTING_INI);
-    ini_putl(HDMI_AUDIO_SECTION, "audio_in", in, SETTING_INI);
+    ini_puts(HDMI_AUDIO_SECTION, "audio_out", out ? "1" : "0", SETTING_INI);
+    ini_puts(HDMI_AUDIO_SECTION, "audio_in", in ? "1" : "0", SETTING_INI);
     pthread_mutex_lock(&ha_lock);
-    cfg_out = out;
-    cfg_in = in;
-    IT66121_audio_config(out, IT66121_AUDIO_I2S);
-    IT66021_audio_config(in); // the EDID is written by the next IT66021_edid()
-    if (IT66121_is_active() && IT66121_audio_is_on() != out)
-        IT66121_audio(out);
-    // called outside a source switch: g_source_info.source is the shown source
-    hdmi_audio_apply_locked(g_source_info.source == SOURCE_HDMI_IN && g_app_state == APP_STATE_VIDEO);
+    en_out = hdmi_boot_setting_is_1(SETTING_INI, "audio_out"); // what the file says now
+    en_in = hdmi_boot_setting_is_1(SETTING_INI, "audio_in");
     pthread_mutex_unlock(&ha_lock);
 }
 
 void hdmi_audio_apply(bool hdmi_in_shown) {
-    if (!cfg_out && !cfg_in && route == HDMI_AUDIO_ROUTE_NONE)
+    if (!act_out && !act_in && route == HDMI_AUDIO_ROUTE_NONE)
         return; // default: nothing to do
     pthread_mutex_lock(&ha_lock);
     hdmi_audio_apply_locked(hdmi_in_shown);
@@ -215,16 +231,28 @@ void hdmi_audio_poll(void) {
         tries = 0;
     } else if (tries < 6 && (int32_t)(now_ms() - next_try_ms) >= 0) {
         if (alive && seq == req_seq && strcmp(state, "failed") == 0) {
-            char err[64];
+            char err[96];
             ini_gets(HDMI_AUDIO_REQ_SECTION, "err", "", err, sizeof(err), HDMIA_STATE_FILE);
             LOGE("hdmi audio: record daemon could not start route %d: %s", route, err);
+            if (route == HDMI_AUDIO_ROUTE_DVR_TO_HDMI_OUT && strncmp(err, "refused", 7) == 0) {
+                // a check failed that a retry will not pass in this boot: HDMI out audio off
+                hdmi_audio_out_failed_locked(HB_FAULT_PATH, err);
+                hdmi_audio_apply_locked(false); // -> route NONE (HDMI in is not shown: HDMI out runs)
+                pthread_mutex_unlock(&ha_lock);
+                return;
+            }
         }
         tries++;
         hdmi_audio_write_request();
         hdmi_audio_send(want_on ? HDMIA_cmdSTART : HDMIA_cmdSTOP);
         next_try_ms = now_ms() + (tries >= 4 ? 30000u : 3000u << tries);
-        if (tries == 6)
+        if (tries == 6) {
             LOGE("hdmi audio: route %d not confirmed by the record daemon, giving up until it restarts", route);
+            if (route == HDMI_AUDIO_ROUTE_DVR_TO_HDMI_OUT) {
+                hdmi_audio_out_failed_locked(HB_FAULT_PATH, "route not confirmed after 6 tries");
+                hdmi_audio_apply_locked(false);
+            }
+        }
     }
     pthread_mutex_unlock(&ha_lock);
 }

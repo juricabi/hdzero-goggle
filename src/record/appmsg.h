@@ -60,11 +60,17 @@ typedef enum {
  *                  The app compares it with its request and re-sends (record daemon restarted
  *                  by the Storage page, queue not there yet, sink busy, ...).
  * HDMIA_LOCK_FILE  flock() around every /sys/class/sunxi_dump access (one latch for all
- *                  processes); utilities/probe takes the same lock. */
+ *                  processes); utilities/probe takes the same lock (src/record/soc_reg.h).
+ * HDMIA_BOOT_FILE  what is in effect for this boot: written by hdmi_audio_boot from rc.sh,
+ *                  read by the app and the record daemon (src/record/hdmi_boot.h). */
 #ifndef HDMIA_REQ_FILE /* host tests (utilities/probe/test/pcmbridge_test.sh) put them elsewhere */
 #define HDMIA_REQ_FILE   "/tmp/hdmi_audio.req"
 #define HDMIA_STATE_FILE "/tmp/hdmi_audio.state"
 #define HDMIA_LOCK_FILE  "/tmp/.sunxi_dump.lock"
+#endif
+#ifndef HDMIA_BOOT_FILE /* host tests (utilities/probe/test/hdmi_boot_test.sh) put them elsewhere */
+#define HDMIA_BOOT_FILE    "/tmp/hdmi_audio.boot"
+#define HDMIA_BOOT_ID_FILE "/proc/sys/kernel/random/boot_id"
 #endif
 
 /** @} */
