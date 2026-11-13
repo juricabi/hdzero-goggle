@@ -1,5 +1,6 @@
+# Goggle 1 or 2: WiFi Module page (menu entry 9), Stream Audio on, Apply
 w 2
-k s 10
+k s 9
 w 1
 k d
 w 1

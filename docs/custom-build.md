@@ -42,8 +42,8 @@ without a `setting.ini` (fresh install, or after Storage > Reset): both are show
 | Live stream audio | WiFi Module > System > Stream Audio | `[wifi] stream_audio` | false = Off | On: the RTSP stream gets an AAC track (written to `record.conf [live] audio` when the WiFi settings are applied) |
 | Live stream audio | record.conf only | `[live] audio` | 0 | set by the app from Stream Audio |
 | Live stream audio | record.conf only | `[live] audio_offset_ms` | 0 | delay of the stream's audio against its video (-500..500 ms), for lip sync |
-| HDMI audio | Audio > HDMI Audio > HDMI Out Audio | `[hdmi] audio_out` | 0 = Off | On: the IT66121 sends audio, the record daemon copies the recorded audio to it. Applies at once |
-| HDMI audio | Audio > HDMI Audio > HDMI In Audio | `[hdmi] audio_in` | 0 = Off | On: while HDMI in is shown, its audio is played into the codec (headphones at the HDMI In level, recorded with Record What I Hear) and the line out stays on during HDMI in; the EDID offers 48 kHz only from the next start |
+| HDMI audio (Goggle 1, Goggle 2) | Audio > HDMI Audio > HDMI Out Audio | `[hdmi] audio_out` | 0 = Off | On (exactly `1`), from the next start: the rc.sh step `hdmi_audio_boot` switches PH1-PH3 to I2S0 once per boot (only from the stock PH_CFG0 value), the IT66121 sends audio, the record daemon copies the recorded audio to it. Off: nothing reads or writes PH_CFG0 or any pin function |
+| HDMI audio (Goggle 1, Goggle 2) | Audio > HDMI Audio > HDMI In Audio | `[hdmi] audio_in` | 0 = Off | On (exactly `1`), from the next start: the EDID offers 48 kHz only; while HDMI in is shown, its audio is played into the codec (headphones at the HDMI In level, recorded with Record Headphone Mix) and the line out stays on during HDMI in |
 | HDMI audio | record.conf only | `[hdmi_audio] latency_ms` | 60 (key absent) | buffer of the HDMI audio bridge |
 
 Changed on purpose, also with every default: a few visible things (first-flash.md, "What
@@ -70,30 +70,30 @@ differences that remain:
 
 ## Checked in the emulator
 
-**Out of date:** this check was made before 8b187fb, since which nothing is written to
-`setting.ini` at start-up (the `[mixer]` column below is what the mixer *uses*, now taken
-from `[record] audio_source` until the first change on the Audio page), and before the
-module-bay merge; run it again on the final branch (status.md).
+The SDL emulator of `all` (the code of 24d8ac8, after the `hdmi-hardening` merge; later
+commits change only docs and scripts), Goggle 1 and Goggle 2, each started five ways
+through `utilities/dev/emu_run.sh` with `utilities/dev/keys/check_start.txt`: nothing
+touched for 6 s, then the Audio page opened and scrolled through, left, the Module Bay page
+opened and left. "Stock setting.ini" is the file the stock app (upstream a85841d, in the
+emulator) wrote at its first start, with `[record] audio_source` as its Record Option page
+stores it. Same results on both goggles:
 
-The SDL emulator of this branch (Goggle 2 and Goggle 1), started five ways, nothing touched
-for 6 s, then the Audio page opened (the page writes nothing when it is only opened):
+| Start | `setting.ini` after 6 s | the Audio page shows | codec batch at boot (the one stubbed `amixer -s`) |
+|---|---|---|---|
+| no setting.ini | the keys the stock app writes at its first start (`[settings] file_version`, `[osd]`, `[record] naming`, `[power]`, `[wifi]` defaults); no `[mixer]`, `[hdmi]`, `[module]`, `stream_audio` | Record Mic Yes, the other Record switches No, Record Headphone Mix No, Volume 31, Mic/Line In Off, A/V In +6.0 dB, HDMI In 0.0 dB greyed, Playback 27, Record Level 0.0 dB, boosts 4/4, Built-in RX Audio Off (Goggle 2), HDMI Out/In Audio Off, no Restart/Error marker | Lineout Switch 0, lineout volume 31; ADC from MIC1 only; every output-mixer switch 0 (nothing in the headphone mix while the line out is off); boosts 4/4, ADC gain 0 dB |
+| the shipped `mkapp/app/setting.ini` (no file_version: the app runs `rm -f setting.ini` as stock, stubbed in the sandbox, so the file stays) | the shipped file plus the same stock keys; nothing of this build | as above | as above |
+| stock setting.ini, Audio Source Mic | **unchanged** | as above | as above |
+| stock setting.ini, Audio Source Line In | **unchanged** | Record Line In Yes, the others No | ADC from MIC2 only |
+| stock setting.ini, Audio Source A/V In | **unchanged** | Record A/V In Yes, the others No, Built-in RX Audio On (Goggle 2) | ADC from LINEIN only |
 
-| Start | `[mixer]` written at boot | codec batch at boot | `[hdmi]` | `[module]` | `[wifi] stream_audio` |
-|---|---|---|---|---|---|
-| no setting.ini | Record Mic Yes, others No, What I Hear No, A/V +6 dB, Volume 31, Playback 27, boosts 4/4, Record Level 0 dB, RX audio Off, `phones_at_boot=0` | line out off; ADC from MIC1 only; A/V in the output mixer at +6 dB | absent (Off) | absent (None) | false |
-| the shipped `mkapp/app/setting.ini` (no file_version: the app resets it, as stock) | as above | as above | absent | absent | false |
-| stock setting.ini, Audio Source Mic | as above | as above | absent | absent | false |
-| stock setting.ini, Audio Source Line In | Record Line In Yes, others No | ADC from MIC2 only | absent | absent | false |
-| stock setting.ini, Audio Source A/V In | Record A/V In Yes, others No, RX audio On | ADC from LINEIN only | absent | absent | false |
-
-In every case the Audio page shows these values, HDMI In greyed out, HDMI Out Audio and
-HDMI In Audio Off; nothing new is written to `setting.ini` except `[mixer]` (and
-`[wifi] stream_audio=false`, written with the other WiFi keys by the WiFi page's boot
-action). The line out stays off until the first switch to an analog source, as stock.
-
-The module bay rows of the table follow the final module-bay branch (`module-control`
-9a30a84: one Module setting, default None), merged into this branch in 7904f0e; the
-emulator check above predates the merge.
+In all ten runs opening the Audio page and the Module Bay page (Module None, Mode greyed,
+"Status: Off, bay pins untouched") wrote nothing to `setting.ini`, and nothing was written
+until the app was stopped; there was one amixer batch per run. No HDMI audio record
+(`/tmp/hdmi_audio.boot`) exists in the emulator, so HDMI audio is not in effect and nothing
+reads a register for it. The line out stays off until the first switch to an analog
+source, as stock. Screenshots and logs: `$EMU_OUT/shots`, `$EMU_OUT/logs` (prefixes
+`g1_`/`g2_` + start); the other key scripts of `utilities/dev/keys` were run on the goggle
+named in their first line and their screenshots checked.
 
 The language table (`TRANSLATE_STRING_NUM`, the entries one language file may have) is
 raised from 384 to 512: with the Audio page, the stream and the module bay strings the
@@ -108,5 +108,5 @@ this one, per old Audio Source and flow, booting straight into HDZero included).
 
 Note for anyone running the emulator: it executes the goggle's shell commands on the host,
 among them the WiFi page's `/tmp/root_pw_set.sh` (`passwd` with the goggle's root
-password) at every start. Run it with stubs first in `PATH` for `passwd`, `insmod`,
-`ifconfig`, `hostapd`, `udhcpd`, `route`, `killall`, `aww`, `dispw` and the like.
+password) at every start. Run it only through `utilities/dev/emu_run.sh` (its own Xvfb, a
+private mount namespace, an unprivileged uid, logging stubs for every system command).

@@ -1,3 +1,4 @@
+# Goggle 1 with WiFi on in setting.ini: Module Bay refuses Check Pins; then the Audio page's Back row
 w 3
 k w 2
 w 1
@@ -11,7 +12,7 @@ w 3
 s x02_check_pins_wifi_on
 l d
 w 1
-k w 11
+k w
 w 1
 k d
 w 1

@@ -1,3 +1,4 @@
+# Goggle 1: Source page, analog chosen, the OSD in analog mode
 w 2
 k s 1
 w 1

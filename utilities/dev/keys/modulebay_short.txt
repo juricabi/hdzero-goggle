@@ -1,3 +1,4 @@
+# Goggle 1 or 2: Module Bay page, short: Check Pins with None, Switch and its mode list
 w 2
 k w 2
 w 1

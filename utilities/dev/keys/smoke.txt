@@ -1,3 +1,4 @@
+# any target: a click and a long press
 w 2
 s 00_start
 k d

@@ -1,10 +1,11 @@
+# Goggle 1. Audio page: Record Headphone Mix, the HDMI switches (stored only: Restart marker), HDMI In level greyed
 w 2
-k s 7
+k w 3
 w 1
 k d
 w 1
 s h00_volume
-k s 5
+k s 6
 s h01_rwih_sel
 k d
 w 1
@@ -22,9 +23,8 @@ k s 2
 k s 4
 s h07_hdmi_slider_sel
 k d
-k w 2
-s h08_hdmi_slider_up2
-k d
+w 1
+s h08_hdmi_slider_greyed
 k s 9
 s h09_hdmi_out_sel
 k d

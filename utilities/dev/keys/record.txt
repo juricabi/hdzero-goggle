@@ -1,3 +1,4 @@
+# Goggle 1 or 2: Record Option page (no Audio Source row), then Power
 w 2
 k s 6
 w 1

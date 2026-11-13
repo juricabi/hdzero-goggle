@@ -1,0 +1,30 @@
+# Goggle 1 or 2: 6 s untouched, the Audio page opened and scrolled (c00/c06/c09 copy setting.ini), Module Bay opened
+w 2
+s c00_untouched
+c c00
+k w 3
+w 1
+s c01_audio_preview
+k d
+w 1
+s c02_audio_top
+k s 5
+s c03_audio_sel5
+k s 5
+s c04_audio_sel10
+k s 5
+s c05_audio_bottom
+l d
+w 1
+s c06_menu_after_audio
+c c06
+k s
+w 1
+s c07_modulebay_preview
+k d
+w 1
+s c08_modulebay
+l d
+w 1
+s c09_menu_after_modulebay
+c c09

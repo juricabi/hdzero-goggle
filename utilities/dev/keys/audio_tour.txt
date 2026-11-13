@@ -1,5 +1,6 @@
+# Goggle 1 or 2: every row of the Audio page (G1 16 rows, G2 17: the last steps wrap), then the menu's end
 w 2
-k s 7
+k w 3
 w 1
 s t00_menu_preview
 k d
@@ -40,6 +41,6 @@ s t17
 k s
 s t18
 l d
-k w 8
+k s 2
 w 1
 s t19_menu_bottom

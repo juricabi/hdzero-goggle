@@ -1,16 +1,17 @@
+# Goggle 2 (Russian setting.ini): the Audio page's rows with the longest texts, HDMI In Audio switched on, the menu's end
 w 2
-k s 7
+k w 3
 w 1
 k d
 w 1
 s t01_volume
-k s 5
+k s 6
 s t06_rwih
 k s
 s t07_recmic
 k s 2
 s t09_recav
-k s 4
+k s 5
 s t13_hdmi_out
 k s
 s t14_hdmi_in
@@ -23,6 +24,6 @@ s t16_hdmi_slider
 l d
 w 1
 s t17_menu
-k w 2
+k s 2
 w 1
 s t18_menu_bottom

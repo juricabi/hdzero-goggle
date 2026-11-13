@@ -1,9 +1,11 @@
+# Goggle 1: the end of the main menu (Audio, Module Bay, Go Sleep!, wrapping both ways), then every Audio page row
+# (16 on the Goggle 1: a16 wraps to Volume), a slider grabbed, Record Headphone Mix, HDMI In Audio, long presses
 w 2
 s m00_scan_now
-k s 7
+k w 3
 w 1
 s m01_audio_preview
-k s 11
+k s
 w 1
 s m02_modulebay_preview
 k s
@@ -15,7 +17,7 @@ s m04_wrap_top
 k w
 w 1
 s m05_wrap_bottom
-k w 12
+k w 2
 w 1
 s m06_back_to_audio
 k d
@@ -52,9 +54,7 @@ s a14
 k s
 s a15
 k s
-s a16
-k s
-s a17
+s a16_wrapped
 k w
 s a18_up_from_wrap
 k w
@@ -70,7 +70,7 @@ k w 6
 s a23_volume_after_w6
 k d
 s a24_volume_released
-k s 5
+k s 6
 s a25_at_rwih
 k d
 s a26_rwih_toggled
