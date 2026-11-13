@@ -67,6 +67,11 @@ differences that remain:
   mutes the live sources (stock: left channel only, mixed with the A/V monitor); a
   change is made without the clicks of the stock one-control-per-process scripts.
   Details: [audio.md](audio.md), "Differences from the old firmware".
+* At every boot `rc.sh` runs `/mnt/app/app/hdmi_audio_boot`; with HDMI Out Audio off it
+  reads and writes no register, only the RAM file `/tmp/hdmi_audio.boot`. The app's own
+  `aww` / `awr` calls (display set-up, battery ADC) take the lock
+  `/tmp/.sunxi_dump.lock` shared by every `sunxi_dump` user (at most 1 s, then they run
+  as stock did); the same registers and values as stock.
 
 ## Checked in the emulator
 

@@ -187,7 +187,10 @@ Only if you want HDMI audio. Everything is in `utilities/probe/` of this reposit
    `develop.sh` afterwards.
 3. Switch HDMI Out Audio / HDMI In Audio on in the Audio page **only if the probe shows
    the wiring**: the decision table in [hdmi-audio.md](hdmi-audio.md), section 8, says
-   what the results mean.
+   what the results mean. The switches only store the setting: restart the goggle to
+   use them (an orange "Restart" until then; "Error" with a reason in the hint if HDMI
+   Out Audio stayed off at the start, section 6 of hdmi-audio.md). Switched off again
+   and restarted, the goggle is as before (the pins are set back at every boot).
 
 Do not run `bay_gpio_pattern.sh` here: it belongs to the module bay checklist (section 7).
 

@@ -1,14 +1,19 @@
 # HDMI audio on the HDZero goggles - findings, experimental code, probe
 
 Status: **experimental, everything default off.** Nothing here has been run on a
-goggle yet. With the default `setting.ini` the firmware behaves exactly as before
+goggle yet; everything below marked as checked was checked on a PC (host tests against
+models, the emulator). With the default `setting.ini` the firmware behaves as before
 (host tests: `utilities/probe/test/it66121_seq_test.sh` - the IT66121 register sequence
 is identical; `it66021_edid_test.sh` - the IT66021 I2C sequence and the EDID it serves
-are identical). Switches: **Audio > HDMI Audio (experimental) > HDMI Out Audio / HDMI In
-Audio** (`[hdmi] audio_out` / `audio_in`), section 6.
+are identical; `hdmi_boot_test.sh` - no `sunxi_dump` access at all, so no pin function is
+read or written). Switches: **Audio > HDMI Audio (experimental) > HDMI Out Audio / HDMI
+In Audio** (`[hdmi] audio_out` / `audio_in`); both take effect at the next start
+(section 6).
 
 Applies to the original **HDZero Goggle** (`-DHDZ_GOGGLE=ON`) and the **Goggle 2**
-(`-DHDZ_GOGGLE2=ON`); BoxPro builds the same code.
+(`-DHDZ_GOGGLE2=ON`). The BoxPro builds the same code but HDMI audio is not supported
+there (its device tree and board were not examined): its boot step reads and writes
+nothing and its Audio page has no HDMI audio rows.
 
 Sources: `PG`/`RL` = the IT66121 Programming Guide v1.05 / Register List (`docs/`); the
 IT66121FN and IT66021FN datasheets; **V536 datasheet** = "V536-H/V526 Datasheet Revision
@@ -25,7 +30,7 @@ Control".
 | SoC side (V536 datasheet, shipped device tree) | I2S0 `daudio@0x05090000`; DT pin group `daudio0@0` = PH1/PH2/PH3 = I2S0 BCLK/LRCK/DOUT (PH_CFG0 function 3); `daudio_master=4`: the SoC drives BCLK/LRCK. ALSA card `snddaudio0`. The DT names no consumer | I2S2 `daudio@0x05092000`; `daudio2@0` = PG10/PG11/PG13 = I2S2 BCLK/LRCK/DIN (PG_CFG1 function 3); `daudio_master=1`: the external chip drives BCLK/LRCK. ALSA card `snddaudio2` |
 | wiring on the board | **likely** to the IT66121 (a group of exactly a transmitter's three signals, the IT66121 the only I2S receiver); which SoC pin reaches which chip pin: **unknown** | **likely** to the IT66021 (a receiver's three signals; vendor note records from `hw:snddaudio2`); pin order at the chip: **unknown** |
 | shipped firmware | audio never programmed (Reg04 audio resets stay asserted); **rc.sh re-muxes PH1 to uart4 and PH2/PH3 off at boot** | EDID advertises Basic Audio + L-PCM 2 ch 32/44.1/48 kHz; nothing captures I2S2 |
-| what this branch adds (off by default) | HDMI Out Audio (`[hdmi] audio_out=1`): IT66121 audio setup + the ADC capture (what is recorded) copied to I2S0 | HDMI In Audio (`[hdmi] audio_in=1`): I2S2 played into the codec DAC while HDMI in is shown, a source of the audio mixer: heard at the Audio page's HDMI In level, **recorded with Record What I Hear**; EDID offers 48 kHz L-PCM only |
+| what this branch adds (off by default, from the next start) | HDMI Out Audio (`[hdmi] audio_out=1`): PH1-PH3 switched to I2S0 once per boot by the rc.sh step `hdmi_audio_boot` (section 4a), IT66121 audio setup in `IT66121_init()` + the ADC capture (what is recorded) copied to I2S0 | HDMI In Audio (`[hdmi] audio_in=1`): I2S2 played into the codec DAC while HDMI in is shown, a source of the audio mixer: heard at the Audio page's HDMI In level, **recorded with Record Headphone Mix**; EDID offers 48 kHz L-PCM only |
 | not possible | - | HDMI in -> HDMI out (the app switches HDMI out off while HDMI in is shown) |
 | only the device can tell | whether PH1-PH3 reach SCK/WS/I2S0 of the IT66121 in this order (G1 and G2 separately; on G2 also whether the FPGA is in the path), whether the TV plays the tone | whether the IT66021 drives SCK/WS by default, at which word clock and format |
 
@@ -105,21 +110,26 @@ after the drivers have set the pin mux:
 
 So on a running goggle I2S0 is not on its pins. The DT also has `uart4` (`uart4@0` = PH0,
 PH1, `uart_used=0`) competing with I2S0 for PH1; which driver owns PH1 is visible in
-`pinmux-pins` (probe). The experimental bridge therefore sets PH1-PH3 back to function 3
-and puts them back when it stops (section 4).
+`pinmux-pins` (probe). HDMI Out Audio therefore needs PH1-PH3 back in function 3. PH_CFG0
+also holds PH5/PH6 = UART3 (the ESP32 / ELRS backpack), PH7 = UART0 and the two reset
+GPIO outputs PH0/PH4, so nothing in the firmware changes it at run time: the boot step of
+section 4a switches PH1-PH3 at most once per boot, before the app and the record daemon
+start, and only from the exact stock value to one constant. (The optional probe test
+`hdmi_audio_test.sh`, started by hand, switches them for its tone by the same rule, with
+the app paused, and puts the stock value back.)
 
 **`/sys/class/sunxi_dump`** (what `awr`/`aww` use; the app runs `aww` from several places)
 is one address latch for every process: `echo addr > dump; cat dump` (a single address
 answers `0x%08x\n`, the value only: `dump_reg.c` of the BSP). Two users at the same time
-can read each other's register. Writes (`aww`, `/sys/class/sunxi_dump/write`) do not use
-the latch. Readers in this firmware: the HDMI audio bridge (record daemon, only at a route
-start/stop) and the probe kit read three times, check the value and take the lock file
-`/tmp/.sunxi_dump.lock` (the probe kit also pauses the app); the stock `gpdac0_get()`
-(`awr`, Goggle 2 / BoxPro battery ADC) and the module bay's pin check (`read_reg()` in
-`src/module/module.c`, PG_CFG0 and PIO_POW_VAL, a single read) take no lock. The module
-bay's read is the one that can be fooled by the bridge (a wrong PG_CFG0 for one check);
-the fix belongs to the module bay code: take the same lock and read three times like the
-bridge (handed over with the module-bay branch).
+can read each other's register; `aww` uses the latch too (it reads back what it wrote).
+Writes (`/sys/class/sunxi_dump/write`) do not use the latch. Every user in this firmware
+takes the lock file `/tmp/.sunxi_dump.lock` (flock, at most 1 s): the app's own `aww`/`awr`
+calls (`system_exec_sunxi_dump()`, `src/util/system.c`; if the lock is not free within 1 s
+the command runs anyway, as stock did, and the next 10 s do not wait again), the HDMI audio
+boot step and bridge (`src/record/soc_reg.c`: three reads that must agree, each exactly in
+the driver's format), the module bay (`read_reg()` in `src/module/module.c`) and the probe
+kit (which also pauses the app). What cannot take it (an `awr` typed by hand) is caught by
+the three agreeing reads.
 
 ### Other evidence
 
@@ -159,7 +169,9 @@ bridge (handed over with the module-bay branch).
 
 Reg0F[0] selects the bank (RL p.3); `IT66121_init()` leaves Reg0F = 0x08 (CEC clock gated,
 bank 0), so bank 1 (Reg130-1BF) is 0x09. Implemented in `src/driver/it66121.c`
-(`it66121_audio_enable()`), applied at the end of every `IT66121_init()` when enabled.
+(`it66121_audio_enable()`), applied at the end of every `IT66121_init()` (boot, and every
+return from HDMI in) while HDMI out audio is in effect for this boot; never as a run-time
+switch.
 Every multi-register access of the driver (init, close, `IT66121_set_phase()` from the
 HDMI-in detect / ELRS / UI threads, audio) holds one lock, so `set_phase` never writes
 Reg59/70/72 while bank 1 is selected.
@@ -167,22 +179,34 @@ Reg59/70/72 while bank 1 is selected.
 | step | write | meaning / reference |
 |---|---|---|
 | 1 | `0F=08`, `E0=00` | bank 0; all audio sources off, 16-bit word length, I2S (S/PDIF: `E0=10`). PG p.31 step 1, RL p.22 |
-| 2a | `04 &= ~0x10` | release RegSoftARst (audio clock base); the FIFO reset (bit 2) stays on while programming. PG p.31 step 2, RL p.3. `IT66121_init()` ends with `04=14` (both audio resets on) |
+| 2a | `04=04` (only if two agreeing reads give `14`; read back) | release RegSoftARst (audio clock base); the FIFO reset (bit 2) stays on while programming. PG p.31 step 2, RL p.3. `IT66121_init()` ends with `04=14` (both audio resets on, video/HDCP/RCLK resets off) |
 | clk | `58=11` | no external MCLK, auto over-sampling clock, auto IPCLK (reset default). RL p.9 |
 | 3 | `0F=09`, `133=00 134=18 135=00`, `0F=08` | N = 6144 (48 kHz). PG p.31-33: valid for every TMDS clock when the CTS is counted by hardware |
-| 3b | `F8=C3 F8=A5`, `C5 &= ~0x02`, `F8=FF` | RegC5[1]=0: hardware CTS (default); RegC5 is password protected. PG p.31, p.33; RL p.20 |
+| - | (RegC5 not written) | RegC5[1]=0 (hardware CTS, PG p.31) is the reset default (RL p.20) and the stock init never changes RegC5, a password-protected register: no read-modify-write of it |
 | 4 | `E0=00 E1=01 E2=E4 E3=00 E4=00 E5=00` | format: one source, not full-packet; 32-bit-slot I2S with 1-bit delay, WS=0 left, MSB first (the SoC sends 16-bit samples in 32-bit slots, 64 fs); FIFO n <- source n; no swap; channel status from registers; no flat bits; no HBR. PG p.33-35, RL p.22-23 |
 | 5 | `0F=09`, `191=00 192=00 193=01 194=02 198=02 199=D2` | IEC 60958 channel status: consumer L-PCM, category general, Fs 48 kHz, clock accuracy level II, original Fs 48 kHz, 16 bit (same values as the mainline Linux it66121 driver). PG p.36-37, RL p.29-30 |
 | IF | `168=01 169=00 16A=00 16B=00 16C=00 16D=70`, `0F=08`, `CE=03` | Audio InfoFrame: CC = 2 channels, SF/SS = refer to stream (required for L-PCM), CA = FL/FR; checksum = 0 - (168+169+16B+16C+0x84+0x01+0x0A) = 0x70 (PG p.46); RegCE = send + repeat every field (RL p.21) |
-| 2b | `04 &= ~0x14` | release the audio FIFO reset |
-| 7 | `E0=01` | enable source 0 (I2S0 pin). For S/PDIF (`E0=11`) only after Reg5F[5] (OSFreqLock) = 1, polled up to 200 ms (PG p.31 step 8, p.35) |
+| 2b | `04=00` (only if two agreeing reads give `04`; read back) | release the audio FIFO reset |
+| 7 | `E0=01` | enable source 0 (I2S0 pin) |
 
-Off (`IT66121_audio(false)`): `E0=C0` (sources off, reset default), `CE=00`, `04 |= 0x14` -
-the state `IT66121_init()` leaves. Mute without dropping the link: `E4=10` (flat bit of
-source 0, RL p.23); AVMute (RegC1[0]) would blank video too. CTS read-back for diagnosis:
-`IT66121_audio_cts()` reads Reg135[7:4]/136/137 (RL p.25); PG p.31 names Reg1A0-1A2
-instead - both are logged. A CTS of 0 means no audio clock was counted **in these
-registers**: no clock at SCK/WS, a different pin order, the FPGA (G2), or the wrong
+**Reg04 guard.** Reg04 also holds the RCLK (bit 5), video (bit 3) and HDCP (bit 0) resets.
+The audio path writes it only as the constants `04` and `00`, which keep those bits as the
+stock init leaves them (checked at compile time), so no write of the audio path can put
+HDMI out video into reset, whatever a read returned. A read is only a precondition: two
+reads that agree (`i2c_read_checked()` reports a failed transfer, which `i2c_read()`
+returns as 0) and give the expected state; every write is read back. On any mismatch the
+stock video-on state is written back and verified (`E0=C0`, `CE=00`, `E1=41`, `04=14`),
+audio stays off for the rest of the boot ("HDMI chip check failed" on the Audio page) and
+every later `IT66121_init()` is upstream's sequence again. Host check
+(`it66121_seq_test.sh`): every read failing in turn, every Reg04 value, reads that differ,
+a write not taken and 3000 random runs per target: no Reg04 write with a video/HDCP/RCLK
+reset bit.
+
+There is no run-time off, mute or S/PDIF variant any more: switching HDMI Out Audio off
+takes effect at the next start, whose `IT66121_init()` is the stock one. CTS read-back for
+diagnosis (in the log line after the setup): Reg135[7:4]/136/137 (RL p.25); PG p.31 names
+Reg1A0-1A2 instead - both are logged. A CTS of 0 means no audio clock was counted **in
+these registers**: no clock at SCK/WS, a different pin order, the FPGA (G2), or the wrong
 read-back register (section 8).
 
 Relation to the video code: HDMI mode is already on (`C0=01`), AVMute cleared (`C1=00`),
@@ -191,9 +215,49 @@ outputs 1080p/720p. `IT66121_set_phase()` only writes Reg59 (keeps RegNoAud2Mute
 Reg70/72 - no effect on audio. `IT66121_close()` holds the chip in reset (and on Goggle 2
 writes FPGA reg 0x8A = 0), so audio is reprogrammed by the next `IT66121_init()`.
 With audio off `IT66121_init()` issues the same 98 (Goggle, BoxPro) / 100 (Goggle 2) writes
-as before; with audio on it adds 41 writes and a 20 ms wait.
+as before; with audio on it adds 37 writes (32 of the setup, 5 bank selects of the status
+line), 8 checked reads of Reg04 and a 20 ms wait.
 
 ## 4. SoC side of HDMI out: what is implemented
+
+### 4a. Boot-time decision: PH1-PH3 once per boot
+
+`rc.sh` runs `/mnt/app/app/hdmi_audio_boot` (`src/boot/hdmi_audio_boot.c`,
+`src/record/hdmi_boot.c`) once per boot, right after `setup_uart()` wrote the stock
+PH_CFG0 = 0x35517751 (same script and value on every target) and before the record daemon
+or the app start. It decides what is in effect for **this boot** and writes the record
+`/tmp/hdmi_audio.boot` (RAM: `version`, the kernel's `boot_id`, `phase` check/done,
+`supported`, `audio_out`, `audio_in`, `pins`, `fault`, `ph_cfg0`, `detail`), which the app
+and the record daemon read. Only `[hdmi] audio_out` exactly `1` makes it touch PH_CFG0, and
+then by the strict rule: the whole register must read (three agreeing reads in the
+driver's exact format, under the `sunxi_dump` lock) as 0x35517751 (stock) or 0x35513331
+(only PH1-PH3 = function 3); the value written is one of these two constants, never built
+from a read; after the write three agreeing reads must give 0x35513331, else the stock value
+is written back and verified. Nothing switches the pins back during the boot (except the
+recovery below); the next boot's `rc.sh` writes the stock value again, so Off + restart is
+a full undo.
+
+| situation | result |
+|---|---|
+| `audio_out` not exactly `1` (default; `01`, `true`, missing key, unreadable `setting.ini`) | no `sunxi_dump` access at all; record `pins=untouched`; HDMI out audio off |
+| BoxPro | not supported: nothing read or written whatever `setting.ini` says; no HDMI rows on the Audio page |
+| PH_CFG0 = 0x35517751 | 0x35513331 written and verified: in effect. Not verified: 0x35517751 written back and verified, fault "pin check failed" |
+| PH_CFG0 = 0x35513331 already | not written; in effect |
+| any other value (a field HDMI audio does not own not as `rc.sh` leaves it, PH1-PH3 in neither state) | refused, not written; fault "pin check failed" |
+| reads that differ or are not in the driver's format, lock not free within 1 s, `/tmp` not writable | not written; HDMI out audio off ("pin check failed" where a record could be written) |
+| a valid record of this boot exists (the step run again by hand) | nothing done |
+| a record of another boot | replaced (rc.sh has just written the stock value) |
+| a record nobody can read or date | nothing read or written this boot; fault |
+| the step killed half way (record still `phase=check`) | the next app start puts PH_CFG0 back to stock if it is 0x35513331 (verified), never switches it; fault |
+| app start, record says switched | PH_CFG0 read once (read only): still 0x35513331: in effect; else off, fault, not written |
+| app start, record missing / stale / corrupt and `audio_out=1` | off, fault "pin check failed" |
+| app restart, record daemon restart (SD check, format), an Audio page click | the switch is never repeated or undone |
+| later fault: IT66121 Reg04 check, a route the record daemon refuses (`refused: ...`) or never confirms (6 tries) | HDMI out audio off for the rest of the boot, also across app restarts (written to the record); PH1-PH3 stay I2S0 until the next boot |
+
+Host check: `utilities/probe/test/hdmi_boot_test.sh` (117 checks against a latch model
+shared by forked processes, SIGKILL at every point of the boot step and of the recovery).
+
+### 4b. The bridge
 
 The only digital audio the goggle has is the codec ADC capture (mic 1/2 or line-in, chosen
 by `audio_sel.sh`), which the record daemon reads through MPP AI device 0 for the DVR.
@@ -203,23 +267,29 @@ break DVR audio.
 `src/record/pcmbridge.c` therefore runs **inside the record daemon** and opens an extra
 channel on the same MPP AI device (the DVR, `ai2aenc`, and `ai2ao` already share it this
 way), so HDMI out carries **exactly the signal that is recorded**. Frames go to ALSA
-`hw:snddaudio0` (S16_LE, 2 ch, 48 kHz, mono sources duplicated). Before the first write it
-applies the vendor fix (I2S0 CTL MODE_SEL = I2S, BCLK/LRCK output) and returns PH1-PH3 to
-function 3: read three times (must agree), plausibility-checked (PH0/PH4 outputs; CTL
-reserved bits 0), written and read back. On stop - and on a start that fails half-way - it
-puts back exactly these fields, if they still hold its own values. The AI device is only
+`hw:snddaudio0` (S16_LE, 2 ch, 48 kHz, mono sources duplicated). A route to I2S0 is
+refused ("refused: HDMI out audio is not in effect this boot", nothing opened or written)
+unless the boot record says the pins were switched this boot with no fault. The bridge
+never reads or writes a pin function. Before the first write it applies the vendor fix to
+I2S0 CTL (MODE_SEL = I2S, BCLK/LRCK output; a register of the I2S0 block alone, which the
+driver sets up at every open): read three times (must agree), reserved bits 0, written and
+read back; a held lock, reads that differ, an implausible value or a write that does not
+read back fail the start (the old value written back and verified). On stop - and on a
+start that fails half-way - it puts back exactly these fields, if they still hold its own
+values. Host check: `utilities/probe/test/pcmbridge_test.sh` (26 checks; PH_CFG0 is never
+written in any run). The AI device is only
 disabled when none of DVR, `ai2ao`, the WiFi stream audio and the bridge use it, also after
 a failed start (one list of AI device users in `src/record/main.c`, checked in every
 start/stop/exit order by `utilities/live_audio_test/t_aidev.sh`).
 
 What HDMI out carries is the ADC capture, the same signal as the DVR and the WiFi stream:
-the Audio page's Recording section decides it (Record What I Hear, Record Mic / Line In /
+the Audio page's Recording section decides it (Record Headphone Mix, Record Mic / Line In /
 A/V In, Record Level), not the headphone Volume.
 
-Flow: HDMI Out Audio On (`setting.ini [hdmi] audio_out=1`) -> `hdmi_audio_load()` at
-start-up, or `hdmi_audio_set()` from the Audio page, configures the IT66121 driver (the
-page also programs the running IT66121 at once) -> `IT66121_init()` programs audio ->
-`hdmi_audio_apply(hdmi_in_shown)` (after
+Flow: HDMI Out Audio On (`setting.ini [hdmi] audio_out=1`, stored by the Audio page) ->
+restart -> the boot step (4a) -> `hdmi_audio_load()` at app start reads the record
+(`hdmi_boot_app_start()`) and configures the IT66121 driver with what is in effect ->
+`IT66121_init()` programs audio -> `hdmi_audio_apply(hdmi_in_shown)` (after
 start-up and every source switch; the route depends on the source being switched **to**)
 writes the request `/tmp/hdmi_audio.req` (`seq`, `active`, `src=ai`,
 `sink=hw:snddaudio0`, `i2s0_fix=1`) and sends `HDMIA_cmdSTART` on the record daemon's
@@ -229,7 +299,9 @@ every 0.5 s; no file access while the feature is off) re-sends what was not conf
 queue not there yet, sink missing or busy, record daemon restarted by the Storage page
 (`formatsd.sh` / `chkfixsd.sh`) - after 3, 6, 12, 24, 30 s, six times, and again after a
 daemon restart. Switching to HDMI in replaces it with the HDMI-in route (HDMI out is closed
-there).
+there). A start of the HDMI-out route that the daemon refuses with a reason starting
+`refused` (a check a retry will not pass this boot), or six unconfirmed tries, turn HDMI out
+audio off for the rest of the boot ("audio path failed").
 
 ## 5. HDMI in audio
 
@@ -265,16 +337,16 @@ output mixers like any analog source:
 ```
 I2S2 (IT66021) -> bridge -> AIF1 DA0 -> DAC -> L/R output mixer -+-> L+R sum -> lineout volume -> jack
                                                                  +-> "l/r_output mixer" -> ADC -> MPP AI -> DVR, stream
-                                                                     (Record What I Hear)
+                                                                     (Record Headphone Mix)
 ```
 
 `hdmi_audio_line_out()` in `src/core/hdmi_audio.c` is the one function that switches it,
 and it only tells the audio mixer (`audio_mixer_set_live_dac()`, docs/audio.md "HDMI-in
 audio"); the mixer alone writes the codec's controls. On (the route starts): the DAC is a
 live source at the Audio page's **HDMI In** level (0.0 dB by default; the row is greyed
-out while HDMI In Audio is Off), mixed with the analog sources at their levels (mic +
-HDMI audio works), the line out stays on during HDMI in (Volume permitting), and **Record
-What I Hear** records it with the rest of the headphone mix. The direct Record switches
+out while HDMI In Audio is not in effect), mixed with the analog sources at their levels
+(mic + HDMI audio works), the line out stays on during HDMI in (Volume permitting), and
+**Record Headphone Mix** records it with the rest of the headphone mix. The direct Record switches
 cannot record it: there is no path from the DAC into the ADC except through the output
 mixer. Off (before the route stops; it waits until the codec has it, so the DAC leaves the
 mix before the bridge stops playing into it): HDMI in mutes the line out again, as stock.
@@ -308,7 +380,7 @@ Limits:
   the incoming rate is seen to be 48 kHz (within 3 %) and mutes again if it is not; small
   drift is absorbed by dropping or repeating one frame per block (at most ~1400 ppm), an
   underrun is refilled with silence. Clicks at a correction are possible.
-* Recorded only through the output-mixer -> ADC switches (Record What I Hear). The WiFi
+* Recorded only through the output-mixer -> ADC switches (Record Headphone Mix). The WiFi
   stream audio takes the same ADC capture as the DVR, so it carries it too; HDMI out is
   off while HDMI in is shown anyway.
 
@@ -318,8 +390,8 @@ SD card):
    the tone is heard at the HDMI In level; `RECORD.log` shows `HDMI in audio at 48000 Hz:
    unmuted` and every 10 s `bridge: N frames in (~48000/s) ...`. A 44.1 kHz source:
    `muted`, silence.
-2. Audio page: Record What I Hear Yes, Mic 0 dB. Start a DVR recording while the tone
-   plays, speak into the mic: the file has the tone and the mic (once). Record What I Hear
+2. Audio page: Record Headphone Mix Yes, Mic 0 dB. Start a DVR recording while the tone
+   plays, speak into the mic: the file has the tone and the mic (once). Record Headphone Mix
    No: the file has only the direct Record sources, no tone. Leave HDMI in: line out goes
    off; switch to analog: A/V on the jack as before, no tone.
 3. Storage page: repair or format the SD card while HDMI in plays: within ~10 s the
@@ -331,17 +403,26 @@ SD card):
 
 ## 6. Switching it on (experimental)
 
-**Audio > HDMI Audio (experimental)**, on every target (all three have HDMI in and out;
-the paths are unproven on all of them):
+**Audio > HDMI Audio (experimental)**, on the Goggle 1 and the Goggle 2 (the paths are
+unproven on both; the BoxPro's page has no HDMI audio rows). The switches only store the
+setting (exactly `1` or `0`); nothing touches a pin function, I2S0 or the IT66121 because
+one was clicked. Both take effect at the next start:
 
-| Row | setting.ini | applies |
+| Row | setting.ini | at the next start |
 |---|---|---|
-| HDMI Out Audio On / Off | `[hdmi] audio_out=1/0` | at once: the running IT66121's audio is programmed or switched off (`IT66121_audio()`), and the bridge route follows; also at every later `IT66121_init()` |
-| HDMI In Audio On / Off | `[hdmi] audio_in=1/0` | the route at the next switch to HDMI in (the page is in the menu, HDMI in is not shown there); the EDID (48 kHz L-PCM only) at the next start: the EDID is written when the IT66021 is set up at boot, and writing it while the HDMI-in detect thread talks to the chip is not safe (no lock around the IT66021). The hint says "Restart once after switching on"; a source that kept the old EDID and sends 44.1 kHz is muted by the bridge, not played wrong |
+| HDMI Out Audio On / Off | `[hdmi] audio_out=1/0` | the boot step (4a) switches PH1-PH3 or leaves them stock; `IT66121_init()` programs audio or runs the stock sequence; the bridge route follows |
+| HDMI In Audio On / Off | `[hdmi] audio_in=1/0` | the EDID (48 kHz L-PCM only; written when the IT66021 is set up at boot) and the HDMI-in route at every switch to HDMI in. A source that kept the old EDID and sends 44.1 kHz is muted by the bridge, not played wrong |
 
-The keys can still be set by hand in `/mnt/app/setting.ini` (then reboot). Logs:
-HDZGOGGLE log `IT66121 audio on (I2S): 04=.. 5F=.. E0=01 .. CTS=..` and
-`hdmi audio: route a -> b`; record daemon (`/mnt/extsd/RECORD.log` if that file exists)
+The page shows an orange **Restart** next to a switch whose position differs from what is in
+effect this boot, and **Error** next to HDMI Out Audio when it was On at this start but
+stayed off; its hint then reads "Off at this start: " and the reason: "pin check failed"
+(the boot step refused or did not verify, or there is no valid record of this boot), "HDMI
+chip check failed" (the Reg04 guard, section 3) or "audio path failed" (the record daemon
+refused the route or never confirmed it). The keys can still be set by hand in
+`/mnt/app/setting.ini` (then reboot). Logs: `/tmp/hdmi_audio.boot` (the decision of this
+boot, its `detail` line says why); HDZGOGGLE log `hdmi audio (experimental): switches out=..
+in=.., in effect this boot out=.. in=..`, `IT66121 audio on (I2S): 04=.. 5F=.. E0=01 ..
+CTS=..` and `hdmi audio: route a -> b`; record daemon (`/mnt/extsd/RECORD.log` if that file exists)
 lines tagged `pcmbridge` (`i2s0 fix: ...`, `first AI frame: len=...`,
 `input delivers about N frames/s`, `bridge: N frames in ...`, `i2s0 undo: ...`).
 `/tmp/hdmi_audio.req` / `/tmp/hdmi_audio.state` show the last request and the daemon's
@@ -361,7 +442,11 @@ both a Goggle 1 and a Goggle 2.
 |---|---|---|
 | `/proc/asound/cards` lacks `snddaudio0` | daudio0 failed to probe (dmesg `daudio`/pinctrl lines): needs a kernel/DT change | - |
 | `/proc/asound/cards` lacks `snddaudio2` | - | same for daudio2 |
-| `pinmux-pins`: PH1 owned by the uart (5001000.uart) | the bridge's raw re-mux is required (as implemented); a DT fix would be cleaner | - |
+| `pinmux-pins`: PH1 owned by the uart (5001000.uart) | the boot step's raw switch of PH_CFG0 is required (as implemented); a DT fix would be cleaner | - |
+| probe: "PH_CFG0 state: NEITHER the stock value nor the I2S0 value" | the boot step refuses on this unit ("pin check failed"): report the value; the strict rule must not be loosened without knowing which field differs | - |
+| probe: "/dev/mem and sunxi_dump DIFFER" or the latch bytes not `30 78` + 8 digits + `0a` | the latch is not what `soc_reg.c` expects: HDMI out audio stays off ("pin check failed"); report | - |
+| Audio page "HDMI chip check failed" | Reg04 was not 0x14 after the stock init, or I2C reads failed: the IT66121 dump of the probe | - |
+| Audio page "audio path failed" | `RECORD.log` (`pcmbridge` lines: the reason after `refused`) | - |
 | test A: I2S0 TXCNT does not grow while `aplay` runs | I2S0 not clocking: MODE/master fix not applied (look at the CTL lines; "read not trusted" = nothing was written) | - |
 | test A: TXCNT grows, Reg135-137 CTS stays 0 | no audio clock counted at the IT66121 **in these registers**. Equally possible: PH1-PH3 not wired to SCK/WS/I2S0; wired in another order (e.g. LRCK on SCK); on G2 the FPGA in the path; the CTS is read back in Reg1A0-1A2 (compare the logged 1A0-1A2). Next: the IT66121 bank dumps (probe part 2, test A) during the tone; a scope on PH1-PH3 and the IT66121 SCK/WS pins if possible; a test build with the I2S0 slot/format varied | - |
 | test A: CTS (either register set) non-zero, ~148500 at 1080p, no sound on TV | clock arrives; check E0/CE in the log, try another TV; format (E1), channel status or InfoFrame | - |

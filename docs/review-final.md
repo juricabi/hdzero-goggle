@@ -4,7 +4,10 @@ Independent review of 2026-11-12, done in the emulator, with host tests and by r
 on a real goggle. The reviewer's experiments are under `/root/hdz/review-goggle/` on the machine the review
 ran on (screenshots in `emu/shots/`, the audio model in `audio/`, tests in `tests/`).
 
-**Status of the findings: open.**
+**Status of the findings:** worked on after this review (defects 1-12, the usability
+rewrites, the mod checklist, the HDMI concerns in the `hdmi-hardening` merge, the
+test-harness hazard): see [status.md](status.md). None of it has been reviewed
+independently yet.
 
 ## Verdicts
 
