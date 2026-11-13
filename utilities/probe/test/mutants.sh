@@ -18,8 +18,11 @@ start-app-without-running-check@all@/^    \[ -n "\$(app_pid)" \] \&\& return 0$/
 single-latch-read@all@s/is_hex "\$lr_1" \&\& \[ "\$lr_1" = "\$lr_2" \] \&\& \[ "\$lr_2" = "\$lr_3" \] || return 1/is_hex "$lr_1" || return 1/@test
 pause-ignores-aww@all@s/\[ "\$pz_ok" = 1 \] \&\& \[ -z "\$(latch_users)" \] \&\& return 0/[ "$pz_ok" = 1 ] \&\& return 0/@test
 no-guardian@all@s/^guard_start() {$/guard_start() { return 0/@test probe
-ph-write-without-sanity@hdmi_audio_test.sh@s/^    elif ! ph_sane "\$RV"; then$/    elif false; then/@test
+ph-write-not-strict@hdmi_audio_test.sh@s/^    elif \[ "\$RV" -ne \$((PH_STOCK)) \]; then$/    elif false; then/@test
+ph-found-i2s0-undone@hdmi_audio_test.sh@s/^\(        log "PH_CFG0 \$(hex "\$RV"): PH1-PH3 are I2S0 already\)/        PH_SET=$PH_AUDIO; \1/@test
+it04-unchecked@hdmi_audio_test.sh@s/^it04_ok() {.*$/it04_ok() { true; }/@test
 it-restore-skipped@hdmi_audio_test.sh@s/^        it_restore$/        :/@test
+probe-devmem-writes@hdmi_audio_probe.sh@s/devmem 0x0300B0FC 32 > /devmem 0x0300B0FC 32 0x35517751 > /@probe
 probe-reads-fifos@hdmi_audio_probe.sh@s/^DAUDIO_FIFOS=.*/DAUDIO_FIFOS=""/@probe
 probe-bank-before-stop@hdmi_audio_probe.sh@/^ite_begin() {$/,/^}$/s/^    app_pause || return 1$/    i2cget -y "$1" "$2" 0x0f > \/dev\/null 2>\&1; app_pause || return 1/@probe
 bay-refuses-on-sdmmc-owner@bay_gpio_pattern.sh@s/^    \[ -r "\${d}pinmux-pins" \] \&\& grep -E .*$/    grep -q sdmmc "${d}pinmux-pins" \&\& refuse "owned by sdmmc"/@bay

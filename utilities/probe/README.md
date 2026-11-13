@@ -22,8 +22,8 @@ nothing is written to flash.
 
 | file | what it does | what it touches (run time only) |
 |---|---|---|
-| `hdmi_audio_probe.sh` | **run this first.** Sound cards, mixer controls, device tree, pin mux, GPIOs, I2S/PIO/CCU registers, IT66121 + IT66021 register dumps, dmesg, tool list | pauses the app for each register window; the bank register 0x0F of the two ITE chips (read with the app stopped, put back before it continues); the `sunxi_dump` address latch; GPIO 131 (beeper) export; mounts debugfs (RAM) if needed and unmounts it; SD-card mode: starts the app. Never reads FIFO/data registers (I2S RX/TX FIFO, IT66121 0x17 DDC FIFO): a read there would take data out of a stream |
-| `hdmi_audio_test.sh` + `tone1k_48k_s16le_2ch.raw` | optional active test: 1 kHz tone to HDMI out, 10 s recording from HDMI in | IT66121 audio registers, PH1-PH3 pin function (`PH_CFG0`), I2S0 `CTL` mode/clock fields, IT66021 bank register; all put back |
+| `hdmi_audio_probe.sh` | **run this first.** Sound cards, mixer controls, device tree, pin mux, GPIOs, I2S/PIO/CCU registers, PH_CFG0 read two ways (the `sunxi_dump` latch and `/dev/mem`) and the HDMI audio boot record `/tmp/hdmi_audio.boot`, IT66121 + IT66021 register dumps, dmesg, tool list | pauses the app for each register window; the bank register 0x0F of the two ITE chips (read with the app stopped, put back before it continues); the `sunxi_dump` address latch; one word of `/dev/mem` (PH_CFG0), read only, with `devmem` of the services package's busybox (`/mnt/app/services/busybox/busybox`, if present; never given a value); GPIO 131 (beeper) export; mounts debugfs (RAM) if needed and unmounts it; SD-card mode: starts the app. Never reads FIFO/data registers (I2S RX/TX FIFO, IT66121 0x17 DDC FIFO): a read there would take data out of a stream |
+| `hdmi_audio_test.sh` + `tone1k_48k_s16le_2ch.raw` | optional active test: 1 kHz tone to HDMI out, 10 s recording from HDMI in | IT66121 audio registers (only if Reg04 shows no video/HDCP/RCLK reset: 0x14 as the stock init leaves it, or 0x00 with HDMI Out Audio in effect; Reg04 itself only as the constants 0x04 and 0x00); PH1-PH3 pin function: `PH_CFG0` only if it reads exactly the stock 0x35517751, and only as the constant 0x35513331 (left as found if HDMI Out Audio already switched it this boot; any other value: refused); I2S0 `CTL` mode/clock fields, IT66021 bank register; all put back |
 | `bay_gpio_pattern.sh` | optional: drives GPIO 192/193/194 (PG0-PG2) one after another, to find where they arrive and read their voltage | drives three pins, **bay empty**, SD-card mode; puts their data bit and function back |
 
 ## 1. Read-only probe (please always send this)
@@ -89,14 +89,22 @@ released. Send `bay_gpio_N.txt` and the contact/voltage notes.
   and a real fake app process). It checks the app's process state (never left stopped,
   never started twice, not stopped outside register windows), that every register is back,
   also when a script is killed at many points (TERM/INT/HUP; SIGKILL: the guardian), that an
-  interleaved or implausible latch read leads to no write, that no FIFO register is read,
-  and that only commands of the goggle's busybox are used. `ROOTFS=<extracted rootfs>`
-  checks the commands against a real image and, with `qemu-arm`, runs everything under
-  the goggle's own busybox 1.27 ash as well (it has no `command` builtin, and a failed
-  `exec` redirection ends it). `QUICK=1` for fewer kill points.
-* `sh utilities/probe/test/mutants.sh`: 14 mutants with one safety property broken each
-  (e.g. the app never resumed, no trap, a single latch read); the tests must fail on every
-  one. `MUT_OLD=<dir>` also runs an older kit (the review's mutant).
+  interleaved or implausible latch read leads to no write, that PH_CFG0 is written only from
+  the stock value and only as one of the two constants, that an IT66121 Reg04 with a video
+  reset bit set leads to no IT66121 write, that `devmem` is only ever called to read, that
+  no FIFO register is read, and that only commands of the goggle's busybox are used.
+  `ROOTFS=<extracted rootfs>` checks the commands against a real image and, with
+  `qemu-arm`, runs everything under the goggle's own busybox 1.27 ash as well (it has no
+  `command` builtin, and a failed `exec` redirection ends it). `QUICK=1` for fewer kill
+  points.
+* `sh utilities/probe/test/mutants.sh`: 16 mutants with one safety property broken each
+  (e.g. the app never resumed, no trap, a single latch read, PH_CFG0 written from any
+  value, Reg04 unchecked, devmem given a value); the tests must fail on every one.
+  `MUT_OLD=<dir>` also runs an older kit (the review's mutant).
 * `sh utilities/probe/test/it66121_seq_test.sh`: IT66121 register sequence unchanged with
-  HDMI audio off. `sh utilities/probe/test/it66021_edid_test.sh`: the EDID as the IT66021
-  serves it (checksums, CEA structure, audio descriptor).
+  HDMI audio off; with it on, Reg04 never written with a video/HDCP/RCLK reset bit, also
+  with failing or garbled I2C reads. `sh utilities/probe/test/it66021_edid_test.sh`: the
+  EDID as the IT66021 serves it (checksums, CEA structure, audio descriptor).
+  `sh utilities/probe/test/hdmi_boot_test.sh`: the boot step (`hdmi_audio_boot`) and its
+  record. `sh utilities/probe/test/pcmbridge_test.sh`: the record daemon's bridge (never
+  writes PH_CFG0, refuses I2S0 unless HDMI Out Audio is in effect this boot).
