@@ -1,0 +1,13 @@
+w 2
+k s 1
+w 1
+k d
+w 1
+s o00_source
+k s
+s o01_analog_sel
+k d
+w 4
+s o02_analog_osd
+w 3
+s o03_analog_osd_later

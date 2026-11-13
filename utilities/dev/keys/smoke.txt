@@ -1,0 +1,8 @@
+w 2
+s 00_start
+k d
+w 1
+s 01_after_click
+l d
+w 1
+s 02_after_long

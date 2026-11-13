@@ -1,0 +1,36 @@
+w 2
+k s 7
+w 1
+k d
+w 1
+s h00_volume
+k s 5
+s h01_rwih_sel
+k d
+w 1
+s h02_rwih_yes
+k s
+s h03_recmic_in_mix
+k s
+s h04_recline_in_mix
+k s 6
+s h05_hdmi_in_audio_sel
+k d
+w 2
+s h06_hdmi_in_audio_on
+k s 2
+k s 4
+s h07_hdmi_slider_sel
+k d
+k w 2
+s h08_hdmi_slider_up2
+k d
+k s 9
+s h09_hdmi_out_sel
+k d
+w 2
+s h10_hdmi_out_on
+l d
+w 1
+s h11_menu_after
+c h11

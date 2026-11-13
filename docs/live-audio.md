@@ -182,7 +182,8 @@ presentation times.
 - `[live] audio=1`: the session gets an `AACLiveAudioServerMediaSubsession` (`track2`) and the video
   subsession switches to `LiveNalVideoSource` + `Live{H264,H265}VideoStreamDiscreteFramer`. With
   `audio=0` the server builds exactly the session it built before (same classes, same source;
-  SDP and packets checked identical to 8364a43, see 3.).
+  SDP and packets checked identical to 8364a43, see 3.; 8364a43 has the same rtspLive code as
+  the base a85841d).
 - Audio: `LiveAudioSource` reads one frame at a time (`avshare_readMediaFrame()`), checks and strips
   the ADTS header, delivers the raw AAC access unit with presentation time = ring timestamp
   converted to wall clock (`avshare_timestampToTimeval()`: one process-wide CLOCK_MONOTONIC ->

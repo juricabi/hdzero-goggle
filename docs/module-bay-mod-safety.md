@@ -147,7 +147,7 @@ into VCC-PG. [analysis] for every number; when each case can happen is from the 
 
 | case | duration | 3.3 V bank | 1.8 V bank | without resistor |
 |---|---|---|---|---|
-| **True-D stock bootloader**: D13 (pin 1, the clock wire = PG0) driven 5 V push-pull, goggle pin input: (5 − VCC − 0.3) / R | 100 ms at every True-D power-on or reset, (b) + sim | **0.30 mA** | **0.62 mA** | ~50 mA at 3.3 V (1.4 V over ~26 Ω), more at 1.8 V: far above any injection limit and the AVR's own 40 mA |
+| **True-D stock bootloader**: D13 (bay pin 3, the CS wire = PG2 with the presumed wiring; measured on the owner's True-D 2026-11-13) driven 5 V push-pull, goggle pin input: (5 − VCC − 0.3) / R | 100 ms at every True-D power-on or reset, (b) + sim | **0.30 mA** | **0.62 mA** | ~50 mA at 3.3 V (1.4 V over ~26 Ω), more at 1.8 V: far above any injection limit and the AVR's own 40 mA |
 | the same pulse while the goggle drives that pin low: 5 V / R | cannot happen: the goggle keeps every pin an input until 2.0 s after bay power-on [sim] | 1.06 mA | 1.06 mA | a short between two outputs |
 | bootloader's low phase (0.1-1.39 s) against a goggle high: VCC / R | cannot happen, same reason [sim] | 0.70 mA | 0.38 mA | a short |
 | **stock True-D firmware 3.9D** (also MOD 1.15, MOD 1.16 in `BAY:AUTO`): D13 is the Dock-King link's TX, 5 V push-pull, idle high | ~6 s after every power-up, (b) | 0.30 mA into the clamp; 1.06 mA once the goggle drives (from 2.0 s) | 0.62 / 1.06 mA | tens of mA for seconds: **likely damage** |
@@ -324,8 +324,8 @@ If the datasheet does not state all three, use TI's part.
   leakage figure. IN+ at 2.1 V is inside the common-mode range (≤ 3.0 V). If the SoC
   has its internal pull-down (80-120 kΩ) on a pin, IN+ sits at 0.37-0.53 V instead and
   that output is low: harmless, and checklist step 18 shows it.
-* **The True-D bootloader pulse never reaches the goggle**: D13 now meets the
-  comparator's output, not PG0. D13 high against an output low: (5 − 0.4) V / 1 kΩ
+* **The True-D bootloader pulse never reaches the goggle**: D13 (bay pin 3) now meets
+  the comparator's output, not PG2. D13 high against an output low: (5 − 0.4) V / 1 kΩ
   = 4.6 mA, within the LM339's sink and the AVR's 40 mA (and only if the goggle
   were driving low, which it does not in the first 2.0 s); D13 low against the
   output high: 5 V / 11 kΩ = 0.45 mA.
@@ -391,9 +391,9 @@ other end: **identify the pins by +5 V and GND with a meter, not by number**
 
 | pin | what the HDZero bay does | what a module may put there |
 |---|---|---|
-| 1 | stock: not connected; with the mod: PG0 (SDIO CLK) through 4.7 kΩ (b) | rapidFIRE CLK (CS3) (b); SteadyView SPI clock (b); True-D D13: bootloader pulse, stock firmware's link TX (b); RTC6715 CS pin with pull-up (a); Wildfire (d) |
+| 1 | stock: not connected; with the mod: PG0 (SDIO CLK) through 4.7 kΩ (b) | rapidFIRE CLK (CS3) (b); SteadyView SPI clock (b); True-D D11 (measured 2026-11-13), never driven by MOD 1.17; RTC6715 CS pin with pull-up (a); Wildfire (d) |
 | 2 | stock: not connected; with the mod: PG1 (SDIO CMD) (b) | rapidFIRE DATA (CS2), the module answers queries on it (b); SteadyView DATA, driven by the module on read-back (b); True-D D12, never driven (MOD 1.17) (b); Wildfire (d) |
-| 3 | stock: not connected; with the mod: PG2 (SDIO D0) (b) | rapidFIRE NSS (CS1) (b); SteadyView chip select (b); True-D D11 (b); Wildfire (d) |
+| 3 | stock: not connected; with the mod: PG2 (SDIO D0) (b) | rapidFIRE NSS (CS1) (b); SteadyView chip select (b); True-D D13 (measured 2026-11-13): the stock bootloader's pulse, the stock firmware's link TX (b); Wildfire (d) |
 | 4 | video into the TP2825 decoder (termination unknown) (b) | video out, ~1 Vpp into 75 Ω (a) |
 | 5 | audio left, always mixed into recordings (b) | audio (rapidFIRE 6.5 MHz carrier audio) (b) |
 | 6 | audio right (b) | audio (6.0 MHz) (b) |
@@ -556,11 +556,16 @@ detail; its readings count here too.
    repeat this step).
 8. **Unpowered: pins 1, 2, 3.** For each: diode test, red lead on the pin, black on the
    shield; then ohms from the pin to the shield and from the pin to pin 9, each with both
-   lead polarities. Write everything down (True-D: what sits on D11-D13 is not known,
-   (d)).
-   *Stop if* a diode reading is 1.5-2.2 V (an LED on that pin: it would load the line far
-   more than 4.7 kΩ can drive), or a pin reads below 10 kΩ to the shield or to pin 9 in
-   both polarities (a pull resistor that would load the goggle pin in every mode).
+   lead polarities; and the diode test on pin 9 (red on pin 9, black on the shield).
+   Write everything down.
+   *Normal for a True-D V3* (one unit, measured 2026-11-13): ~1.7 V on each of pins 1-3
+   and ~1.64 V on pin 9, megaohms to the shield, no series resistors (black on the pin,
+   red on the shield: 0.63 V each): all three pins read alike and like pin 9, which is the
+   module's 5 V rail through the chip's protection diodes, not an LED.
+   *Stop if* one or two of pins 1-3 read 1.5-2.2 V clearly lower (by 0.2 V or more) than
+   the others (an LED on that pin: it would load the line far more than 4.7 kΩ can drive),
+   or a pin reads below 10 kΩ to the shield or to pin 9 in both polarities (a pull
+   resistor that would load the goggle pin in every mode).
 9. **True-D only: MOD 1.17 and BAY:RAPIDFIRE, before any powered test.** Out of any
    goggle, on USB only: flash `release/1.17/TrueD-MOD-1.17.hex` with its verify
    (furiousdfw `docs/bench-test.md` step 4), then Settings → BAY = `RAPIDFIRE`. Unplug
@@ -594,8 +599,9 @@ detail; its readings count here too.
 
     *Stop if* (a) reads above 2.0 V or (b) below 1.0 V on any pin: never wire that
     module; for a True-D it means the wrong firmware or mode.
-12. **Bootloader pulse on pin 1.** Supply off. Connect the LED with its 1 kΩ in series
-    from pin 1 to ground (anode toward pin 1). Supply on and watch the LED. One flash of
+12. **Bootloader pulse on pin 3.** Supply off. Connect the LED with its 1 kΩ in series
+    from pin 3 (the True-D's D13, measured 2026-11-13) to ground (anode toward pin 3).
+    Supply on and watch the LED. One flash of
     about 0.1 s: the **stock bootloader** (its pulse on D13; harmless with the resistors,
     and the shifter of path S keeps it from the goggle entirely). No flash: the **no-LED
     bootloader** (furiousdfw `bootloader/`) or none. Supply off, disconnect everything.

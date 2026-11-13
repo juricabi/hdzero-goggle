@@ -46,7 +46,18 @@ without a `setting.ini` (fresh install, or after Storage > Reset): both are show
 | HDMI audio | Audio > HDMI Audio > HDMI In Audio | `[hdmi] audio_in` | 0 = Off | On: while HDMI in is shown, its audio is played into the codec (headphones at the HDMI In level, recorded with Record What I Hear) and the line out stays on during HDMI in; the EDID offers 48 kHz only from the next start |
 | HDMI audio | record.conf only | `[hdmi_audio] latency_ms` | 60 (key absent) | buffer of the HDMI audio bridge |
 
-Changed on purpose, also with every default: nothing. Known differences that remain:
+Changed on purpose, also with every default: a few visible things (first-flash.md, "What
+looks different from stock"; the full list as of 2989f32: review-final.md, "Differences from
+stock on an untouched Goggle 1", most of them addressed since, status.md). Known
+differences that remain:
+
+* ELRS / MSP in analog mode: GET_BAND_CHAN / GET_FREQ answer the analog channel (255 / 0
+  while the bay is not controlled); channel commands are ignored while the bay is not
+  controlled; on a Goggle 1 whose last source was analog, the ELRS page's "Send VTX freq"
+  and the dial's long-press confirm send nothing (upstream sent the HDZero channel).
+* L band: the goggle's MSP frequency table has L1-L8 at 5362-5621 MHz; a Furious True-D's
+  L band is LowRace 5333-5613 MHz. A VTX set by band and channel lands right; a VTX set by
+  frequency on the L band ends up ~29 MHz from the True-D's channel.
 
 * The Record Option page no longer has "Audio Source"; the same choice is Record Mic /
   Line In / A/V In on the Audio page (migrated, so the recording is the same).
@@ -58,6 +69,11 @@ Changed on purpose, also with every default: nothing. Known differences that rem
   Details: [audio.md](audio.md), "Differences from the old firmware".
 
 ## Checked in the emulator
+
+**Out of date:** this check was made before 8b187fb, since which nothing is written to
+`setting.ini` at start-up (the `[mixer]` column below is what the mixer *uses*, now taken
+from `[record] audio_source` until the first change on the Audio page), and before the
+module-bay merge; run it again on the final branch (status.md).
 
 The SDL emulator of this branch (Goggle 2 and Goggle 1), started five ways, nothing touched
 for 6 s, then the Audio page opened (the page writes nothing when it is only opened):
@@ -76,9 +92,8 @@ HDMI In Audio Off; nothing new is written to `setting.ini` except `[mixer]` (and
 action). The line out stays off until the first switch to an analog source, as stock.
 
 The module bay rows of the table follow the final module-bay branch (`module-control`
-9a30a84: one Module setting, default None). This branch still carries its earlier state
-(Type Unknown and Pin Control Off by default, the same "bay pins never touched"); check the
-table again in the emulator after the module-bay branch is merged.
+9a30a84: one Module setting, default None), merged into this branch in 7904f0e; the
+emulator check above predates the merge.
 
 The language table (`TRANSLATE_STRING_NUM`, the entries one language file may have) is
 raised from 384 to 512: with the Audio page, the stream and the module bay strings the

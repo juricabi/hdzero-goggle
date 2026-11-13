@@ -1,0 +1,28 @@
+w 2
+k s 7
+w 1
+k d
+w 1
+s t01_volume
+k s 5
+s t06_rwih
+k s
+s t07_recmic
+k s 2
+s t09_recav
+k s 4
+s t13_hdmi_out
+k s
+s t14_hdmi_in
+k d
+w 1
+s t15_hdmi_in_on
+k s 2
+k s 4
+s t16_hdmi_slider
+l d
+w 1
+s t17_menu
+k w 2
+w 1
+s t18_menu_bottom

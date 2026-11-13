@@ -1,0 +1,27 @@
+w 2
+k s 6
+w 1
+k d
+w 1
+s r00_enter
+k s 4
+s r01_record_audio
+k s
+s r02_after_audio
+k s
+s r03_next
+l d
+w 1
+k w 2
+w 1
+k d
+w 1
+s r04_power_enter
+k s
+k d
+w 1
+s r05_power_grab
+k w 2
+s r06_power_after
+k d
+l d

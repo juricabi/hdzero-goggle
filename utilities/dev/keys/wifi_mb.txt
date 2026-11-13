@@ -1,0 +1,22 @@
+w 3
+k w 2
+w 1
+s x00_mb_preview_wifi_on
+k d
+w 1
+s x01_mb_enter_wifi_on
+k s 2
+k d
+w 3
+s x02_check_pins_wifi_on
+l d
+w 1
+k w 11
+w 1
+k d
+w 1
+k w
+s x03_audio_back_sel
+k d
+w 1
+s x04_after_back_click

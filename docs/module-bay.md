@@ -97,8 +97,8 @@ the pins inputs until 2.0 s after every bay power-on**, then sets the module up:
 its mode, then its channel. Batch 1 Goggle 1 hardware has no bay power switch: the
 app start counts as the power-on (2.0 s after it). The 2.0 s count from the
 goggle's power-on command to the DM5680 co-processor; the switch itself follows
-after an unmeasured delay. A True-D's bootloader holds bay pin 1 until ~1.45 s
-after its power-on (furiousdfw `docs/bay-standards.md` 5.1), the ExpressLRS VRx
+after an unmeasured delay. A True-D's stock bootloader holds bay pin 3 (D13) until
+~1.45 s after its power-on (furiousdfw `docs/bay-standards.md` 5.1), the ExpressLRS VRx
 backpack waits 2 s too (`VRX_BOOT_DELAY`).
 
 ### Differences from upstream
@@ -178,14 +178,14 @@ are applied together, so a new Module is never set up with the old one's Mode.
 **Pin order.** The Mode list picks which pin carries which bit, because the mod's
 wiring is not known. Each label gives the weight of each pin's bit:
 
-| Mode | bit 0 | bit 1 | bit 2 | note |
-|---|---|---|---|---|
-| PG0=1 PG1=2 PG2=4 | PG0 | PG1 | PG2 | pkendall64's order |
-| PG0=4 PG1=1 PG2=2 | PG1 | PG2 | PG0 | rapidFIRE convention CH1 = DATA, CH2 = CS, CH3 = CLK |
-| PG0=4 PG1=2 PG2=1 | PG2 | PG1 | PG0 | CS1 = bit 0 with the presumed wiring (True-D `BAY:1-8`: D11 = CS1 = bit 0) |
-| PG0=1 PG1=4 PG2=2 | PG0 | PG2 | PG1 | |
-| PG0=2 PG1=1 PG2=4 | PG1 | PG0 | PG2 | |
-| PG0=2 PG1=4 PG2=1 | PG2 | PG0 | PG1 | |
+| Mode (page label) | weights | bit 0 | bit 1 | bit 2 | note |
+|---|---|---|---|---|---|
+| Wiring A (standard) | PG0=1 PG1=2 PG2=4 | PG0 | PG1 | PG2 | pkendall64's order; with the presumed mod wiring (PG0 → bay pin 1) bit 0 is on bay pin 1, as in TBS's pinout (pin 1 = CH0) and on the True-D (bay pin 1 = D11 = its bit 0, measured 2026-11-13): **the one for a True-D in `BAY:1-8`** |
+| Wiring B | PG0=4 PG1=1 PG2=2 | PG1 | PG2 | PG0 | rapidFIRE convention CH1 = DATA, CH2 = CS, CH3 = CLK |
+| Wiring C | PG0=4 PG1=2 PG2=1 | PG2 | PG1 | PG0 | bit 0 on bay pin 3 (the ExpressLRS naming CS1 = NSS = pin 3); recommended here for the True-D until 2026-11-13, from an inference the measurement showed wrong |
+| Wiring D | PG0=1 PG1=4 PG2=2 | PG0 | PG2 | PG1 | |
+| Wiring E | PG0=2 PG1=1 PG2=4 | PG1 | PG0 | PG2 | |
+| Wiring F | PG0=2 PG1=4 PG2=1 | PG2 | PG0 | PG1 | |
 
 Finding the order on the bench: dial CH1, CH2, CH3, CH5 and see which channel the
 module takes for each.
@@ -278,26 +278,34 @@ gets its mix mode at set-up, then its channel.
 
 ### Furious True-D
 
-Firmware: **MOD 1.17** (furiousdfw `release/1.17/`). Its application never drives
-a bay pin; its one menu setting **BAY** is `RAPIDFIRE` (default: a standard
-rapidFIRE SPI-mode listener), `1-8` (the absolute 3-pin code) or `STEP` (Fat Shark
-up / down).
+Firmware: **MOD 1.17** as released on 2026-11-13 (furiousdfw `release/1.17/`, tag
+`trued-mod-1.17`; public: juricabi/true-d-v3-mod-firmware v1.17).  Its menu setting
+**BAY** is `RAPIDFIRE` (default: a standard rapidFIRE SPI-mode listener), `1-8` (the
+absolute 3-pin code), `STEP` (Fat Shark up / down) or `ORQA` (the Orqa FPV.One's faster
+rapidFIRE, with answers: **not for the HDZero**).  In `RAPIDFIRE`, `1-8` and `STEP` its
+application never drives a bay pin; `ORQA` pulls DATA low while it answers the Orqa's
+query.  **BAY CLK** stays `D11` (the bay connector's order: pin 1 = D11 = rapidFIRE CLK,
+pin 3 = D13 = CS, measured on the unit).  A band or channel counts when two of the
+goggle's three copies agree, and this page's 2.0 s / ≥ 100 µs timing fits it.  Tested on
+the unit in an Orqa FPV.One (`ORQA`, `1-8`, `STEP`); `RAPIDFIRE` from this goggle: not
+yet on hardware (simulated with a model of this sender).
 
 | True-D BAY | goggle Module | note |
 |---|---|---|
 | **RAPIDFIRE** (default) | **rapidFIRE** | the main way: 48 channels A B E F R L; no pull-ups on the True-D side |
-| 1-8 | Switch, pin order "PG0=4 PG1=2 PG2=1" | D11 = CS1 = bit 0 if the presumed wiring holds; channels 1-8 of the True-D's current band |
+| 1-8 | Switch, **Wiring A (standard)** | bay pin 1 = D11 = bit 0 (measured) if the mod's wire from PG0 goes to bay pin 1; channels 1-8 of the True-D's current band |
 
 The custom "True-D" type of earlier test builds is gone (a stored `[module] type =
 5` loads as None): MOD 1.17 has no LINK receiver any more.
 
-**The bootloader.** The True-D's **stock bootloader** drives bay pin 1 (D13, the
-clock wire) high at 5 V for ~100 ms and then low until ~1.39 s after every reset
-or power-on, whatever the firmware; the goggle's 2.0 s input hold keeps clear of it
-and the 4.7 kΩ resistors make it harmless. A **no-LED bootloader** (furiousdfw
-`bootloader/`, written once with an ISP programmer) never drives a bay pin. Both
-cases are covered in module-bay-mod-safety.md (checklist step 6 tells which one a
-module has).
+**The bootloader.** The True-D's **stock bootloader** drives bay pin 3 (D13: the CS
+wire, PG2 with the presumed mod wiring) high at 5 V for ~100 ms and then low until
+~1.39 s after every reset or power-on, whatever the firmware; the goggle's 2.0 s
+input hold keeps clear of it and the 4.7 kΩ resistors make it harmless. A **no-LED
+bootloader** (furiousdfw `bootloader/`; public: true-d-v3-mod-firmware
+`docs/bootloader.md`; written once with an ISP programmer) never drives a bay pin;
+the owner's True-D has it since 2026-11-13. Both cases are covered in
+module-bay-mod-safety.md (checklist step 12 tells which one a module has).
 
 **Never** use a True-D with the stock firmware 3.9D, MOD 1.15 or MOD 1.16 in
 `BAY:AUTO` in a wired bay: they drive D13 at 5 V push-pull for ~6 s after every

@@ -149,8 +149,6 @@ official firmware (section 8.1) and report what you saw.
 
 ### What looks different from stock
 
-<!-- differences: finalised by the code change -->
-
 * Main menu: two new entries, **Audio** and **Module Bay**, right before "Go Sleep!";
   every other stock entry keeps its place. The list scrolls and shows a scroll
   indicator.
@@ -159,7 +157,9 @@ official firmware (section 8.1) and report what you saw.
 * DVR playback plays on both ears and mutes the live A/V sound while a file plays.
 * WiFi Module > System has a new **Stream Audio** row (Off).
 * Firmware > Current Version shows 9.6.0-rc1-`<commit>` (step 6 of section 3).
-* `setting.ini` gets a `[mixer]` section on the first boot.
+* `setting.ini` is not changed at start-up (since 8b187fb); the first change on the Audio
+  page adds a `[mixer]` section, the first change of Stream Audio a `[wifi] stream_audio`
+  key.
 
 ## 5. Then the Audio page
 
