@@ -34,6 +34,8 @@ probe-reads-fifos@hdmi_audio_probe.sh@s/^DAUDIO_FIFOS=.*/DAUDIO_FIFOS=""/@probe
 probe-bank-before-stop@hdmi_audio_probe.sh@/^ite_begin() {$/,/^}$/s/^    app_pause || return 1$/    i2cget -y "$1" "$2" 0x0f > \/dev\/null 2>\&1; app_pause || return 1/@probe
 bay-refuses-on-sdmmc-owner@bay_gpio_pattern.sh@s/^    \[ -r "\${d}pinmux-pins" \] \&\& grep -E .*$/    grep -q sdmmc "${d}pinmux-pins" \&\& refuse "owned by sdmmc"/@bay
 bay-no-function-restore@bay_gpio_pattern.sh@s/^        if lat_write \$PG_CFG0 "\$back"; then$/        if true; then/@bay
+bay-all-three-outputs@bay_gpio_pattern.sh@s/^    echo in > "\$G\/gpio\$p\/direction" 2> \/dev\/null || refuse/    echo low > "$G\/gpio$p\/direction" 2> \/dev\/null || refuse/@bay
+bay-pin-left-output@bay_gpio_pattern.sh@s/^        echo in > "\$G\/gpio\$p\/direction" 2> \/dev\/null$/        :/@bay
 start-app-in-ssh-mode@all@s/^    \[ "\$MODE" = sd \] || return 0$/    :/@bay
 '
 

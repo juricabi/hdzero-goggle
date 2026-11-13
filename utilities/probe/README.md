@@ -24,7 +24,7 @@ nothing is written to flash.
 |---|---|---|
 | `hdmi_audio_probe.sh` | **run this first.** Sound cards, mixer controls, device tree, pin mux, GPIOs, I2S/PIO/CCU registers, PH_CFG0 read two ways (the `sunxi_dump` latch and `/dev/mem`) and the HDMI audio boot record `/tmp/hdmi_audio.boot`, IT66121 + IT66021 register dumps, dmesg, tool list | pauses the app for each register window; the bank register 0x0F of the two ITE chips (read with the app stopped, put back before it continues); the `sunxi_dump` address latch; one word of `/dev/mem` (PH_CFG0), read only, with `devmem` of the services package's busybox (`/mnt/app/services/busybox/busybox`, if present; never given a value); GPIO 131 (beeper) export; mounts debugfs (RAM) if needed and unmounts it; SD-card mode: starts the app. Never reads FIFO/data registers (I2S RX/TX FIFO, IT66121 0x17 DDC FIFO): a read there would take data out of a stream |
 | `hdmi_audio_test.sh` + `tone1k_48k_s16le_2ch.raw` | optional active test: 1 kHz tone to HDMI out, 10 s recording from HDMI in | IT66121 audio registers (only if Reg04 shows no video/HDCP/RCLK reset: 0x14 as the stock init leaves it, or 0x00 with HDMI Out Audio in effect; Reg04 itself only as the constants 0x04 and 0x00); PH1-PH3 pin function: `PH_CFG0` only if it reads exactly the stock 0x35517751, and only as the constant 0x35513331 (left as found if HDMI Out Audio already switched it this boot; any other value: refused); I2S0 `CTL` mode/clock fields, IT66021 bank register; all put back |
-| `bay_gpio_pattern.sh` | optional: drives GPIO 192/193/194 (PG0-PG2) one after another, to find where they arrive and read their voltage | drives three pins, **bay empty**, SD-card mode; puts their data bit and function back |
+| `bay_gpio_pattern.sh` | optional: drives GPIO 192/193/194 (PG0-PG2) high one after another, to find where they arrive and read their voltage | drives one pin at a time (the other two stay inputs), **bay empty**, SD-card mode; puts their data bit and function back |
 
 ## 1. Read-only probe (please always send this)
 
@@ -56,19 +56,28 @@ SSH: `sh hdmi_audio_test.sh out` or `sh hdmi_audio_test.sh in` (asks for Enter b
 ## 3. Optional: module-bay pin finder (bay EMPTY, SD-card mode)
 
 What it answers: (a) where GPIO 192 / 193 / 194 (PG0 / PG1 / PG2) arrive, (b) their high
-level: about **3.3 V** or about **1.8 V** (no register tells the I/O voltage of port G).
+level: about **3.3 V** or about **1.8 V**. The SoC itself reports port G's supply
+(PIO_POW_VAL), and Module Bay > **Check Pins** shows it; this script is for when Check Pins
+shows "? V", or to confirm which connector pin is PG0, PG1 and PG2 before soldering.
 
-Where to measure: per pkendall64's wiki ("Analog Module Backpack Control", Hardware mods;
-original HDZero Goggle) the three signals are on the connector between the module-bay
-board and the goggle, i.e. the **goggle-side connector of the bay board**. On a stock goggle
-they do **not** reach the 9-pin analog module connector; they appear there only after the
-wiki's 3-wire mod. So measure each contact of the goggle-side connector against ground
-(after the mod also the 9-pin module connector). Goggle 2: expected to be the same, not
-documented.
+Where: per pkendall64's wiki ("Analog Module Backpack Control", Hardware mods; original
+HDZero Goggle) the three signals are on the connector between the module-bay board and the
+goggle, i.e. the **goggle-side connector of the bay board**. On a stock goggle they do
+**not** reach the 9-pin analog module connector; they appear there only after the wiki's
+3-wire mod. Goggle 2: expected to be the same, not documented.
 
-1. Remove any module from the bay. Copy `bay_gpio_pattern.sh` as `develop.sh`. Boot.
-2. Pattern (3 rounds): 10 s all low; then 1 beep -> GPIO 192 (PG0) high for 10 s; 2 beeps ->
-   GPIO 193 (PG1); 3 beeps -> GPIO 194 (PG2). Note for each: which contact, which voltage.
+**How to measure: only as in [docs/module-bay-mod-safety.md](../../docs/module-bay-mod-safety.md),
+checklist step 4**: one hook clip on one connector pin per boot, attached with the goggle
+**off** and checked with the ohmmeter first (above 10 Ω to ground, to the supply and to each
+neighbouring connector pin); never move a probe on the connector while the goggle is on.
+Only the pin under test is ever an output; the other two stay inputs, so a clip that touches
+a neighbour by mistake does not join two driven outputs.
+
+1. Remove any module from the bay. Copy `bay_gpio_pattern.sh` as `develop.sh`. Goggle off:
+   attach the clip (step 4). Boot.
+2. Pattern (3 rounds): 10 s nothing driven (all inputs); then 1 beep -> GPIO 192 (PG0) high
+   for 10 s; 2 beeps -> GPIO 193 (PG1); 3 beeps -> GPIO 194 (PG2). Note after how many beeps
+   your pin goes high, and its voltage. Power off before you move the clip to the next pin.
 3. 4 long beeps: finished, pins put back, app started. **One long beep** right after boot
    means **refused**: nothing was driven, the app starts normally, the reason is in
    `bay_gpio_N.txt`.
@@ -92,6 +101,7 @@ released. Send `bay_gpio_N.txt` and the contact/voltage notes.
   interleaved or implausible latch read leads to no write, that PH_CFG0 is written only from
   the stock value and only as one of the two constants, that an IT66121 Reg04 with a video
   reset bit set leads to no IT66121 write, that `devmem` is only ever called to read, that
+  the pin finder never has two of PG0-PG2 outputs at a time (sampled at every `sleep`), that
   no FIFO register is read, and that only commands of the goggle's busybox are used.
   `ROOTFS=<extracted rootfs>` checks the commands against a real image and, with
   `qemu-arm`, runs everything under the goggle's own busybox 1.27 ash as well (it has no
@@ -102,15 +112,24 @@ released. Send `bay_gpio_N.txt` and the contact/voltage notes.
   **Not as root**: it refuses (a stub that were bypassed would reach the host's real
   `i2cset`, `mount` and `kill`); from a root shell use `utilities/dev/run_probe.sh run`,
   which runs it as an unused uid in its own pid namespace.
-* `sh utilities/probe/test/mutants.sh`: 16 mutants with one safety property broken each
+* `sh utilities/probe/test/mutants.sh`: 18 mutants with one safety property broken each
   (e.g. the app never resumed, no trap, a single latch read, PH_CFG0 written from any
-  value, Reg04 unchecked, devmem given a value); the tests must fail on every one.
-  `MUT_OLD=<dir>` also runs an older kit (the review's mutant). Not as root either
-  (`utilities/dev/run_probe.sh mutants`).
+  value, Reg04 unchecked, devmem given a value, the pin finder driving two pins); the tests
+  must fail on every one. `MUT_OLD=<dir>` also runs an older kit (the review's mutant). Not
+  as root either (`utilities/dev/run_probe.sh mutants`).
 * `sh utilities/probe/test/it66121_seq_test.sh`: IT66121 register sequence unchanged with
   HDMI audio off; with it on, Reg04 never written with a video/HDCP/RCLK reset bit, also
-  with failing or garbled I2C reads. `sh utilities/probe/test/it66021_edid_test.sh`: the
-  EDID as the IT66021 serves it (checksums, CEA structure, audio descriptor).
-  `sh utilities/probe/test/hdmi_boot_test.sh`: the boot step (`hdmi_audio_boot`) and its
-  record. `sh utilities/probe/test/pcmbridge_test.sh`: the record daemon's bridge (never
-  writes PH_CFG0, refuses I2S0 unless HDMI Out Audio is in effect this boot).
+  with failing or garbled I2C reads, and nothing but the stock 0x14 written when Reg04 is not
+  as the stock init leaves it or two reads differ. `sh utilities/probe/test/it66021_edid_test.sh`:
+  the EDID as the IT66021 serves it (checksums, CEA structure, audio descriptor). Both compare
+  with upstream a85841d, taken from git (or `BASE_SRC=<a tree of it>`; without either they
+  are skipped, exit 77). `sh utilities/probe/test/hdmi_boot_test.sh`: the boot step
+  (`hdmi_audio_boot`) and its record. `sh utilities/probe/test/pcmbridge_test.sh`: the record
+  daemon's bridge (never writes PH_CFG0, refuses I2S0 unless HDMI Out Audio is in effect this
+  boot). Each test program runs under a time limit (`TEST_TIMEOUT`, default 300 s).
+* `utilities/probe/test/c_mutants.sh`: 22 mutants of the C safety code (the boot step, the
+  shared `sunxi_dump` access, the IT66121 Reg04 guard, the EDID, the bridge, the module bay's
+  register read and status), each run against the test that covers it (these four and
+  `utilities/module_bay_test`); every one must be killed, except one marked equivalent (it
+  cannot change an outcome). From the git worktree (the IT66121/IT66021 tests need the base);
+  needs no root.

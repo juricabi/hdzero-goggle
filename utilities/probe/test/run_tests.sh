@@ -654,6 +654,9 @@ for shn in $SHELLS; do
         env_run "$sh" sd bay_gpio_pattern.sh
         o="$R/mnt/extsd/bay_gpio_1.txt"
         need pattern grep -q "cycle 3: GPIO 194 high" "$o"
+        need each-pin-driven sh -c "grep -q 'cycle 3: GPIO 192 high' '$o' && grep -q 'cycle 3: GPIO 193 high' '$o'"
+        # (stub sleep: never two of GPIO 192-194 outputs at a time)
+        need one-output-at-a-time sh -c "! grep -q 'outputs at once' '$M/violations'"
         need pg-restored grep -q "PG_CFG0 restored: 0x22777000 -> 0x22777777" "$o"
         need released dirs_released
         need all-back all_back
@@ -661,7 +664,8 @@ for shn in $SHELLS; do
         need no-violation no_viol
         need where grep -q "goggle-side connector" "$o"
         need voltage grep -q "3.3 V or 1.8 V" "$o"
-        verdict "$lbl: bay sd: runs on a stock goggle, pins and PG_CFG0 back, app started once" "$o"
+        need step-4 grep -q "checklist step 4" "$o"
+        verdict "$lbl: bay sd: runs on a stock goggle, one pin an output at a time, pins and PG_CFG0 back, app started once" "$o"
         stop_apps
         # SSH mode with the app running: refuses, starts nothing (no second app), stops nothing
         setup "$T"
@@ -678,10 +682,11 @@ for shn in $SHELLS; do
         env_run "$sh" ssh bay_gpio_pattern.sh
         o="$R/mnt/extsd/bay_gpio_1.txt"
         need pattern grep -q "cycle 3: GPIO 194 high" "$o"
+        need one-output-at-a-time sh -c "! grep -q 'outputs at once' '$M/violations'"
         need released dirs_released
         need all-back all_back
         need no-app-started apps_ok 0
-        verdict "$lbl: bay ssh without the app: runs, puts everything back, starts no app" "$o"
+        verdict "$lbl: bay ssh without the app: runs, one pin an output at a time, puts everything back, starts no app" "$o"
         stop_apps
         # SD-card mode but an app runs already: refused, still one app
         setup "$T"

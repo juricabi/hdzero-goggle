@@ -9,21 +9,23 @@ goggle uses is not documented, and **the evidence points to 1.8 V**:
 * The official Goggle 1 system configuration (`sys_config.fex` inside
   `Recovery/HDZG_OS.bin` of the recovery package `HDZEROGOGGLE_Rev20250319.zip`) lists
   the PMIC's regulators in `[regulator0]`. `vcc-pg` is on **`axp2101_bldo1`** (line
-  1636 of that file), together with `vcc18-pc`, `vcc18-lcd`, `vcc18-dsi`, `vcc18-hdmi`,
-  `vcc18-cmbcsi0`, `vcc18-cmbcsi1`, `vcc18-pf` and `vcc18-wifi`: every load on that
-  regulator whose name carries a voltage is a 1.8 V load. The 3.3 V supplies are
-  elsewhere (`vcc-io`, `vcc33-pc`, `vcc-pa`, `vcc-pd` on `dcdc1`, which the file sets to
-  3.3 V; `vcc-pf` on `aldo4`, 3.3 V). `vcc-pg` appears on no other regulator.
+  1636: `regulator11 = "axp2101_bldo1 none vcc18-pc vcc-lvds vcc18-lcd vcc18-dsi vcc-tv
+  vcc18-hdmi vcc18-cmbcsi0 vcc18-cmbcsi1 vcc-efuse vcc18-pf vcc-pg vcc18-wifi
+  vcc-dcxo-io"`): every load on that regulator whose name carries a voltage is a 1.8 V
+  load. The 3.3 V supplies are elsewhere (`vcc-io`, `vcc33-pc`, `vcc-pa`, `vcc-pd` on
+  `dcdc1`, which the file sets to 3.3 V; `vcc-pf` on `aldo4`, 3.3 V). `vcc-pg` appears
+  on no other regulator.
 * The file does not set bldo1's voltage: `;bldo1_vol = 1001800` (1.8 V, on) in
   `[power_sply]` (line 47) and `;pc_bias = "axp233:bldo1:1800"` in `[gpio_bias]` (line
   27) are both commented out. The voltage then comes from the PMIC's default or the boot
   loader, which the file does not show.
-* One name points the other way: `[wlan]` gives the WiFi chip's I/O supply as
-  `wlan_io_regulator = "vcc33-wifi"` (line 1190), a name that no regulator in
-  `[regulator0]` carries.
+* One name points the other way: `[wlan]` gives the WiFi chip's power and I/O supply as
+  `wlan_power` / `wlan_io_regulator = "vcc33-wifi"` (lines 1189-1190), a name that no
+  regulator in `[regulator0]` carries.
 
-So: **probably 1.8 V, unproven.** Names are not a measurement, and nobody has measured
-a goggle. [analysis]
+So: **probably 1.8 V, unproven: a guess from names** (the independent review of
+2026-11-13 read the same lines again). Names are not a measurement, and nobody has
+measured a goggle; Check Pins settles it. [analysis]
 
 **How it is settled, with nothing soldered:** Module Bay > **Check Pins** (checklist
 step 3). It shows the bank supply as the SoC itself reports it (PIO_POW_VAL bit 6:
@@ -489,27 +491,29 @@ on the meter.
 
    If the row says "Not read: …" instead: "set Module to None first" → Module = None
    (step 1); "switch WiFi off first" → WiFi as in step 1; "pins in use by WiFi" →
-   switch the goggle off and on with WiFi off; then click again.
+   switch the goggle off and on with WiFi off; "pin state unknown" → reboot and retry (if
+   it stays, report it: the pin finder of step 4 will refuse too); then click again.
    *Stop if* the two reads show different voltages (one 1.8 V, the other 3.3 V), or the
    row still says "Not read: no GPIO access" on both of 2 clicks after a fresh boot.
 4. **Only if step 3 showed "? V": the pin finder.** (Otherwise go on with step 5. The
    same procedure can also confirm, before you solder, which connector pin is PG0, PG1
    and PG2; step 20 checks the order after the mod anyway.) `utilities/probe/
-   bay_gpio_pattern.sh` drives PG0, PG1, PG2 high one after the other
-   (`utilities/probe/README.md`, part 3); here you read them with clip leads, one
-   connector pin per boot:
+   bay_gpio_pattern.sh` drives PG0, PG1, PG2 high one after the other, only the pin under
+   test an output, the other two inputs (`utilities/probe/README.md`, part 3); here you
+   read them with clip leads, one connector pin per boot:
    * goggle off; bay empty; WiFi off (the script refuses while the WiFi driver is
      loaded); copy the script to the SD card root and name it `develop.sh`;
    * goggle still off: attach a hook clip (meter red lead) to the leg of one of the
      three connector pins of pkendall64's photos, so that it touches nothing else; push
      a short piece of solid wire into socket hole 8 and clip the black lead to it; with
-     the meter on ohms, the clip must read above 10 Ω to hole 8, and above 10 Ω to hole 9
-     (for this one reading hold the black probe tip in hole 9, goggle off). Then it
-     touches no ground or supply pin; with the bay board in, the SoC's protection diodes
-     can make a signal pin read anything from a few hundred Ω upward, which is fine.
-     Switch the meter to DC volts;
-   * power on and listen: 10 s all low, then 1 beep → PG0 high for 10 s, 2 beeps → PG1,
-     3 beeps → PG2; three rounds, about 3 minutes; 4 long beeps: finished (the goggle
+     the meter on ohms, the clip must read above 10 Ω to hole 8, above 10 Ω to hole 9
+     (for this one reading hold the black probe tip in hole 9, goggle off), and above
+     10 Ω to each neighbouring pin of the connector (the black probe tip on the
+     neighbour's leg, goggle off). Then it touches no ground or supply pin and no other
+     signal; with the bay board in, the SoC's protection diodes can make a signal pin read
+     anything from a few hundred Ω upward, which is fine. Switch the meter to DC volts;
+   * power on and listen: 10 s nothing driven, then 1 beep → PG0 high for 10 s, 2 beeps →
+     PG1, 3 beeps → PG2; three rounds, about 3 minutes; 4 long beeps: finished (the goggle
      app then starts). One long beep right after boot means refused: nothing was driven,
      the reason is in `bay_gpio_N.txt` on the card;
    * note after how many beeps your pin goes high and the voltage; power off; move the
@@ -517,9 +521,9 @@ on the meter.
      card.
 
    Highs of 3.0-3.6 V: **path R**. Highs of 1.6-2.0 V: **path S**.
-   *Stop if* the clip reads 10 Ω or less to hole 8 or hole 9 with the goggle off (it
-   touches a ground or supply pin, or you cannot place it on that pin alone: then do not
-   run this step at all); a pin never reads above 0.5 V in all three rounds (not a PG
+   *Stop if* the clip reads 10 Ω or less to hole 8, hole 9 or a neighbouring connector pin
+   with the goggle off (it touches a ground or supply pin or another signal, or you cannot
+   place it on that pin alone: then do not run this step at all); a pin never reads above 0.5 V in all three rounds (not a PG
    pin: check against the photos); or a high reads between 2.0 V and 3.0 V, or above
    3.6 V.
 5. **WiFi after Check Pins.** (Skip it if your goggle has no WiFi.) WiFi Module: Enable =

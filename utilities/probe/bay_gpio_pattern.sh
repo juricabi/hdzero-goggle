@@ -4,21 +4,25 @@
 #
 # Purpose: (a) confirm where GPIO 192 / 193 / 194 (PG0 / PG1 / PG2 = GPIO_MODULE_CLK /
 # _DAT / _CS in src/core/defines.h) arrive, and (b) read their high level: about 3.3 V or
-# about 1.8 V (the I/O voltage of port G is a board supply; no register tells it).
-# Where to measure (pkendall64's wiki "Analog Module Backpack Control", Hardware mods,
-# original HDZero Goggle): the three signals are on the connector between the module-bay
-# board and the goggle, the GOGGLE-SIDE connector of the bay board. On a stock goggle they
-# do NOT reach the 9-pin analog module connector; only after the 3-wire mod of the wiki
-# do they also appear on it. Measure each contact of the goggle-side connector against
-# ground (after the mod: also the 9-pin connector). Goggle 2: the same is expected but
-# not documented - just measure.
+# about 1.8 V (the SoC reports port G's supply in PIO_POW_VAL, which Check Pins shows; this
+# is for when that reads "? V", or to confirm which connector pin is which).
+# Where (pkendall64's wiki "Analog Module Backpack Control", Hardware mods, original HDZero
+# Goggle): the three signals are on the connector between the module-bay board and the
+# goggle, the GOGGLE-SIDE connector of the bay board. On a stock goggle they do NOT reach
+# the 9-pin analog module connector; only after the 3-wire mod of the wiki do they also
+# appear on it. How to measure: docs/module-bay-mod-safety.md, checklist step 4: one clip
+# on one pin per boot, attached with the goggle OFF and checked with an ohmmeter (above
+# 10 ohms to ground, the supply and each neighbouring pin); never move a probe on the
+# connector while the goggle is on.
+# Only the pin under test is ever an output: the other two stay inputs (high impedance) all
+# the time, so a clip that also touches a neighbouring pin never joins two driven outputs.
 # Pattern, repeated 3 times:
-#   all three low ............................................. 10 s
-#   1 beep  -> GPIO 192 (PG0) high, others low ................ 10 s, then low 3 s
-#   2 beeps -> GPIO 193 (PG1) high, others low ................ 10 s, then low 3 s
-#   3 beeps -> GPIO 194 (PG2) high, others low ................ 10 s, then low 3 s
+#   nothing driven (all three inputs) ......................... 10 s
+#   1 beep  -> GPIO 192 (PG0) output, high, others inputs ..... 10 s, then input again, 3 s
+#   2 beeps -> GPIO 193 (PG1) output, high, others inputs ..... 10 s, then input again, 3 s
+#   3 beeps -> GPIO 194 (PG2) output, high, others inputs ..... 10 s, then input again, 3 s
 #   finally 4 long beeps: pins put back exactly as found, goggle app started.
-# The contact that reads high right after N beeps is GPIO 191+N; note its voltage.
+# The pin that reads high right after N beeps is GPIO 191+N; note its voltage.
 #
 # Refuses (one long beep, nothing driven, reason in the report) unless all hold:
 #   - the goggle app is not running (its module-bay code drives the same pins);
@@ -481,32 +485,42 @@ if ! pg_all "$PG_ORIG" "7"; then
     PG_ORIG=""
     refuse "PG0-PG2 are not 'IO disable' (PG_CFG0 = $(hex "$p0")): something uses them"
 fi
-log "checks passed, driving the pattern (hold ${HOLD}s)"
-log "measure on the goggle-side connector of the module-bay board (after the 3-wire mod also"
-log "on the 9-pin module connector), each contact against ground, bay EMPTY:"
-log "  after 1 beep: contact with GPIO 192 (PG0) high  -> which contact, voltage (about 3.3 V or 1.8 V)?"
-log "  after 2 beeps: GPIO 193 (PG1) high               -> which contact, voltage?"
-log "  after 3 beeps: GPIO 194 (PG2) high               -> which contact, voltage?"
+log "checks passed, driving the pattern (hold ${HOLD}s); only the pin under test is an output"
+log "the clip on ONE pin of the goggle-side connector of the module-bay board (after the 3-wire mod"
+log "also the 9-pin module connector), attached with the goggle off (docs/module-bay-mod-safety.md,"
+log "checklist step 4), meter against ground, bay EMPTY:"
+log "  after 1 beep: GPIO 192 (PG0) high  -> does your pin go high? voltage (about 3.3 V or 1.8 V)?"
+log "  after 2 beeps: GPIO 193 (PG1) high -> ?"
+log "  after 3 beeps: GPIO 194 (PG2) high -> ?"
 sync
 
+# Every pin an input first; then each in turn an output (low, high, low) and an input again:
+# never two of them outputs at the same time (a clip touching two pins joins no outputs).
 for p in $PINS; do
     echo "$p" > "$G/export" 2> /dev/null
     EXPORTED="$EXPORTED $p"
-    echo low > "$G/gpio$p/direction" 2> /dev/null || refuse "cannot make GPIO $p a low output"
+    echo in > "$G/gpio$p/direction" 2> /dev/null || refuse "cannot make GPIO $p an input"
 done
 
+stop() { # (pins may have been driven already: the EXIT trap puts them back)
+    log "STOPPED: $*"
+    beep 1 1500000
+    exit 1
+}
 cycle=1
 while [ "$cycle" -le 3 ]; do
-    log "cycle $cycle: all low"
+    log "cycle $cycle: nothing driven (all inputs)"
     sleep "$HOLD"
     i=1
     for p in $PINS; do
         beep "$i"
+        echo low > "$G/gpio$p/direction" 2> /dev/null || stop "cannot make GPIO $p a low output"
         sleep 1
-        log "cycle $cycle: GPIO $p high (announced by $i beep(s))"
+        log "cycle $cycle: GPIO $p high (announced by $i beep(s)), the other two inputs"
         echo 1 > "$G/gpio$p/value"
         sleep "$HOLD"
         echo 0 > "$G/gpio$p/value"
+        echo in > "$G/gpio$p/direction" 2> /dev/null
         sleep "$GAP"
         i=$((i + 1))
     done
