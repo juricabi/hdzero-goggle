@@ -117,10 +117,11 @@ MUTANTS = [
         ("        if (!line_out_by_source)\n            context.line_out = true;", "        context.line_out = true;")]),
     # review defect 7 and the 250 ms watcher
     ("watcher: quick pass reads every control", M, [
-        ("        if (!full && !is_reset_control(name))\n            continue;\n", "")]),
+        ("        if (!full && !is_reset_control(name))\n            continue;\n",
+         "        if (0 && !full && !is_reset_control(name))\n            continue;\n")]),
     ("watcher: no full pass", M, [
         ("const bool full = recheck_now || rechecking || backoff || ++pass >= AUDIO_MIXER_WATCH_FULL;",
-         "const bool full = recheck_now || rechecking || backoff;")]),
+         "const bool full = recheck_now || rechecking || backoff || (++pass >= AUDIO_MIXER_WATCH_FULL && 0);")]),
     ("watcher: quick pass misses the line out volume", M, [('"MIC1 boost AMP gain control", "ADC input gain control", "ADC volume",',
                                                             '"MIC1 boost AMP gain control", "ADC input gain control", "ADC volume", "x",'),
                                                            ('"LADC input Mixer MIC1 boost Switch", "lineout volume", "DAC volume",',

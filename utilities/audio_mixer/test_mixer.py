@@ -712,6 +712,20 @@ def test_watcher(h):
             fail(test, f"{h.marks[1] - h.marks[0]} batches within {within} ms")
         else:
             ok(test)
+    # ... also while the watcher waits out a backoff (here: the codec was unreadable for a while, so
+    # the next pass is 8 periods away): audio_mixer_recheck() means a full pass at once (above, the
+    # recheck window's short period alone would find the change within one period)
+    test = f"{h.target} watcher, recheck during a backoff"
+    lines = codec_lines(base_codec(h.target, libmedia=False)) + ["init", "wait", "dump", "codec_fail 1",
+                                                                   f"sleep {WATCH_MS * 3}", "codec_fail 0"]
+    lines += codec_lines(dict(cm.LIBMEDIA_RESET)) + ["mark", "recheck", f"sleep {WATCH_MS}", "mark", "dump"]
+    h.run(mixer_ini(values), lines)
+    before, after = h.dumps[0], h.dumps[-1]
+    if h.marks[1] - h.marks[0] != 1 or after != before:
+        fail(test, f"{h.marks[1] - h.marks[0]} batches within {WATCH_MS} ms of the recheck, "
+                   f"differences {sorted(k for k in after if after[k] != before.get(k))}")
+    else:
+        ok(test)
 
     # a codec that cannot be read: logged once, looked at again with a backoff, watched again
     test = f"{h.target} watcher, codec not readable"
@@ -765,7 +779,9 @@ def test_daemon_restart(h):
                 ("HDMI in", old, ["line_out 0"]),
                 ("Volume 0 on an analog source", dict(old, headphones=0, phones_at_boot=1), ["line_out 1"]),
                 ("HDMI in, Record Headphone Mix with mic", dict(old, rec_mix=1, mic=4), ["line_out 0"]),
-                ("HDMI in audio, Volume 0, mix", dict(old, rec_mix=1, hdmi=4, headphones=0), ["line_out 0", "live_dac 1"])):
+                ("HDMI in audio, Volume 0, mix", dict(old, rec_mix=1, hdmi=4, headphones=0), ["line_out 0", "live_dac 1"]),
+                # the DAC plays, but neither the headphones nor the recording need it
+                ("HDMI in audio, Volume 0, no mix", dict(old, rec_mix=0, hdmi=4, headphones=0), ["line_out 0", "live_dac 1"])):
             test = f"{h.target} daemon restart, old Audio Source {audio_source}, {name}"
             lines = codec_lines(base_codec(h.target)) + ["init", "apply", "wait"] + start + ["wait", "dump", "mark"]
             lines += codec_lines(dict(cm.LIBMEDIA_RESET)) + [f"sleep {WATCH_MS * 2 + 30}", "mark", "dump"]
@@ -774,12 +790,22 @@ def test_daemon_restart(h):
             dac = "live_dac 1" in start
             reset = cm.daemon_restart(before)
             allowed = cm.recorded_via_mix(before, dac_active=dac)
+            if dac and values.get("rec_mix", 0) == 0:
+                # The reset itself switches the left DAC into the output mixer (LIBMEDIA_RESET), which no
+                # mixer setting can prevent (and the HDMI-in bridge stops with the daemon anyway): here
+                # only the state before it shows the rule. Line out off, nothing recorded through the
+                # mix: no source in any output mixer (the DAC neither).
+                allowed |= {"dac"}
+                on = sorted(k for k, v in before.items() if "Output Mixer" in k and k.endswith("Switch") and v)
+                if on:
+                    fail(test, f"line out off and no mix, yet in the output mixers: {on}")
+                    continue
             noise = cm.heard(reset, dac_active=dac) - allowed
             if cm.heard(before, dac_active=dac):
                 fail(test, f"line out not off before the reset: {cm.heard(before, dac_active=dac)}")
             elif noise:
                 fail(test, f"after the reset the headphones get {sorted(noise)}")
-            elif values.get("rec_mix", 0) == 0 and cm.heard(reset, dac_active=dac):
+            elif values.get("rec_mix", 0) == 0 and cm.heard(reset, dac_active=dac) - allowed:
                 fail(test, "not silent after the reset")
             elif after != before or h.marks[1] - h.marks[0] != 1:
                 fail(test, f"the reset not undone within {WATCH_MS * 2} ms ({h.marks[1] - h.marks[0]} batches)")
