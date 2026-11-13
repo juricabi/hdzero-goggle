@@ -113,8 +113,13 @@ class Harness:
         ini_path = os.path.join(case, "setting.ini")
         with open(ini_path, "w") as f:
             f.write(ini)
+        before = os.stat(ini_path)
         script = "\n".join([f"ini {ini_path}"] + lines) + "\n"
         p = subprocess.run([self.binary], input=script, cwd=case, capture_output=True, text=True, timeout=timeout)
+        # written at all (minIni writes a new file and renames it over): also a write that leaves
+        # the same text, e.g. a section written and removed again
+        after = os.stat(ini_path)
+        self.ini_rewritten = (after.st_ino, after.st_mtime_ns) != (before.st_ino, before.st_mtime_ns)
         if p.returncode != 0:
             raise RuntimeError(f"harness failed ({p.returncode}): {p.stderr[-2000:]}")
         batches, queries, codec = [], [], {}
@@ -411,8 +416,9 @@ def test_loading(h):
         if query(queries, "RX ") != [f"RX {want['rx_audio']}"]:
             fail(test, f"receiver audio {query(queries, 'RX ')}")
             continue
-        # a stock setting.ini is not written at all (no [mixer] until the Audio page changes something)
-        if after != ini:
+        # a stock setting.ini is not written at all (no [mixer] until the Audio page changes something):
+        # neither its text changed nor the file rewritten
+        if after != ini or h.ini_rewritten:
             fail(test, f"setting.ini written at start-up: {after!r}")
             continue
         ok(test)

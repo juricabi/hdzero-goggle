@@ -59,7 +59,7 @@ MUTANTS = [
         ("            ini_puts(AUDIO_MIXER_SECTION, NULL, NULL, SETTING_INI);", "            (void)key;")]),
     ("load: [mixer] written at start-up (stock setting.ini)", M, [
         ("        mixer = defaults;\n", "        mixer = defaults;\n        ini_putl(AUDIO_MIXER_SECTION, \"version\", AUDIO_MIXER_VERSION, SETTING_INI);\n")]),
-    ("save: the version never written", M, [("    if (wrote && !section_written) {", "    if (0) {")]),
+    ("save: the version never written", M, [("    if (wrote && !section_written) {", "    if (wrote && !section_written && 0) {")]),
     ("save: the version written first", M, [
         ("    bool wrote = false;\n", "    bool wrote = false;\n    if (!section_written)\n        ini_putl(AUDIO_MIXER_SECTION, \"version\", AUDIO_MIXER_VERSION, SETTING_INI);\n")]),
     ("switches in table order (off before on)", R, [
@@ -70,7 +70,7 @@ MUTANTS = [
         ('    if (line_out)\n        cset(&cb, "Lineout Switch", 1);', '    cset(&cb, "Lineout Switch", line_out);')]),
     ("line out not mono (LOMIX)", R, [('cset(&cb, "LINEOUTL Mux", 1);', 'cset(&cb, "LINEOUTL Mux", 0);')]),
     ("playback: right DAC not in the mix", R, [
-        ('{"Right Output Mixer DACR Switch", dac_on}', '{"Right Output Mixer DACR Switch", 0}')]),
+        ('{"Right Output Mixer DACR Switch", out_dac}', '{"Right Output Mixer DACR Switch", 0}')]),
     ("playback: DAC at 160", R, [("#define DAC_PLAYBACK       152", "#define DAC_PLAYBACK       160")]),
     ("migration: receiver audio always on", R, [
         ("v[AUDIO_MIXER_RX_AUDIO] = old_value == 2;", "v[AUDIO_MIXER_RX_AUDIO] = old_value == 2 || v[AUDIO_MIXER_AV] > 0;")]),

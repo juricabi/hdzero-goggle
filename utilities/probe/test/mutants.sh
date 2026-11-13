@@ -26,7 +26,7 @@ single-latch-read@all@s/is_hex "\$lr_1" \&\& \[ "\$lr_1" = "\$lr_2" \] \&\& \[ "
 pause-ignores-aww@all@s/\[ "\$pz_ok" = 1 \] \&\& \[ -z "\$(latch_users)" \] \&\& return 0/[ "$pz_ok" = 1 ] \&\& return 0/@test
 no-guardian@all@s/^guard_start() {$/guard_start() { return 0/@test probe
 ph-write-not-strict@hdmi_audio_test.sh@s/^    elif \[ "\$RV" -ne \$((PH_STOCK)) \]; then$/    elif false; then/@test
-ph-found-i2s0-undone@hdmi_audio_test.sh@s/^\(        log "PH_CFG0 \$(hex "\$RV"): PH1-PH3 are I2S0 already\)/        PH_SET=$PH_AUDIO; \1/@test
+ph-found-i2s0-undone@hdmi_audio_test.sh@s/^        log "PH_CFG0 \$(hex "\$RV"): PH1-PH3 are I2S0 already/        PH_SET=$PH_AUDIO; &/@test
 it04-unchecked@hdmi_audio_test.sh@s/^it04_ok() {.*$/it04_ok() { true; }/@test
 it-restore-skipped@hdmi_audio_test.sh@s/^        it_restore$/        :/@test
 probe-devmem-writes@hdmi_audio_probe.sh@s/devmem 0x0300B0FC 32 > /devmem 0x0300B0FC 32 0x35517751 > /@probe
@@ -37,7 +37,8 @@ bay-no-function-restore@bay_gpio_pattern.sh@s/^        if lat_write \$PG_CFG0 "\
 start-app-in-ssh-mode@all@s/^    \[ "\$MODE" = sd \] || return 0$/    :/@bay
 '
 
-echo "$MUTANTS" | while IFS='@' read -r name files expr groups; do
+# (printf, not echo: dash's echo turns a backslash and a digit into a control character)
+printf '%s\n' "$MUTANTS" | while IFS='@' read -r name files expr groups; do
     [ -n "$name" ] || continue
     d="$T/$name"
     mkdir -p "$d/test"

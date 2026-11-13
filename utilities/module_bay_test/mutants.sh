@@ -25,7 +25,8 @@ run() { # name file perl-expression
         echo "SURVIVED $1"
         bad=1
     else
-        echo "killed   $1: $(grep -m1 -E 'FAIL$|error' "$d/log" | sed 's/  */ /g')"
+        # the first failing check or compiler error (not the cc line, whose -Werror matched "error")
+        echo "killed   $1: $(grep -m1 -E 'FAIL$|error:|Error [0-9]' "$d/log" | sed 's/  */ /g')"
     fi
 }
 # the final review's own mutants
