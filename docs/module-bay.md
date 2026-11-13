@@ -23,14 +23,14 @@ stock goggle (host tests, below).
 | Row | |
 |---|---|
 | Module | **None** (default), Switch (Fat Shark), rapidFIRE, SteadyView, SteadyView X |
-| Mode | depends on the Module (below); greyed out when it has none |
-| Check Pins | click: reads PG0-PG2 as inputs (never drives) and shows the PG bank supply |
+| Mode | depends on the Module (below); greyed out when it has none ("Mode needs the bay power switch" for SteadyView on a goggle without one) |
+| Check Pins | "Click to read the 3 bay pins (read only)": reads PG0-PG2 as inputs (never drives) and shows the PG bank supply |
 | < Back | |
 
 A change applies (and is stored) when its list is closed with a click. Below the
 rows: the status line and a three-line note:
 
-* Module control needs the 3-wire bay mod with 4.7k resistors.
+* Module control needs the 3-wire bay mod (resistors or level shifter).
 * It pauses while WiFi is on: WiFi uses the same pins.
 * Furious True-D with MOD 1.17: choose rapidFIRE.
 
@@ -38,26 +38,29 @@ rows: the status line and a three-line note:
 
 | text | when |
 |---|---|
-| Bay pins not used | Module = None |
+| Off, bay pins untouched | Module = None |
 | Paused while WiFi is on (orange) | WiFi enabled |
 | Paused, pins in use by WiFi (orange) | the WiFi driver is loaded or PG0-PG2 are in their SDIO function (checked again every 5 s) |
+| Paused, pin state unknown (orange) | PG0-PG2's function (PG_CFG0) could not be read: sunxi_dump missing, its lock busy for 1 s, or three reads that disagree (left alone, checked again every 5 s) |
 | Waiting for bay power | the bay is switched off (batch 2 hardware) |
 | Waiting for the module to boot | less than 2.0 s since the bay was powered on |
-| Active (green) and the module's channel, e.g. "R1", "CH5" | the goggle controls the module |
+| Sending (green) and the module's channel, e.g. "R1", "CH5" | the goggle controls the module; on the Goggle 2 "(not video source)" follows while the built-in receiver is the analog source |
+| No module bay | BoxPro |
 
-**Check Pins** shows "PG bank 3.3 V" or "PG bank 1.8 V" (orange: resistors alone
-cannot drive a 5 V module, module-bay-mod-safety.md section 5), from the SoC's own
-PIO_POW_VAL register (bit 6), and the three levels: "PG0 1 PG1 0 PG2 1", "~" for a
-line that changed during the 100 ms read. It reads only while the goggle does not
-control the bay, WiFi is off and the pins are not in their SDIO function;
-otherwise "not read:" and why (module control active, WiFi on, used by WiFi
-(SDIO), no GPIO access). Reading exports the pins as GPIO inputs and unexports
-them again; they stay GPIO inputs, high-impedance like the "IO disabled" state
-`rc.sh` leaves them in. Use it with Module = None, before choosing a Module.
+**Check Pins** shows "Reading...", then for example "Pins 1 0 1, 3.3 V": the levels of
+PG0, PG1 and PG2 (1, 0, or "toggling" for a line that changed during the 100 ms read)
+and the PG bank supply from the SoC's own PIO_POW_VAL register (bit 6): "3.3 V",
+"1.8 V" (orange: resistors alone cannot drive a 5 V module, module-bay-mod-safety.md
+section 5) or "? V" (not readable). It reads only while the goggle does not control the
+bay, WiFi is off and the pins are not in their SDIO function; otherwise "Not read: set
+Module to None first", "Not read: switch WiFi off first", "Not read: pins in use by
+WiFi", "Not read: pin state unknown" (PG_CFG0 not readable) or "Not read: no GPIO
+access". Reading exports the pins as GPIO inputs and unexports them again; they stay
+GPIO inputs, high-impedance like the "IO disabled" state `rc.sh` leaves them in. Use it
+with Module = None, before choosing a Module.
 
-Every string on the page is in all five language files. The Switch pin orders
-("PG0=1 PG1=2 PG2=4") stay as they are in every language: they are pin labels, and
-a key with "=" is not possible in the language files.
+Every string on the page is in all five language files. The Switch modes are "Wiring A
+(standard)" to "Wiring F" (which SoC pin carries which band bit, below).
 
 **setting.ini.** `[module] type`: pkendall64's numbering, 0 None, 1 Switch, 2
 rapidFIRE, 3 SteadyView, 4 SteadyView X; any other value (5, the custom True-D
@@ -332,12 +335,12 @@ pull-ups, pull-downs or are ever driven; their logic level; its pin 8.
 
 Bench procedure (after module-bay-mod-safety.md steps 1-14, Module None):
 1. Wildfire in the bay, bay powered: Check Pins with FS SWITCH OFF, then ON.
-   1 1 1: pull-ups; 0 0 0: pull-downs or nothing connected; "~": it drives a pin:
-   stop. Multimeter across each resistor: ≤ 0.3 V.
-2. FS SWITCH ON, Module Switch, pin order PG0=1 PG1=2 PG2=4. Dial CH1, CH2, CH3,
+   1 1 1: pull-ups; 0 0 0: pull-downs or nothing connected; "toggling": it drives a
+   pin: stop. Multimeter across each resistor: ≤ 0.3 V.
+2. FS SWITCH ON, Module Switch, Mode "Wiring A (standard)". Dial CH1, CH2, CH3,
    CH5 with a few seconds each and watch the Wildfire's channel:
-   * it goes to channel n of its band for CHn (in some pin order): absolute, the
-     Switch type fits; try the other orders until CH1-CH8 map to 1-8;
+   * it goes to channel n of its band for CHn (in some wiring): absolute, the
+     Switch type fits; try the other wirings (B-F) until CH1-CH8 map to 1-8;
    * it moves by one channel per change, whatever the size: steps; the goggle has
      no step type, so it cannot be controlled;
    * nothing happens: FS SWITCH is something else, or the wiring is wrong.

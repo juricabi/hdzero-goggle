@@ -31,11 +31,11 @@ without a `setting.ini` (fresh install, or after Storage > Reset): both are show
 | Audio | Audio > Headphones > A/V In | `[mixer] av` | 8 = +6 dB | AV-in jack, bay module, built-in receiver in the headphones (stock: +6 dB) |
 | Audio | Audio > Headphones > HDMI In | `[mixer] hdmi` | 4 = 0 dB | HDMI-in audio in the headphones; only with HDMI In Audio on |
 | Audio | Audio > Headphones > Playback Volume | `[mixer] playback` | 27 | headphone volume while a DVR file plays (stock: 27) |
-| Audio | Audio > Recording > Record What I Hear | `[mixer] rec_mix` | 0 = No | Yes: the headphone mix at its levels goes into the recording (the only way HDMI-in audio is recorded) |
+| Audio | Audio > Recording > Record Headphone Mix | `[mixer] rec_mix` | 0 = No | Yes: the headphone mix at its levels goes into the recording (the only way HDMI-in audio is recorded) |
 | Audio | Audio > Recording > Record Mic / Line In / A/V In | `[mixer] rec_mic`, `rec_line_in`, `rec_av` | the stock Audio Source (`[record] audio_source`, default Mic): that one Yes, the others No | that source recorded at full level, heard or not (once only when it is already in the recorded mix) |
 | Audio | Audio > Recording > Record Level | `[mixer] dvr_level` | 3 = 0 dB | ADC input gain of everything recorded, streamed and sent to HDMI out |
 | Audio | Audio > Inputs > Mic Boost / Line In Boost | `[mixer] mic_boost`, `line_in_boost` | 4 / 4 | mic preamps (stock: 4 / 4) |
-| Audio | Audio > Inputs > Analog RX Audio (Goggle 2, BoxPro) | `[mixer] rx_audio` | On only if the stock Audio Source was A/V In | audio output of the built-in analog receiver (stock: the same rule) |
+| Audio | Audio > Inputs > Built-in RX Audio (Goggle 2, BoxPro) | `[mixer] rx_audio` | On only if the stock Audio Source was A/V In | audio output of the built-in analog receiver (stock: the same rule) |
 | Audio | (internal) | `[mixer] phones_at_boot` | 0 | 0: as stock, the headphones get the mix from the first switch to an analog source on (booting into HDZero leaves them silent). Set to 1 by the first change of a headphone level on the Audio page: from then on what the page shows is heard from boot |
 | Audio | (internal) | `[mixer] version` | 2 | written with the section; a section without it (or of a test build) is taken over from `[record] audio_source` |
 | Audio | (was Record Option > Audio Source) | `[record] audio_source` | 0 Mic | read once to set the defaults above; no longer written (the row moved to the Audio page) |
@@ -62,14 +62,15 @@ differences that remain:
 * The Record Option page no longer has "Audio Source"; the same choice is Record Mic /
   Line In / A/V In on the Audio page (migrated, so the recording is the same).
 * The audio mixer writes the codec in one batch and keeps it: the record daemon's mixer
-  reset (SD check, SD format, DVR playback) is undone within about 2 s, where the stock
-  firmware kept it until the next source switch; DVR playback uses both DAC channels and
+  reset (SD check, SD format, DVR playback) is undone within about 250 ms (the watcher's
+  period; at once after the Storage page's SD repair or format), where the stock firmware
+  kept it until the next source switch; DVR playback uses both DAC channels and
   mutes the live sources (stock: left channel only, mixed with the A/V monitor); a
   change is made without the clicks of the stock one-control-per-process scripts.
   Details: [audio.md](audio.md), "Differences from the old firmware".
 * At every boot `rc.sh` runs `/mnt/app/app/hdmi_audio_boot`; with HDMI Out Audio off it
   reads and writes no register, only the RAM file `/tmp/hdmi_audio.boot`. The app's own
-  `aww` / `awr` calls (display set-up, battery ADC) take the lock
+  `aww` / `awr` calls (display set-up, the analog-RSSI ADC) take the lock
   `/tmp/.sunxi_dump.lock` shared by every `sunxi_dump` user (at most 1 s, then they run
   as stock did); the same registers and values as stock.
 

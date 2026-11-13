@@ -134,7 +134,12 @@ firmware:
 3. **Headphones at boot**: headphones on before you power on; listen during the first
    10 s after boot. The official firmware is silent there; note anything you hear (how
    long, what it sounds like): the review found that up to about 2 s of A/V-in sound are
-   possible after the SD card check at boot.
+   possible after the SD card check at boot (since b2f120d the mixer disconnects the
+   sources and checks every 250 ms). Listen also for a **click** right after the SD check
+   (and after a card insertion, an SD repair or format): when the record daemon restarts it
+   switches the line out on, and the mixer switches it off again where the official
+   firmware left it on and silent, so one extra click each time is possible (a suspicion
+   of the review of 2026-11-13, not measured).
 4. **Analog with the bay module**: insert the module only with the goggle off; then
    Source > Analog. The picture must be as before. With Module = None (the default) the
    goggle does not set the module's channel: set it on the module.
@@ -206,8 +211,9 @@ short, its order:
    ends with the PG bank voltage. If it shows "? V", the pin finder
    (`bay_gpio_pattern.sh`, checklist step 4, with clip leads attached while the goggle
    is off). If Check Pins refuses, its row says why: "Not read: set Module to None
-   first", "Not read: switch WiFi off first", "Not read: pins in use by WiFi" or "Not
-   read: no GPIO access".
+   first", "Not read: switch WiFi off first", "Not read: pins in use by WiFi", "Not
+   read: no GPIO access", or "Not read: pin state unknown" (reboot and retry; if it
+   stays, report it: the pin finder will refuse too).
 3. After Check Pins, switch WiFi on and confirm that it still connects (checklist
    step 5), then off again.
 4. Then the mod, by the voltage: **resistors (3.3 V, path R)** or **the LM339 shifter
@@ -221,8 +227,9 @@ short, its order:
 
 Put **only** the official `HDZERO_GOGGLE-77-206-9.6.0-rc1.bin` on the card's root and
 flash it exactly as in section 3. The update script is the goggle's own (`update_goggle.sh`
-is unchanged in this build: git shows no change under `mkapp/app/script/` since the
-upstream base a85841d), and the official image carries its own RX, VA and app.
+is unchanged in this build: `rc.sh` is the only script under `mkapp/app/script/` this build
+changes, by the `hdmi_audio_boot` step), and the official image carries its own RX, VA and
+app.
 
 The same applies when the goggle reached its menu but shows no HDZero video after an
 update (for example after the wrong file was chosen, section 2): flash the official
@@ -241,10 +248,12 @@ The official "Goggle Emergency Firmware Update Process"
 
 The review says the goggle's boot loader (u-boot) does this before the app starts, so
 it works even when the app partition is broken; the official page does not say which
-part of the system does it, and this was not checked here. Afterwards the goggle runs
-the firmware of that recovery package (dated 2025-03-19; which app version its
-`HDZG_OS.bin` carries was not checked); flash 9.6.0-rc1 from the menu (8.1) if you want
-it.
+part of the system does it, and this was not checked here. `HDZG_OS.bin` also carries a
+complete app partition (`app.fex`: app 9.5.0, with the stock `rc.sh`; the review of
+2026-11-13 read this from the image, it did not run it), so the emergency update
+presumably replaces a broken app partition as well. Afterwards the goggle runs the
+firmware of that recovery package (dated 2025-03-19, app 9.5.0); flash 9.6.0-rc1 from
+the menu (8.1) if you want it.
 
 ### 8.3 Last resort: PhoenixCard
 
@@ -271,7 +280,8 @@ page is lost; set Record Option > Audio Source again.
   review's download only.
 * The official update page (docs.hd-zero.com/goggles-firmware-update) was read for this
   document; its figures were not, so follow the page itself for PhoenixCard.
-* Whether the emergency update (8.2) or PhoenixCard (8.3) resets the settings, and which
-  app version `HDZG_OS.bin` carries.
+* Whether the emergency update (8.2) or PhoenixCard (8.3) resets the settings, and whether
+  the emergency update really writes the app partition `HDZG_OS.bin` carries (read from
+  the image, not run).
 * That u-boot performs the emergency update (the review's statement; not on the official
   page).

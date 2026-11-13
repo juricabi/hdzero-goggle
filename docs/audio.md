@@ -14,7 +14,7 @@ V536 BSP, Linux 4.9; checked against the copy in the Lindenis V536 SDK).
   jack. 0 is off.
 * **Recording**: one ADC records, and the same capture feeds the DVR, the WiFi stream audio
   (Stream Audio) and HDMI out audio (HDMI Out Audio). It takes
-  * the headphone mix at its levels ("Record What I Hear"), and/or
+  * the headphone mix at its levels ("Record Headphone Mix"), and/or
   * each analog source straight from its input at full level ("Record Mic", "Record Line
     In", "Record A/V In"), whether it is heard or not.
 
@@ -24,7 +24,7 @@ V536 BSP, Linux 4.9; checked against the copy in the Lindenis V536 SDK).
 * HDMI-in audio can only be recorded through the headphone mix: there is no direct path
   from the DAC into the ADC.
 * After a firmware update the page is set to what the stock firmware did: the old Audio
-  Source recorded directly, A/V In heard at +6 dB, Record What I Hear = No.
+  Source recorded directly, A/V In heard at +6 dB, Record Headphone Mix = No.
 
 ## The Audio page
 
@@ -40,14 +40,14 @@ the window is. Below the list one line of help for the selected row.
 | | A/V In | Off, -4.5..+6.0 dB | `av` 0..8 | +6.0 dB |
 | | HDMI In (greyed while HDMI In Audio is not in effect; not on the BoxPro) | Off, -4.5..+6.0 dB | `hdmi` 0..8 | 0.0 dB |
 | | Playback Volume | Off, 1..31 | `playback` | 27 |
-| Recording (DVR, WiFi Stream, HDMI Out) | Record What I Hear | Yes / No | `rec_mix` | No |
+| Recording (DVR, WiFi Stream, HDMI Out) | Record Headphone Mix | Yes / No | `rec_mix` | No |
 | | Record Mic | Yes / No, "Mix" | `rec_mic` | the old Audio Source |
 | | Record Line In | Yes / No, "Mix" | `rec_line_in` | the old Audio Source |
 | | Record A/V In | Yes / No, "Mix" | `rec_av` | the old Audio Source |
 | | Record Level | -4.5..+6.0 dB | `dvr_level` 0..7 | 0.0 dB |
 | Inputs | Mic Boost | 0..7 | `mic_boost` | 4 |
 | | Line In Boost | 0..7 | `line_in_boost` | 4 |
-| | Analog RX Audio (Goggle 2, BoxPro) | On / Off | `rx_audio` | On only if the old Audio Source was A/V In |
+| | Built-in RX Audio (Goggle 2, BoxPro) | On / Off | `rx_audio` | On only if the old Audio Source was A/V In |
 | HDMI Audio (experimental; Goggle 1, Goggle 2; from the next start) | HDMI Out Audio | On / Off | `[hdmi] audio_out` | Off |
 | | HDMI In Audio | On / Off | `[hdmi] audio_in` | Off |
 | | < Back | | | |
@@ -61,7 +61,7 @@ What a pilot reads from it:
 
 * "Mic at Off and still recorded?" Yes, when Record Mic = Yes: the Headphones section is
   what you hear, the Recording section what is recorded. The two are independent except
-  through Record What I Hear.
+  through Record Headphone Mix.
 * "Record Mic = No, but the mic is recorded?" Only through What I Hear: then the row
   shows "Mix" and the hint says "In What I Hear: recorded at its headphone level".
 * Volume never changes the recording; Record Level changes the recording, the stream and
@@ -83,7 +83,7 @@ What a pilot reads from it:
  DAC   playback / HDMI-in audio ────────┼──────────────────────────sw─┘      (LINEOUTL/R Mux = OMIX_LR_SUM)
                                         │                                │
            Record Mic / Line In / A/V In│  sw: MIC1, MIC2, LINEIN        │ sw: "l_output/r_output mixer"
-                                        v                                v     (Record What I Hear)
+                                        v                                v     (Record Headphone Mix)
                           L/R ADC INPUT MIXER ─[ADC input gain -4.5..+6 dB]─ ADC ─[ADC volume, digital]─ AIF1
                                                                                   ─> record daemon: DVR, stream, HDMI out
 ```
@@ -104,7 +104,7 @@ What a pilot reads from it:
 * Shared: `ADC input gain control` (Record Level; analog, every ADC input), `ADC volume`
   (digital), `lineout volume` (Volume; analog, after the L+R sum, so it never reaches the
   ADC).
-* Record What I Hear takes the output mixers into the ADC (`LADC input Mixer l_output
+* Record Headphone Mix takes the output mixers into the ADC (`LADC input Mixer l_output
   mixer Switch`, `RADC input Mixer r_output mixer Switch`): the left ADC takes the left
   output mixer, the right ADC the right one. The recording is stereo and taken before the
   L+R sum and before `lineout volume`, while the headphones get left + right of both
@@ -116,7 +116,7 @@ What a pilot reads from it:
 
 ### When a source is in the mix and recorded directly
 
-A source counts as "in the recorded mix" when Record What I Hear is on and its level in
+A source counts as "in the recorded mix" when Record Headphone Mix is on and its level in
 effect is above 0. Then its direct ADC switch stays off. The level in effect: while a DVR
 file plays, the live sources leave the output mixer (only the file is heard), so a source
 with Record = Yes is recorded directly during playback. When a level goes from 0 to above
@@ -152,7 +152,7 @@ sleeps `pa_msleep_time` = 160 ms in the PA-off event).
 | `MIC1_G boost stage output mixer control`, `MIC2 BST stage to L_R outp mixer gain`, `LINEINL/R to L_R output mixer gain` | Mic, Line In, A/V In: 0 = output mixer switch off, 1..8 = register 0..7 |
 | `Left/Right Output Mixer MIC1Booststage / MIC2Booststage / LINEINL(R) Switch` | level above 0 (and no DVR playback) |
 | `Left/Right Output Mixer DACL / DACR Switch`, `DAC volume` | DVR playback (152), or HDMI-in audio at the HDMI In level (152 + 2 x (level - 4)) |
-| `LADC/RADC input Mixer l_output / r_output mixer Switch` | Record What I Hear |
+| `LADC/RADC input Mixer l_output / r_output mixer Switch` | Record Headphone Mix |
 | `LADC/RADC input Mixer MIC1 boost / MIC2 boost / LINEINL(R) Switch` | Record Mic / Line In / A/V In, unless that source is in the recorded mix |
 | `MIC1 / MIC2 boost AMP gain control` | Mic Boost, Line In Boost |
 | `ADC input gain control` | Record Level; `ADC volume` stays 160 |
@@ -184,7 +184,7 @@ it.
 ### Analog receiver audio
 
 The built-in analog receiver (RTC6715 on Goggle 2 and BoxPro) has an audio output
-of its own, switched by the receiver itself: the "Analog RX Audio" row
+of its own, switched by the receiver itself: the "Built-in RX Audio" row
 (`[mixer] rx_audio`), used by every `rtc6715.init(1, ...)` for the live picture
 (source change and head-tracker wake-up). It is independent of the A/V In level:
 the AV-in jack and the module bay share the codec's LINEIN with the receiver, and
@@ -206,15 +206,21 @@ after boot, the SD repair and format of the Storage page) and in the app itself 
 every DVR file played. When the daemon gets there is not known to the app.
 
 So the mixer's worker watches the codec instead of guessing: while it has nothing
-to apply, it reads every control of the last batch back every 2 s, straight from
-`/dev/snd/controlC0` with ALSA control ioctls (`audio_mixer_codec.c`, no process),
-and applies the current state again as soon as one differs. A reset is therefore
-undone within about 2 s whenever it happens, and logged (`codec changed by someone
-else`). If the codec does not keep a value (three re-applies in a row for the same
-state), the worker logs it and stops re-applying until the state changes. `amixer
-cset` by hand on one of the mixer's controls is undone within 2 s; to experiment,
-change the setting on the Audio page or stop the app. The emulator has no codec, so it
-does not watch.
+to apply, it reads the codec back every 250 ms, straight from `/dev/snd/controlC0`
+with ALSA control ioctls (`audio_mixer_codec.c`, no process): each pass the 12
+controls that libmedia_mpp's reset writes, every 8th pass (2 s) every control of the
+last batch. It applies the current state again as soon as one differs, so a reset is
+undone within about 250 ms whenever it happens, and logged (`codec changed by someone
+else`). After the Storage page's SD repair or format (`audio_mixer_recheck()`) it
+looks at once and then every 50 ms for 6 s. While the line out is off, the output
+mixers hold only what the recording of the mix needs, so the reset's line out at 27
+has nothing else to play meanwhile. If the codec does not keep a value, the worker
+re-applies three times at once, logs it, and then keeps trying with a backoff (2 s,
+doubling, at most 60 s) without ever giving up; a codec that cannot be read and an
+amixer that fails are logged once and retried the same way. `amixer cset` by hand on
+one of the mixer's controls is undone within about 2 s (250 ms for the 12 above); to
+experiment, change the setting on the Audio page or stop the app. The emulator has no
+codec, so it does not watch.
 
 The mixer is the only part of the firmware that writes these controls: the HDMI-in
 audio code tells the mixer (`audio_mixer_set_live_dac()`) instead of running amixer, so
@@ -242,7 +248,7 @@ starts and `false` (waiting for the codec) before it stops. Then DACL -> left an
 -> right output mixer at the HDMI In level (1..8 = -4.5..+6 dB around the playback
 level: `DAC volume` 152 + 2 x (level - 4), 146..160, never above the 160 of before;
 default 0 dB), the other live sources stay (mic + HDMI-in audio works), and the line out
-stays on (Volume permitting) although HDMI in is the source. Record What I Hear records
+stays on (Volume permitting) although HDMI in is the source. Record Headphone Mix records
 it; the direct Record switches cannot (no analog path from the DAC into the ADC; the
 digital loopbacks `AIF1 AD0L/R Mixer AIF1 DA0L/R Switch`, `DACL/R Mixer ADCL/R Switch`
 are never set, the test checks every batch). DVR playback takes precedence.
@@ -268,7 +274,7 @@ driver and the dumps:
   (The codec model reproduces this; the test checks it.)
 
 So, with this driver, per-source record levels exist only through the headphone mix
-(Record What I Hear: the recording follows the headphone levels), plus the direct inputs
+(Record Headphone Mix: the recording follows the headphone levels), plus the direct inputs
 at one shared Record Level. A split-stereo recording (group A left, group B right, own
 digital levels) is possible but not implemented: players put the two on separate ears. A
 mono mix with independent levels needs a kernel change (the four missing AVE routes) or a
@@ -279,7 +285,7 @@ software mix in the record daemon.
 * 0 dB of a source = gain register 3, the driver default seen in the dump. The
   sources can only be trimmed between -4.5 and +6 dB; below that there is only off.
 * Mixing adds signals: two sources peaking together can reach +6 dB over either one.
-  With Record What I Hear that sum goes into the ADC, plus any direct source, so keep
+  With Record Headphone Mix that sum goes into the ADC, plus any direct source, so keep
   mixed hot sources at 0 dB or below, or lower Record Level (down to -4.5 dB). Nothing in
   this path limits; whether it clips audibly has not been measured.
 * What the page shows in dB, and why: only the values whose dB scale the BSP driver
@@ -295,7 +301,7 @@ software mix in the record daemon.
   keys `dvr_mode`, `dvr_mic`, `dvr_line_in`, `dvr_av` are removed): taken over from
   `[record] audio_source`, so the goggle records and plays exactly what it did before:
   * Record Mic / Line In / A/V In: only the old source = the old
-    `audio_sel.sh in_mic1 / in_mic2 / in_linein` routing; Record What I Hear = No;
+    `audio_sel.sh in_mic1 / in_mic2 / in_linein` routing; Record Headphone Mix = No;
   * headphones as the old `out_on`: A/V +6 dB (register 7), line out 31, mics off, and
     silent at boot until the first analog source (`phones_at_boot` = 0);
   * Mic/Line In Boost 4 and Record Level 3 (0 dB): what libmedia_mpp and the driver
@@ -309,7 +315,7 @@ software mix in the record daemon.
 
 * Goggle 2: A/V = LINEIN = AV-in jack, module bay and the internal receiver.
 * Goggle (1): no internal receiver, A/V = AV-in jack / module bay; the RTC6715
-  calls are no-ops, no Analog RX Audio row.
+  calls are no-ops, no Built-in RX Audio row.
 * BoxPro: same codec and the same three inputs, internal receiver like Goggle 2. Same
   page, smaller rows.
 * All three have HDMI in, but HDMI audio is supported on Goggle 1 and Goggle 2 only (the
@@ -367,17 +373,17 @@ the headphones in each source, to compare with afterwards.
 2. Record a clip in HDZero and, on Goggle 2 / BoxPro, with the built-in analog
    receiver: the same source as before is recorded at the same level.
 3. Analog receiver (Goggle 2, BoxPro), old Audio Source Mic or Line In: switch to
-   the built-in receiver; no receiver audio ("Analog RX Audio" = Off). Old source
+   the built-in receiver; no receiver audio ("Built-in RX Audio" = Off). Old source
    A/V In: receiver audio as before. The Analog RSSI page stays silent.
 4. Headphones after a switch to analog: A/V (AV-in jack or module bay) as loud as before.
    Back in HDZero it stays (as before).
 5. HDMI in: headphones silent; record a clip: the recording has the selected source.
 6. Audio page: set Mic to 0 dB: the mic is heard at once, and after a reboot into HDZero
-   too. Record What I Hear = Yes: Record Mic shows "Mix"; record a clip: the mic once (not
+   too. Record Headphone Mix = Yes: Record Mic shows "Mix"; record a clip: the mic once (not
    doubled), at its headphone level. Mic to Off: Record Mic loses "Mix", the clip has the
    mic at full level again.
 7. Dial a slider quickly: the value follows without lag; listen for clicks or drop-outs
-   while turning A/V In from Off to +6 dB and back, while switching Record What I Hear
+   while turning A/V In from Off to +6 dB and back, while switching Record Headphone Mix
    during a recording, and when a DVR file starts and stops playing.
 8. Line out volume and preamp scales: step Volume 31 -> 1 and the boosts 0 -> 7 and note
    the level; this decides whether the raw steps can be shown in dB.
