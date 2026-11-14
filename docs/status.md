@@ -80,7 +80,9 @@ Later on 2026-11-13 (all of it on the PC only: host tests against models, the em
   `mutants.sh` printed the compiler command as the reason.  No firmware code changed for these.
 - **The independent review of 2989f32..1087d5c** ([review-2026-11-13.md](review-2026-11-13.md)): Goggle 1 image at
   defaults GO; Audio page with HDMI off GO; HDMI audio on NO-GO until the read-only probe has run on the goggle;
-  a module type after the mod CONDITIONAL (checklist and Check Pins first).  Its findings are fixed: the pin
+  a module type after the mod CONDITIONAL (checklist and Check Pins first); Goggle 2 and BoxPro images at defaults
+  GO (added on 2026-11-14 after comparing them with upstream builds and their start in the emulator; Goggle 2
+  module-bay control and HDMI audio not reviewed).  Its findings are fixed: the pin
   finder drives only the pin under test (420a8a8); `utilities/probe/test/c_mutants.sh`, the checks that kill its
   survivors, time limits, the IT66121/IT66021 tests against a85841d also outside git (f68fc76); "Paused, pin state
   unknown" on the Module Bay page and the module bay test's own lock file (766f035); the doc errors and notes
