@@ -42,8 +42,8 @@ without a `setting.ini` (fresh install, or after Storage > Reset): both are show
 | Live stream audio | WiFi Module > System > Stream Audio | `[wifi] stream_audio` | false = Off | On: the RTSP stream gets an AAC track (written to `record.conf [live] audio` when the WiFi settings are applied) |
 | Live stream audio | record.conf only | `[live] audio` | 0 | set by the app from Stream Audio |
 | Live stream audio | record.conf only | `[live] audio_offset_ms` | 0 | delay of the stream's audio against its video (-500..500 ms), for lip sync |
-| HDMI audio (Goggle 1, Goggle 2) | Audio > HDMI Audio > HDMI Out Audio | `[hdmi] audio_out` | 0 = Off | On (exactly `1`), from the next start: the rc.sh step `hdmi_audio_boot` switches PH1-PH3 to I2S0 once per boot (only from the stock PH_CFG0 value), the IT66121 sends audio, the record daemon copies the recorded audio to it. Off: nothing reads or writes PH_CFG0 or any pin function |
-| HDMI audio (Goggle 1, Goggle 2) | Audio > HDMI Audio > HDMI In Audio | `[hdmi] audio_in` | 0 = Off | On (exactly `1`), from the next start: the EDID offers 48 kHz only; while HDMI in is shown, its audio is played into the codec (headphones at the HDMI In level, recorded with Record Headphone Mix) and the line out stays on during HDMI in |
+| HDMI audio (Goggle 1, Goggle 2, BoxPro; experimental, NO-GO until the probe has run on the device) | Audio > HDMI Audio > HDMI Out Audio | `[hdmi] audio_out` | 0 = Off | On (exactly `1`), from the next start: the rc.sh step `hdmi_audio_boot` switches PH1-PH3 to I2S0 once per boot (only from the stock PH_CFG0 value), the IT66121 sends audio, the record daemon copies the recorded audio to it. Off: nothing reads or writes PH_CFG0 or any pin function |
+| HDMI audio (Goggle 1, Goggle 2, BoxPro; experimental, NO-GO until the probe has run on the device) | Audio > HDMI Audio > HDMI In Audio | `[hdmi] audio_in` | 0 = Off | On (exactly `1`), from the next start: the EDID offers 48 kHz only; while HDMI in is shown, its audio is played into the codec (headphones at the HDMI In level, recorded with Record Headphone Mix) and the line out stays on during HDMI in |
 | HDMI audio | record.conf only | `[hdmi_audio] latency_ms` | 60 (key absent) | buffer of the HDMI audio bridge |
 
 Changed on purpose, also with every default: a few visible things (first-flash.md, "What
@@ -76,8 +76,8 @@ differences that remain:
 
 ## Checked in the emulator
 
-The SDL emulator of `all` (the code of 24d8ac8, after the `hdmi-hardening` merge; later
-commits change only docs and scripts), Goggle 1 and Goggle 2, each started five ways
+The SDL emulator of `all` (the code of 24d8ac8, after the `hdmi-hardening` merge; run
+again with the code of 51bf28a on 2026-11-14: the same), Goggle 1 and Goggle 2, each started five ways
 through `utilities/dev/emu_run.sh` with `utilities/dev/keys/check_start.txt`: nothing
 touched for 6 s, then the Audio page opened and scrolled through, left, the Module Bay page
 opened and left. "Stock setting.ini" is the file the stock app (upstream a85841d, in the
@@ -100,6 +100,15 @@ reads a register for it. The line out stays off until the first switch to an ana
 source, as stock. Screenshots and logs: `$EMU_OUT/shots`, `$EMU_OUT/logs` (prefixes
 `g1_`/`g2_` + start); the other key scripts of `utilities/dev/keys` were run on the goggle
 named in their first line and their screenshots checked.
+
+The same five starts on the **BoxPro** (2026-11-14, with HDMI audio enabled there; key
+script `check_start_boxpro.txt`: 2 s untouched, the Audio page opened and scrolled down
+to its last row, left; the BoxPro has no Module Bay): the same results as in the table
+(Built-in RX Audio as on the Goggle 2); the page has the HDMI In row greyed and HDMI
+Out/In Audio Off; nothing written to `setting.ini` at the start, by the page or until the
+app was stopped; with no `setting.ini` the file after the start is identical to the one
+upstream a85841d's BoxPro build writes, and the system commands are upstream's plus the
+one amixer batch. Screenshots and logs: prefix `bp_`.
 
 The language table (`TRANSLATE_STRING_NUM`, the entries one language file may have) is
 raised from 384 to 512: with the Audio page, the stream and the module bay strings the

@@ -10,10 +10,12 @@ read or written). Switches: **Audio > HDMI Audio (experimental) > HDMI Out Audio
 In Audio** (`[hdmi] audio_out` / `audio_in`); both take effect at the next start
 (section 6).
 
-Applies to the original **HDZero Goggle** (`-DHDZ_GOGGLE=ON`) and the **Goggle 2**
-(`-DHDZ_GOGGLE2=ON`). The BoxPro builds the same code but HDMI audio is not supported
-there (its device tree and board were not examined): its boot step reads and writes
-nothing and its Audio page has no HDMI audio rows.
+Applies to the original **HDZero Goggle** (`-DHDZ_GOGGLE=ON`), the **Goggle 2**
+(`-DHDZ_GOGGLE2=ON`) and, since 2026-11-14, the **BoxPro** (`-DHDZ_BOXPRO=ON`): its
+official package ships the Goggle 1's device tree and sys_config byte for byte and the
+same `rc.sh` register writes (section 2), so it runs the same code with the same checks.
+On all three the board wiring is unknown until the read-only probe has run on the device
+(section 7): **HDMI audio on is NO-GO before that**, on the BoxPro as on the goggles.
 
 Sources: `PG`/`RL` = the IT66121 Programming Guide v1.05 / Register List (`docs/`); the
 IT66121FN and IT66021FN datasheets; **V536 datasheet** = "V536-H/V526 Datasheet Revision
@@ -32,10 +34,10 @@ Control".
 | shipped firmware | audio never programmed (Reg04 audio resets stay asserted); **rc.sh re-muxes PH1 to uart4 and PH2/PH3 off at boot** | EDID advertises Basic Audio + L-PCM 2 ch 32/44.1/48 kHz; nothing captures I2S2 |
 | what this branch adds (off by default, from the next start) | HDMI Out Audio (`[hdmi] audio_out=1`): PH1-PH3 switched to I2S0 once per boot by the rc.sh step `hdmi_audio_boot` (section 4a), IT66121 audio setup in `IT66121_init()` + the ADC capture (what is recorded) copied to I2S0 | HDMI In Audio (`[hdmi] audio_in=1`): I2S2 played into the codec DAC while HDMI in is shown, a source of the audio mixer: heard at the Audio page's HDMI In level, **recorded with Record Headphone Mix**; EDID offers 48 kHz L-PCM only |
 | not possible | - | HDMI in -> HDMI out (the app switches HDMI out off while HDMI in is shown) |
-| only the device can tell | whether PH1-PH3 reach SCK/WS/I2S0 of the IT66121 in this order (G1 and G2 separately; on G2 also whether the FPGA is in the path), whether the TV plays the tone | whether the IT66021 drives SCK/WS by default, at which word clock and format |
+| only the device can tell | whether PH1-PH3 reach SCK/WS/I2S0 of the IT66121 in this order (G1, G2 and BoxPro separately; on G2 also whether the FPGA is in the path), whether the TV plays the tone | whether the IT66021 drives SCK/WS by default, at which word clock and format |
 
-Both goggles ship **the same device tree and sys_config** (byte-identical), so the
-expected answer is the same for G1 and G2; the board wiring and the Goggle-2-only
+Both goggles and the BoxPro ship **the same device tree and sys_config** (byte-identical),
+so the expected answer is the same for all three; the board wiring and the Goggle-2-only
 FPGA register 0x8A (written by `IT66121_init/close`) are the parts that can differ.
 
 ## 2. What the official OS images contain
@@ -56,8 +58,21 @@ from www.hd-zero.com, file `Recovery/HDZG_OS.bin` each.
 * No `IKCONFIG` in either kernel (so `/proc/config.gz` is expected to be absent). All sound
   drivers are built in (`/lib/modules/4.9.118` has only sunxi-wlan, vin, hdzero modules).
   No `/etc/asound.conf`: ALSA `default` = card 0.
+* **BoxPro** (examined 2026-11-14): `HDZEROBOXPRO_Rev20250715.zip` (hd-zero.com/document,
+  23,215,845 bytes, SHA-256
+  `351397af9c7edb10d4f053948f0f81f56bd892b535d9611db22767460892419e`), file
+  `Recovery/HDZB_OS.bin`, the same layout. Its `sys_config.fex` and `sunxi.fex` are
+  **byte-identical** to the Goggle 1's (Rev20250319); the decompiled device trees do not
+  differ. So daudio0 = PH1-PH3 (I2S0), daudio2 = PG10/PG11/PG13 (I2S2), the I2C buses and
+  uart4 are those of the goggles. Its stock app (9.5.1) `rc.sh` makes the same register
+  writes as the Goggle 1's (`setup_uart()`: PH_CFG0 = 0x35517751; `aww 0x050967c0`); the
+  only difference is `dispw -s vdpo 720p60` instead of 1080p50. Not examined (and not in
+  any file): the board wiring from PH1-PH3 to the IT66121 and from the IT66021 to
+  PG10/PG11/PG13, as on the goggles. Inference, not checked on a BoxPro: at 720p60 (TMDS
+  74.25 MHz, above the 27 MHz PG p.31 asks for) the IT66121 setup works unchanged, since
+  N = 6144 with the hardware-counted CTS is valid at every TMDS clock (PG p.31-33).
 
-### Sound devices in the device tree (both goggles)
+### Sound devices in the device tree (both goggles and the BoxPro)
 
 | DT node | compatible | parameters | ALSA card |
 |---|---|---|---|
@@ -240,7 +255,7 @@ a full undo.
 | situation | result |
 |---|---|
 | `audio_out` not exactly `1` (default; `01`, `true`, missing key, unreadable `setting.ini`) | no `sunxi_dump` access at all; record `pins=untouched`; HDMI out audio off |
-| BoxPro | not supported: nothing read or written whatever `setting.ini` says; no HDMI rows on the Audio page |
+| target | Goggle 1, Goggle 2 and BoxPro alike (same device tree, sys_config, rc.sh); a build for no known target: nothing read or written whatever `setting.ini` says |
 | PH_CFG0 = 0x35517751 | 0x35513331 written and verified: in effect. Not verified: 0x35517751 written back and verified, fault "pin check failed" |
 | PH_CFG0 = 0x35513331 already | not written; in effect |
 | any other value (a field HDMI audio does not own not as `rc.sh` leaves it, PH1-PH3 in neither state) | refused, not written; fault "pin check failed" |
@@ -255,7 +270,8 @@ a full undo.
 | later fault: IT66121 Reg04 check, a route the record daemon refuses (`refused: ...`) or never confirms (6 tries) | HDMI out audio off for the rest of the boot, also across app restarts (written to the record); PH1-PH3 stay I2S0 until the next boot |
 
 Host check: `utilities/probe/test/hdmi_boot_test.sh` (117 checks against a latch model
-shared by forked processes, SIGKILL at every point of the boot step and of the recovery).
+shared by forked processes, SIGKILL at every point of the boot step and of the recovery;
+built and run for each of the three targets, plus a build for no known target).
 
 ### 4b. The bridge
 
@@ -403,8 +419,9 @@ SD card):
 
 ## 6. Switching it on (experimental)
 
-**Audio > HDMI Audio (experimental)**, on the Goggle 1 and the Goggle 2 (the paths are
-unproven on both; the BoxPro's page has no HDMI audio rows). The switches only store the
+**Audio > HDMI Audio (experimental)**, on the Goggle 1, the Goggle 2 and the BoxPro (the
+paths are unproven on all three: leave both Off until the read-only probe has run on the
+device). The switches only store the
 setting (exactly `1` or `0`); nothing touches a pin function, I2S0 or the IT66121 because
 one was clicked. Both take effect at the next start:
 
@@ -454,7 +471,7 @@ both a Goggle 1 and a Goggle 2.
 | test B: I2S2 RXCNT stays 0 / WAV only 44 bytes | - | no clock on PG10/PG11: the IT66021 does not drive SCK/WS (Reg52 = 0x30 drives the pins; the source may send no audio for this EDID; check the IT66021 bank dumps) or not wired |
 | test B: RXCNT grows, WAV silent/noise | - | clocks arrive; data pin (PG13) or format mismatch: compare IT66021 banks with an audio-off dump |
 | test B: WAV plays the source audio | - | **works**: `audio_in=1`; then the device test of section 5 |
-| Goggle 1 and Goggle 2 differ | wiring differs; keep per-target defaults (`#ifdef HDZGOGGLE2`) | same |
+| Goggle 1, Goggle 2 or BoxPro differ | wiring differs; keep per-target defaults (`#ifdef HDZGOGGLE2`, `HDZBOXPRO`) | same |
 
 ## 9. Established / likely / unknown
 
@@ -474,3 +491,9 @@ both a Goggle 1 and a Goggle 2.
 | GPIO 192-194 = the firmware's module-bay CLK/DAT/CS | established (`src/core/defines.h`) | same |
 | ... on the goggle-side connector of the bay board; on the 9-pin module connector only after a 3-wire mod; I/O voltage | likely (pkendall64's wiki); voltage unknown | unknown (wiki covers the original goggle) |
 | `AUDIO_FRAME_S.mLen` = whole interleaved frame in bytes | established (libmedia_mpp disassembly); logged on the device | same |
+
+BoxPro: the rows established from the device tree, the datasheets and `rc.sh` hold as for
+G1 (identical device tree and sys_config, the same `rc.sh` writes, section 2); the wiring
+rows are only likely by analogy with the goggles (an inference: nobody has looked at its
+board), the order unknown, and whether anything sits between the SoC and the IT66121
+unknown. It has no module bay.

@@ -1,4 +1,4 @@
-# Status of the custom build, and how to continue (2026-11-13)
+# Status of the custom build, and how to continue (2026-11-14)
 
 What this branch adds to HDZero's goggle firmware 9.6.0-rc1 (upstream a85841d): the **audio mixer** (Audio page),
 **live-stream audio**, **HDMI audio** (experimental, default off) and **module bay control** (analog receiver
@@ -67,7 +67,8 @@ Later on 2026-11-13 (all of it on the PC only: host tests against models, the em
   PH_CFG0 at run time any more (only `rc.sh` and the once-per-boot step `hdmi_audio_boot`, from the exact stock
   value to one constant, only with `[hdmi] audio_out=1`); the IT66121 Reg04 is written only as constants that keep
   the video/HDCP/RCLK resets as the stock init leaves them; the Audio page's HDMI switches apply at the next start;
-  BoxPro has no HDMI audio (24d8ac8: no HDMI rows on its Audio page).  Design: [hdmi-audio.md](hdmi-audio.md).
+  BoxPro had no HDMI audio (24d8ac8: no HDMI rows on its Audio page; changed on 2026-11-14, below).  Design:
+  [hdmi-audio.md](hdmi-audio.md).
 - **The probe harness hazard** (750de50): `run_tests.sh` and `mutants.sh` refuse root; in the busybox passes the
   stubs are shell functions ahead of busybox's applets, and a shell under which any stub would be bypassed is not
   used (FAIL).  The busybox pass, which failed 13 of 23 checks before (also under `run_probe.sh`), now passes.
@@ -90,22 +91,37 @@ Later on 2026-11-13 (all of it on the PC only: host tests against models, the em
   review's in another worktree and this one) had shared `/tmp/probe-test-mutants` and garbled each other's
   mutants run.
 
-Results on `all` after the review's fixes (the firmware code of 766f035; later commits change only tests, scripts
-and docs), all on the PC:
+2026-11-14:
+
+- **HDMI audio on the BoxPro** (51bf28a), with the goggles' status: experimental, off by default, in effect from
+  the next start, **NO-GO until the read-only probe has run on the BoxPro**.  Its official package
+  `HDZEROBOXPRO_Rev20250715.zip` (SHA-256 351397af...892419e) has the Goggle 1's `sys_config.fex` and device tree
+  byte for byte and the same `rc.sh` register writes (hdmi-audio.md, section 2); its board wiring is as unknown
+  as the goggles'.  `hdmi_boot_supported()` is true on all three targets (false only for a build for no known
+  target), the Audio page has the HDMI rows on every target again; every HDMI audio C test runs for each target.
+  At defaults the BoxPro's boot step still reads and writes no register.  Not reviewed.
+
+Results on `all` with the BoxPro's HDMI audio (the firmware code of 51bf28a; later commits change only docs and a
+key script), all on the PC:
 
 | what | result |
 |---|---|
 | images, `build_all.sh` (goggle, goggle2, boxpro) | built from the commit that records these results, no compiler warnings besides the known `liblog.so` one; the SHA-256 are in the `.sha256` files next to them |
-| emulator builds and the start check of custom-build.md (both goggles, 5 starts each) | both build without warnings; in all 10 starts `setting.ini` unchanged at start-up, by the Audio page and by Module Bay, no `[mixer]`/`[hdmi]`/`[module]` written, the old Audio Source taken over (mic, line, AV); Module Bay shows "Off, bay pins untouched"; no crash |
+| emulator builds and the start checks of custom-build.md (5 starts on each of the three targets) | all three build without warnings; in all 15 starts `setting.ini` unchanged at start-up, by the Audio page and (goggles) by Module Bay, no `[mixer]`/`[hdmi]`/`[module]` written, the old Audio Source taken over (mic, line, AV); Module Bay shows "Off, bay pins untouched"; the BoxPro's Audio page has the HDMI In row greyed and HDMI Out/In Audio Off, its `setting.ini` after a start without one identical to upstream's BoxPro build; no crash |
 | `make -C utilities/module_bay_test test` | 166 pass (15, 17, 87, 3, 44) |
 | `utilities/module_bay_test/mutants.sh` | 11 of 11 killed |
-| `test_mixer.py` / `check_strings.py` | 358 pass / 153 strings in 6 languages fit |
+| `test_mixer.py` / `check_strings.py` | 358 pass (every scenario, HDMI-in audio included, for each target) / 153 strings in 6 languages fit, the BoxPro layout with the HDMI rows |
 | `utilities/audio_mixer/mutants.py` | 50 of 50 killed |
 | `run_live.sh all` | all pass (ring buffer 7254 checks native and under qemu-arm, `t_aidev.sh` 8); the ARM runs (`RTSPLIVE=arm`) not repeated: nothing they run changed since 1087d5c |
 | `run_probe.sh run` | 65 pass |
 | `run_probe.sh mutants` | 18 of 18 killed |
-| `it66121_seq_test.sh`, `it66021_edid_test.sh`, `pcmbridge_test.sh`, `hdmi_boot_test.sh` | 10, 5, 26, 118 pass; on a copy outside git the first two say SKIP, with `BASE_SRC` 10 and 5 pass |
-| `utilities/probe/test/c_mutants.sh` | 22 mutants: 21 killed, 1 equivalent (the Reg04 read-modify-write) |
+| `it66121_seq_test.sh`, `it66021_edid_test.sh`, `pcmbridge_test.sh`, `hdmi_boot_test.sh` | 12, 5, 78, 352 pass: the IT66121 sequence with audio off identical to a85841d and audio on checked for each target; pcmbridge 26 and hdmi_boot 117 checks for each of the three targets (every refuse path: PH_CFG0 not the stock value -> refused, nothing written), plus a build for no known target that touches nothing; on a copy outside git the first two say SKIP (exit 77), with `BASE_SRC` 12 and 5 pass |
+| `utilities/probe/test/c_mutants.sh` | 24 mutants: 23 killed, 1 equivalent (the Reg04 read-modify-write); new: the BoxPro left out of `hdmi_boot_supported()` again, any target supported |
+
+Before 51bf28a (at 2420218, BoxPro without HDMI audio) the same suites gave: module_bay_test 166, its mutants
+11/11, test_mixer 358, check_strings 153 strings, mixer mutants 50/50, `run_live.sh all` pass, `run_probe.sh run`
+65, its mutants 18/18, the C tests 10, 5, 26, 118 (`pcmbridge_test.sh` and `hdmi_boot_test.sh` for the Goggle 1
+build only, plus one "not supported" check for the BoxPro), `c_mutants.sh` 22 (21 killed, 1 equivalent).
 
 Before the review (1087d5c) the same suites gave: module_bay_test 160, its mutants 11/11, test_mixer 358,
 check_strings 152 strings, mixer mutants 49 of 50 in the full run (the survivor killed by a check added
@@ -117,7 +133,8 @@ the same engineers; nothing here replaces the goggle.
 
 ## Open, in this order
 
-1. Optional: a look by a reviewer at the fixes of the review of 2026-11-13 (766f035..HEAD).
+1. Optional: a look by a reviewer at the fixes of the review of 2026-11-13 and the BoxPro's HDMI audio
+   (766f035..HEAD).
 2. The images of the commit that records these results are in `/root/hdz/out` on the developer's machine (not
    released); first-flash.md uses `<commit>`.  Rebuild with `build_all.sh` after any further change.
 
@@ -125,9 +142,10 @@ Then, on the goggle (only by its owner, never flashed without asking):
 
 3. **First flash** of the Goggle 1 image, [first-flash.md](first-flash.md) (the official 9.6.0-rc1 image and the
    recovery package kept on the PC), the untouched checks, then the Audio page.
-4. Optional: the HDMI audio probe kit (read-only first; it now also reads PH_CFG0 through `/dev/mem` and shows the
-   boot record `/tmp/hdmi_audio.boot`).  HDMI Out / In Audio stay Off until the probe shows the wiring (the
-   review of 2026-11-13: NO-GO before that); switched on, they apply after a restart.  Only the goggle can tell:
+4. Optional: the HDMI audio probe kit on the Goggle 1, Goggle 2 or BoxPro (read-only first; it now also reads
+   PH_CFG0 through `/dev/mem` and shows the boot record `/tmp/hdmi_audio.boot`).  HDMI Out / In Audio stay Off
+   until the probe has shown the wiring of that device (the review of 2026-11-13: NO-GO before that; the same
+   for the BoxPro); switched on, they apply after a restart.  Only the device can tell:
    the PH_CFG0 value `rc.sh` really leaves (the boot step refuses anything but 0x35517751), the `sunxi_dump` answer
    format, whether Reg04 reads 0x14 after the stock init, and whether PH1-PH3 reach the IT66121.
 5. **Module bay**: bay empty, Module None, WiFi off: **Check Pins** to learn the PG bank voltage (3.3 V: the

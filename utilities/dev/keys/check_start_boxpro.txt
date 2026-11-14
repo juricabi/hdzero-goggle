@@ -1,0 +1,27 @@
+# BoxPro: 6 s untouched, the Audio page opened and scrolled down to the HDMI Audio section (c00/c06/c09 copy setting.ini; no Module Bay)
+w 2
+s c00_untouched
+c c00
+k w 2
+w 1
+s c01_audio_preview
+k d
+w 1
+s c02_audio_top
+k s 5
+s c03_audio_sel5
+k s 5
+s c04_audio_sel10
+k s 4
+s c05_audio_hdmi_out
+k s
+s c06_audio_hdmi_in
+k s
+s c07_audio_back
+l d
+w 1
+s c08_menu_after_audio
+c c06
+w 2
+s c09_menu_end
+c c09

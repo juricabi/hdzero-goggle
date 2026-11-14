@@ -38,7 +38,7 @@ the window is. Below the list one line of help for the selected row.
 | | Mic | Off, -4.5..+6.0 dB | `mic` 0..8 | Off |
 | | Line In | Off, -4.5..+6.0 dB | `line_in` 0..8 | Off |
 | | A/V In | Off, -4.5..+6.0 dB | `av` 0..8 | +6.0 dB |
-| | HDMI In (greyed while HDMI In Audio is not in effect; not on the BoxPro) | Off, -4.5..+6.0 dB | `hdmi` 0..8 | 0.0 dB |
+| | HDMI In (greyed while HDMI In Audio is not in effect) | Off, -4.5..+6.0 dB | `hdmi` 0..8 | 0.0 dB |
 | | Playback Volume | Off, 1..31 | `playback` | 27 |
 | Recording (DVR, WiFi Stream, HDMI Out) | Record Headphone Mix | Yes / No | `rec_mix` | No |
 | | Record Mic | Yes / No, "Mix" | `rec_mic` | the old Audio Source |
@@ -48,7 +48,7 @@ the window is. Below the list one line of help for the selected row.
 | Inputs | Mic Boost | 0..7 | `mic_boost` | 4 |
 | | Line In Boost | 0..7 | `line_in_boost` | 4 |
 | | Built-in RX Audio (Goggle 2, BoxPro) | On / Off | `rx_audio` | On only if the old Audio Source was A/V In |
-| HDMI Audio (experimental; Goggle 1, Goggle 2; from the next start) | HDMI Out Audio | On / Off | `[hdmi] audio_out` | Off |
+| HDMI Audio (experimental; from the next start) | HDMI Out Audio | On / Off | `[hdmi] audio_out` | Off |
 | | HDMI In Audio | On / Off | `[hdmi] audio_in` | Off |
 | | < Back | | | |
 
@@ -318,10 +318,11 @@ software mix in the record daemon.
   calls are no-ops, no Built-in RX Audio row.
 * BoxPro: same codec and the same three inputs, internal receiver like Goggle 2. Same
   page, smaller rows.
-* All three have HDMI in, but HDMI audio is supported on Goggle 1 and Goggle 2 only (the
-  BoxPro's device tree and board were not examined): the BoxPro's page has neither the
-  HDMI In row nor the HDMI Audio section (the paths are unproven on the goggles too,
-  hdmi-audio.md).
+* All three have HDMI in and out, and the HDMI In row and the HDMI Audio section on every
+  target: the BoxPro's official package has the Goggle 1's device tree and sys_config
+  byte for byte and the same `rc.sh` register writes (hdmi-audio.md, section 2). The
+  paths are unproven on all three (hdmi-audio.md): HDMI audio stays Off until the
+  read-only probe has run on the device.
 
 ## Differences from the old firmware
 
