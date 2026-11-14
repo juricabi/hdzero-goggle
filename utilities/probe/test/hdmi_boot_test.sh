@@ -4,7 +4,8 @@
 # of /sys/class/sunxi_dump (one address latch, PH_CFG0) shared by forked processes. Checks:
 #  - PH1-PH3 are switched at most once per boot (app restarts, a second run, stale, deleted or
 #    corrupt records), never with [hdmi] audio_out other than exactly "1" (then no sunxi_dump
-#    access at all), never on BoxPro;
+#    access at all); every check below runs for each target (Goggle 1, Goggle 2, BoxPro), and a
+#    build for no known target reads and writes nothing whatever setting.ini says;
 #  - every refuse path (fields not owned not as rc.sh leaves them, PH1-PH3 in neither known
 #    state, reads that do not agree, garbage or other formats, lock not available, /tmp not
 #    writable) leaves PH_CFG0 untouched and reports "pin check failed";
@@ -379,18 +380,26 @@ mk() { # $1 output, $2 target macro
     # shellcheck disable=SC2086,SC2090
     gcc -Wall -I"$T/inc" $D "-D$2" -o "$1" "$T/harness.c" "$T/hb.o" "$T/sr.o" "$T/sys.o" "$T/minIni.o"
 }
-mk "$T/t" HDZGOGGLE
-rc=0
-timeout -k 5 "$TL" "$T/t" "$T/run" 2> "$T/log.txt" || rc=$?
-if [ "$rc" != 0 ]; then
-    [ "$rc" = 124 ] && echo "FAIL the test program did not end within $TL s (a hang: a lock left held?)"
-    echo "--- log:"
-    tail -30 "$T/log.txt"
-    exit 1
-fi
+# every target the same: the BoxPro ships the Goggle 1's device tree, sys_config and rc.sh writes
+# (docs/hdmi-audio.md), so it gets the same switch and every refuse path
+for tgt in HDZGOGGLE HDZGOGGLE2 HDZBOXPRO; do
+    echo "== $tgt"
+    rm -rf "$T/run"
+    mkdir -p "$T/run"
+    mk "$T/t_$tgt" "$tgt"
+    rc=0
+    timeout -k 5 "$TL" "$T/t_$tgt" "$T/run" 2> "$T/log.txt" || rc=$?
+    if [ "$rc" != 0 ]; then
+        [ "$rc" = 124 ] && echo "FAIL $tgt: the test program did not end within $TL s (a hang: a lock left held?)"
+        echo "--- log:"
+        tail -30 "$T/log.txt"
+        exit 1
+    fi
+done
 
-# BoxPro: HDMI audio not supported: nothing read or written, whatever setting.ini says
-cat > "$T/boxpro.c" << 'C'
+# a build for no known target: HDMI audio not supported, nothing read or written, whatever
+# setting.ini says
+cat > "$T/notarget.c" << 'C'
 #include <stdio.h>
 #include "record/hdmi_boot.h"
 int main(int argc, char **argv) {
@@ -398,17 +407,20 @@ int main(int argc, char **argv) {
     (void)argc;
     int r = hdmi_boot_run(argv[1]);
     hdmi_boot_app_start(true, &o, &i, &f);
-    int ok = r == 0 && !o && !i && f == HB_FAULT_NONE && hdmi_boot_read(&b) == HB_REC_OK && !b.supported && !hdmi_boot_supported();
-    printf("%s BoxPro: audio_out=1 audio_in=1 in setting.ini: not supported, nothing touched, no fault\n", ok ? "PASS" : "FAIL");
+    int ok = r == 0 && !o && !i && f == HB_FAULT_NONE && hdmi_boot_read(&b) == HB_REC_OK && !b.supported && !hdmi_boot_supported() &&
+             !hdmi_boot_out_ready();
+    printf("%s no known target: audio_out=1 audio_in=1 in setting.ini: not supported, nothing touched, no fault\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
 C
+rm -rf "$T/run"
+mkdir -p "$T/run"
 printf '[hdmi]\naudio_out=1\naudio_in=1\n' > "$T/run/setting.ini"
-rm -f "$T/run/boot"
+echo "5eed0001-1234-4abc-8def-012345678901" > "$T/run/boot_id"
 # shellcheck disable=SC2089,SC2090
 D="-DHDMIA_REQ_FILE=\"$T/run/req\" -DHDMIA_STATE_FILE=\"$T/run/state\" -DHDMIA_LOCK_FILE=\"$T/run/lock\" -DHDMIA_BOOT_FILE=\"$T/run/boot\" -DHDMIA_BOOT_ID_FILE=\"$T/run/boot_id\""
-# the real sysfs nodes do not exist on a PC: any access would fail the boxpro run (it must make none)
+# no target macro; the real sysfs nodes do not exist on a PC: any access would fail this run (it must make none)
 # shellcheck disable=SC2086,SC2090
-gcc -Wall -Werror -I"$T/inc" $D -DHDZBOXPRO -o "$T/bp" "$T/boxpro.c" "$T/inc/record/hdmi_boot.c" "$T/inc/record/soc_reg.c" "$T/minIni.o"
-timeout -k 5 "$TL" "$T/bp" "$T/run/setting.ini" 2>> "$T/log.txt" || exit 1
+gcc -Wall -Werror -I"$T/inc" $D -o "$T/nt" "$T/notarget.c" "$T/inc/record/hdmi_boot.c" "$T/inc/record/soc_reg.c" "$T/minIni.o"
+timeout -k 5 "$TL" "$T/nt" "$T/run/setting.ini" 2>> "$T/log.txt" || exit 1
 echo "ALL HDMI BOOT TESTS PASSED"

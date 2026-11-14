@@ -33,10 +33,12 @@ const char *hdmi_boot_fault_text(hb_fault_t f) {
 }
 
 bool hdmi_boot_supported(void) {
-#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
-    return true; // identical device tree and sys_config (I2S0 pin group PH1-PH3), identical rc.sh
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2) || defined(HDZBOXPRO)
+    // the official packages of all three ship a byte-identical device tree and sys_config (I2S0
+    // pin group PH1-PH3) and the same rc.sh register writes (docs/hdmi-audio.md, section 2)
+    return true;
 #else
-    return false; // BoxPro: its device tree and board were not examined (docs/hdmi-audio.md)
+    return false; // a target whose files were not compared: nothing read or written
 #endif
 }
 

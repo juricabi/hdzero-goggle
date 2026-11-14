@@ -34,8 +34,8 @@ extern "C" {
 // what is in effect for this boot (/tmp/hdmi_audio.boot); configures the two drivers
 void hdmi_audio_load(void);
 
-// HDMI audio exists on this target: Goggle 1 and Goggle 2 true, BoxPro false (its device
-// tree / board were not examined). The Audio page hides both HDMI audio rows when false.
+// HDMI audio exists on this target: true on Goggle 1, Goggle 2 and BoxPro (the same device tree,
+// sys_config and rc.sh), false on any other (src/record/hdmi_boot.c hdmi_boot_supported())
 bool hdmi_audio_supported(void);
 
 // Stored switch position: what setting.ini [hdmi] audio_out says now (exactly "1"), as last

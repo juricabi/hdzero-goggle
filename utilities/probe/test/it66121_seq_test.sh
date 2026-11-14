@@ -210,11 +210,12 @@ for v in HDZGOGGLE HDZGOGGLE2 HDZBOXPRO; do
     [ "$irc" = 124 ] && echo "FAIL $v: the injected runs did not end within $TL s"
     grep '^FAIL' "$T/i.txt" | head -5
     tail -1 "$T/i.txt" | sed "s/^\(PASS\|FAIL\) /\1 $v: /"
+    # audio on (HDMI Out Audio in effect): what it adds, and Reg04 only ever as two constants
+    timeout -k 5 "$TL" "$T/n" on > "$T/a.txt" 2> /dev/null
+    echo "$v: audio on adds $(($(grep -c '^W' "$T/a.txt") - $(grep -c '^W' "$T/n.txt"))) writes after IT66121_init():"
+    diff "$T/n.txt" "$T/a.txt" | sed -n 's/^> W 1 4c /  /p' | tr '\n' ' '
+    echo
+    r04=$(diff "$T/n.txt" "$T/a.txt" | sed -n 's/^> W 1 4c 04 //p' | tr '\n' ' ')
+    if [ "$r04" = "04 00 " ]; then echo "PASS $v: audio on: Reg04 written only as 04, 00 (audio resets released, video/HDCP/RCLK as stock)"; else echo "FAIL $v: audio on: Reg04 writes '$r04'"; rc=1; fi
 done
-timeout -k 5 "$TL" "$T/n" on > "$T/a.txt" 2> /dev/null
-echo "audio on adds $(($(grep -c '^W' "$T/a.txt") - $(grep -c '^W' "$T/n.txt"))) writes after IT66121_init():"
-diff "$T/n.txt" "$T/a.txt" | sed -n 's/^> W 1 4c /  /p' | tr '\n' ' '
-echo
-r04=$(diff "$T/n.txt" "$T/a.txt" | sed -n 's/^> W 1 4c 04 //p' | tr '\n' ' ')
-if [ "$r04" = "04 00 " ]; then echo "PASS audio on: Reg04 written only as 04, 00 (audio resets released, video/HDCP/RCLK as stock)"; else echo "FAIL audio on: Reg04 writes '$r04'"; rc=1; fi
 exit $rc

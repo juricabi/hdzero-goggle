@@ -70,7 +70,7 @@ typedef struct {
 
 const char *hdmi_boot_fault_text(hb_fault_t f); // NULL for HB_FAULT_NONE, else HDMI_AUDIO_FAULT_*
 
-bool hdmi_boot_supported(void); // HDMI audio on this target (Goggle 1, Goggle 2; not BoxPro)
+bool hdmi_boot_supported(void); // HDMI audio on this target (Goggle 1, Goggle 2, BoxPro; no other)
 // [hdmi] <key> in setting.ini is exactly "1" (as minIni reads it: spaces and a trailing comment
 // removed); any other value, a missing key or an unreadable file is false
 bool hdmi_boot_setting_is_1(const char *setting_ini, const char *key);

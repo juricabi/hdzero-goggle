@@ -11,6 +11,7 @@
 #    not read back: the start fails, the old value stays (or is written back and verified);
 #  - a sink that does not open: state "failed", AI device disabled only if nobody else uses it;
 #  - an HDMI-in source at 44.1 kHz is muted, at 48 kHz played; the request number is echoed.
+# All of it for each target (Goggle 1, Goggle 2, BoxPro).
 # SRC_TOP=<tree>: test another copy of the sources (test/c_mutants.sh uses it).
 # The test program runs under a time limit (TEST_TIMEOUT, default 300 s): a hang is a failure.
 # Usage: sh utilities/probe/test/pcmbridge_test.sh
@@ -325,20 +326,25 @@ cp "$SRC/src/record/pcmbridge.c" "$SRC/src/record/pcmbridge.h" "$SRC/src/record/
 sed -i "s|\"LOCKPATH\"|\"$T/lock\"|" "$T/harness.c"
 echo "1b6d6f8a-3c2e-4f10-9a7b-0123456789ab" > "$T/boot_id"
 # shellcheck disable=SC2089,SC2090 # the quotes are part of the macro values
-D="-DHDMIA_REQ_FILE=\"$T/req\" -DHDMIA_STATE_FILE=\"$T/state\" -DHDMIA_LOCK_FILE=\"$T/lock\" -DHDMIA_BOOT_FILE=\"$T/boot\" -DHDMIA_BOOT_ID_FILE=\"$T/boot_id\" -DHDZGOGGLE"
+D="-DHDMIA_REQ_FILE=\"$T/req\" -DHDMIA_STATE_FILE=\"$T/state\" -DHDMIA_LOCK_FILE=\"$T/lock\" -DHDMIA_BOOT_FILE=\"$T/boot\" -DHDMIA_BOOT_ID_FILE=\"$T/boot_id\""
 W="-Dopen=t_open -Dread=t_read -Dwrite=t_write -Dclose=t_close -Dflock=t_flock"
-# shellcheck disable=SC2086,SC2090 # D and W hold several options
-gcc -Wall -Wno-unused-parameter -c -I"$T/inc" $D $W -o "$T/pb.o" "$T/inc/pcmbridge.c"
-# shellcheck disable=SC2086,SC2090
-gcc -Wall -Wextra -Werror -c -I"$T/inc" $D $W -o "$T/sr.o" "$T/inc/soc_reg.c"
-# shellcheck disable=SC2086,SC2090
-gcc -Wall -Wextra -Werror -c -I"$T/inc" $D $W -o "$T/hb.o" "$T/inc/hdmi_boot.c"
 gcc -w -c -I"$T/inc" -o "$T/minIni.o" "$T/inc/minIni.c"
-# shellcheck disable=SC2086,SC2090
-gcc -Wall -I"$T/inc" $D -o "$T/t" "$T/harness.c" "$T/pb.o" "$T/sr.o" "$T/hb.o" "$T/minIni.o" -lpthread
-timeout -k 5 "$TL" "$T/t" "$T/req" "$T/state" "$T/boot" "$T/boot_id" 2> "$T/log.txt" || {
-    echo "--- (exit status $?: 124 = not ended within $TL s) bridge log:"
-    tail -30 "$T/log.txt"
-    exit 1
-}
+# every target (the target decides whether the boot record counts: hdmi_boot_supported())
+for v in HDZGOGGLE HDZGOGGLE2 HDZBOXPRO; do
+    echo "== $v"
+    # shellcheck disable=SC2086,SC2090 # D and W hold several options
+    gcc -Wall -Wno-unused-parameter -c -I"$T/inc" $D $W -D$v -o "$T/pb.o" "$T/inc/pcmbridge.c"
+    # shellcheck disable=SC2086,SC2090
+    gcc -Wall -Wextra -Werror -c -I"$T/inc" $D $W -D$v -o "$T/sr.o" "$T/inc/soc_reg.c"
+    # shellcheck disable=SC2086,SC2090
+    gcc -Wall -Wextra -Werror -c -I"$T/inc" $D $W -D$v -o "$T/hb.o" "$T/inc/hdmi_boot.c"
+    # shellcheck disable=SC2086,SC2090
+    gcc -Wall -I"$T/inc" $D -D$v -o "$T/t" "$T/harness.c" "$T/pb.o" "$T/sr.o" "$T/hb.o" "$T/minIni.o" -lpthread
+    rm -f "$T/req" "$T/state" "$T/boot" "$T/lock"
+    timeout -k 5 "$TL" "$T/t" "$T/req" "$T/state" "$T/boot" "$T/boot_id" 2> "$T/log.txt" || {
+        echo "--- $v (exit status $?: 124 = not ended within $TL s) bridge log:"
+        tail -30 "$T/log.txt"
+        exit 1
+    }
+done
 echo "ALL PCMBRIDGE TESTS PASSED"

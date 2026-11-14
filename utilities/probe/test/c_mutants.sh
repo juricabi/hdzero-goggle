@@ -103,6 +103,10 @@ mut "system: always waits 1 s" util/system.c hdmi_boot_test.sh \
     's/soc_reg_lock_n\(recent \? 1 : SOC_REG_LOCK_TRIES\)/soc_reg_lock_n(SOC_REG_LOCK_TRIES)/'
 mut "system: command not run when lock busy" util/system.c hdmi_boot_test.sh \
     's/    const int r = system\(command\);/    const int r = fd < 0 ? -1 : system(command);/'
+mut "supported: BoxPro left out again" record/hdmi_boot.c hdmi_boot_test.sh \
+    's/defined\(HDZGOGGLE2\) \|\| defined\(HDZBOXPRO\)/defined(HDZGOGGLE2)/'
+mut "supported: any target" record/hdmi_boot.c hdmi_boot_test.sh \
+    's/    return false; \/\/ a target whose files were not compared/    return true; \/\/ a target whose files were not compared/'
 
 # IT66121 Reg04 guard (it66121.c): it66121_seq_test.sh
 mut "EQUIV:the write uses the value of a check that just required bits 5, 3, 0 to be 0" \
