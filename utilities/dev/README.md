@@ -15,4 +15,5 @@ to `/root/hdz/...` and can be changed by the environment variables named in each
 
 The other suites run directly: `make -C utilities/module_bay_test test` (and `utilities/module_bay_test/mutants.sh`),
 `python3 utilities/audio_mixer/test_mixer.py`, `python3 utilities/audio_mixer/mutants.py`,
-`python3 utilities/audio_mixer/check_strings.py`.
+`python3 utilities/audio_mixer/check_strings.py`, the C tests `sh utilities/probe/test/{it66121_seq,it66021_edid,
+pcmbridge,hdmi_boot}_test.sh` and their mutants `utilities/probe/test/c_mutants.sh` (from the git worktree).

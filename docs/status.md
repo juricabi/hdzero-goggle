@@ -3,8 +3,8 @@
 What this branch adds to HDZero's goggle firmware 9.6.0-rc1 (upstream a85841d): the **audio mixer** (Audio page),
 **live-stream audio**, **HDMI audio** (experimental, default off) and **module bay control** (analog receiver
 modules in the expansion bay: rapidFIRE, SteadyView, SteadyView X, Switch).  **Nothing of it has run on a real
-goggle yet.**  The last independent review is [review-final.md](review-final.md) (of 2989f32); this page says what
-happened since and what is left.
+goggle yet.**  The last independent review is [review-2026-11-13.md](review-2026-11-13.md) (of 2989f32..1087d5c;
+before it [review-final.md](review-final.md), of 2989f32); this page says what happened since and what is left.
 
 ## Branches (fork https://github.com/juricabi/hdzero-goggle)
 
@@ -41,6 +41,7 @@ python3 utilities/audio_mixer/test_mixer.py                # ~30 s; mutants.py ~
 utilities/dev/run_live.sh all                              # live-stream audio, in private namespaces
 utilities/dev/run_probe.sh run                             # probe kit tests (~10 min), as an unprivileged uid; also: mutants (~45 min)
 sh utilities/probe/test/it66121_seq_test.sh                # and it66021_edid_test.sh, pcmbridge_test.sh, hdmi_boot_test.sh
+utilities/probe/test/c_mutants.sh                          # mutants of the C safety code against those and module_bay_test (~11 min)
 ```
 
 `utilities/probe/test/run_tests.sh` and `mutants.sh` refuse to run as root; from a root shell always use
@@ -77,50 +78,61 @@ Later on 2026-11-13 (all of it on the PC only: host tests against models, the em
   written at start-up" now also catches a rewrite with the same text; the DAC with the line out off and no mix; a
   recheck during a backoff).  The probe kit's `mutants.sh` garbled one mutant (dash's `echo`); the module bay
   `mutants.sh` printed the compiler command as the reason.  No firmware code changed for these.
+- **The independent review of 2989f32..1087d5c** ([review-2026-11-13.md](review-2026-11-13.md)): Goggle 1 image at
+  defaults GO; Audio page with HDMI off GO; HDMI audio on NO-GO until the read-only probe has run on the goggle;
+  a module type after the mod CONDITIONAL (checklist and Check Pins first).  Its findings are fixed: the pin
+  finder drives only the pin under test (420a8a8); `utilities/probe/test/c_mutants.sh`, the checks that kill its
+  survivors, time limits, the IT66121/IT66021 tests against a85841d also outside git (f68fc76); "Paused, pin state
+  unknown" on the Module Bay page and the module bay test's own lock file (766f035); the doc errors and notes
+  (9563dad, 420a8a8).  `run_probe.sh` takes a sandbox directory of its own for each run: two runs at once (the
+  review's in another worktree and this one) had shared `/tmp/probe-test-mutants` and garbled each other's
+  mutants run.
 
-Results on `all` (the firmware code of 24d8ac8; later commits change only tests, scripts and docs), all on the PC:
+Results on `all` after the review's fixes (the firmware code of 766f035; later commits change only tests, scripts
+and docs), all on the PC:
 
 | what | result |
 |---|---|
-| images, `build_all.sh` (goggle, goggle2, boxpro) | built, no compiler warnings besides the known `liblog.so` one; the SHA-256 are in the `.sha256` files next to them |
-| emulator builds (`emu_build.sh goggle`, `goggle2`) | no warnings |
-| emulator check (custom-build.md), 10 starts + every key script | as described there; nothing written to `setting.ini` at start-up or by opening the Audio / Module Bay pages |
-| `make -C utilities/module_bay_test test` | 160 checks pass (15 + 17 + 81 + 3 + 44) |
+| images, `build_all.sh` (goggle, goggle2, boxpro) | built from the commit that records these results, no compiler warnings besides the known `liblog.so` one; the SHA-256 are in the `.sha256` files next to them |
+| emulator builds and the start check of custom-build.md (both goggles, 5 starts each) | both build without warnings; in all 10 starts `setting.ini` unchanged at start-up, by the Audio page and by Module Bay, no `[mixer]`/`[hdmi]`/`[module]` written, the old Audio Source taken over (mic, line, AV); Module Bay shows "Off, bay pins untouched"; no crash |
+| `make -C utilities/module_bay_test test` | 166 pass (15, 17, 87, 3, 44) |
 | `utilities/module_bay_test/mutants.sh` | 11 of 11 killed |
-| `test_mixer.py` / `check_strings.py` | 358 checks pass / 152 strings × 6 languages fit |
-| `utilities/audio_mixer/mutants.py` | 50 mutants: the full run killed 49; the survivor (recheck ignored) is killed by a check added afterwards (with the other 7 watcher mutants, run again).  Before: it had not run since 8b187fb and stopped at its 16th mutant (one survivor, one that did not build); three mutants that did not build, one that no longer applied and three checks the survivors showed missing were fixed in 4c285fb and the commit after it |
-| `run_live.sh all` | ring 7254 checks (x86 and ARM/qemu), `t_aidev` 8/8; the native-live555 tests and `t_off_identical` skipped (no LIVE555 tree on this PC) |
-| `run_live.sh t_*.sh` with `RTSPLIVE=arm` (the cross-built rtspLive under qemu) | describe 12, kill 15, share 6, e2e 38, avsync 12, audio_fail 6, `t_arm` (e2e, describe, kill) all pass |
-| `run_probe.sh run` | 65 pass, 0 fail (static 9, dash 28, busybox ash 28); before: 13 busybox-pass failures |
-| `run_probe.sh mutants` | 16 of 16 killed |
-| `it66121_seq_test.sh`, `it66021_edid_test.sh`, `pcmbridge_test.sh`, `hdmi_boot_test.sh` | 10, 5, 26, 117 pass |
+| `test_mixer.py` / `check_strings.py` | 358 pass / 153 strings in 6 languages fit |
+| `utilities/audio_mixer/mutants.py` | 50 of 50 killed |
+| `run_live.sh all` | all pass (ring buffer 7254 checks native and under qemu-arm, `t_aidev.sh` 8); the ARM runs (`RTSPLIVE=arm`) not repeated: nothing they run changed since 1087d5c |
+| `run_probe.sh run` | 65 pass |
+| `run_probe.sh mutants` | 18 of 18 killed |
+| `it66121_seq_test.sh`, `it66021_edid_test.sh`, `pcmbridge_test.sh`, `hdmi_boot_test.sh` | 10, 5, 26, 118 pass; on a copy outside git the first two say SKIP, with `BASE_SRC` 10 and 5 pass |
+| `utilities/probe/test/c_mutants.sh` | 22 mutants: 21 killed, 1 equivalent (the Reg04 read-modify-write) |
+
+Before the review (1087d5c) the same suites gave: module_bay_test 160, its mutants 11/11, test_mixer 358,
+check_strings 152 strings, mixer mutants 49 of 50 in the full run (the survivor killed by a check added
+afterwards), `run_live.sh all` and the ARM runs (`RTSPLIVE=arm`: describe 12, kill 15, share 6, e2e 38, avsync 12,
+audio_fail 6) pass, `run_probe.sh run` 65, its mutants 16/16, the C tests 10, 5, 26, 117.
 
 Everything at a hardware boundary (codec, I2S, IT66121/IT66021, sunxi_dump, sysfs GPIO, MPP) is a model written by
 the same engineers; nothing here replaces the goggle.
 
 ## Open, in this order
 
-1. **An independent review** of everything after 2989f32: the 14 commits on `all` up to 49b6388, the merged
-   `hdmi-hardening` (3cfc2ff..fea1e13) and the commits of this session (0663ddf..HEAD), then the fixes, as for
-   every earlier stage.  Worth a close look: `src/record/hdmi_boot.c` (the boot step and its record),
-   `src/driver/it66121.c` (the Reg04 guard), `src/util/system.c` (every `aww`/`awr` of the app now under a lock),
-   `utilities/probe/test/run_tests.sh` (the busybox shims).
-2. **Rebuild the images** after the review's fixes (`build_all.sh`) and record their SHA-256 (first-flash.md uses
-   `<commit>`).  Until then the newest images are those of the commit that added these results (built after it,
-   in `/root/hdz/out` on the developer's machine, not released).
+1. Optional: a look by a reviewer at the fixes of the review of 2026-11-13 (766f035..HEAD).
+2. The images of the commit that records these results are in `/root/hdz/out` on the developer's machine (not
+   released); first-flash.md uses `<commit>`.  Rebuild with `build_all.sh` after any further change.
 
 Then, on the goggle (only by its owner, never flashed without asking):
 
 3. **First flash** of the Goggle 1 image, [first-flash.md](first-flash.md) (the official 9.6.0-rc1 image and the
    recovery package kept on the PC), the untouched checks, then the Audio page.
 4. Optional: the HDMI audio probe kit (read-only first; it now also reads PH_CFG0 through `/dev/mem` and shows the
-   boot record `/tmp/hdmi_audio.boot`).  HDMI Out / In Audio stay Off until the probe shows the wiring; switched
-   on, they apply after a restart.  Only the goggle can tell: the PH_CFG0 value `rc.sh` really leaves (the boot
-   step refuses anything but 0x35517751), the `sunxi_dump` answer format, whether Reg04 reads 0x14 after the stock
-   init, and whether PH1-PH3 reach the IT66121.
+   boot record `/tmp/hdmi_audio.boot`).  HDMI Out / In Audio stay Off until the probe shows the wiring (the
+   review of 2026-11-13: NO-GO before that); switched on, they apply after a restart.  Only the goggle can tell:
+   the PH_CFG0 value `rc.sh` really leaves (the boot step refuses anything but 0x35517751), the `sunxi_dump` answer
+   format, whether Reg04 reads 0x14 after the stock init, and whether PH1-PH3 reach the IT66121.
 5. **Module bay**: bay empty, Module None, WiFi off: **Check Pins** to learn the PG bank voltage (3.3 V: the
-   4.7 kΩ resistor path; 1.8 V: the LM339 path) before any soldering; then the mod by
-   [module-bay-mod-safety.md](module-bay-mod-safety.md); then Module = rapidFIRE.
+   4.7 kΩ resistor path; 1.8 V: the LM339 path) before any soldering ("? V": the pin finder, only as in checklist
+   step 4, one clip per boot attached with the goggle off); then the mod by
+   [module-bay-mod-safety.md](module-bay-mod-safety.md); then Module = rapidFIRE (the review of 2026-11-13:
+   CONDITIONAL on the checklist and Check Pins).
 6. After the hardware tests: a release of the images on the fork.
 
 ## Facts to keep in mind
